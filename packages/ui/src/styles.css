@@ -1,0 +1,146 @@
+:root {
+  --dixora-brand-500: #ec5a20;
+  --dixora-brand-700: #c2410c;
+  --dixora-ink: #242122;
+  --dixora-border: #e7e5e4;
+  --dixora-surface: #ffffff;
+}
+
+.dixora-page-header {
+  align-items: flex-start;
+  display: flex;
+  gap: 1.5rem;
+  justify-content: space-between;
+}
+
+.dixora-page-header__copy {
+  min-width: 0;
+}
+
+.dixora-page-header__eyebrow {
+  color: var(--dixora-brand-700);
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  margin: 0 0 0.375rem;
+  text-transform: uppercase;
+}
+
+.dixora-page-header__title {
+  color: var(--dixora-ink);
+  font-size: clamp(1.5rem, 3vw, 2rem);
+  font-weight: 700;
+  letter-spacing: -0.025em;
+  line-height: 1.15;
+  margin: 0;
+}
+
+.dixora-page-header__description {
+  color: #57534e;
+  line-height: 1.6;
+  margin: 0.5rem 0 0;
+  max-width: 65ch;
+}
+
+.dixora-page-header__actions {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.dixora-empty-state {
+  align-items: center;
+  background: var(--dixora-surface);
+  border: 1px dashed var(--dixora-border);
+  border-radius: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  padding: 2.5rem 1.5rem;
+  text-align: center;
+}
+
+.dixora-empty-state__icon {
+  color: var(--dixora-brand-500);
+  margin-bottom: 1rem;
+}
+
+.dixora-empty-state__title {
+  color: var(--dixora-ink);
+  font-size: 1rem;
+  font-weight: 650;
+  margin: 0;
+}
+
+.dixora-empty-state__description {
+  color: #78716c;
+  line-height: 1.5;
+  margin: 0.5rem 0 0;
+  max-width: 48ch;
+}
+
+.dixora-empty-state__action {
+  margin-top: 1rem;
+}
+
+.dixora-status-badge {
+  align-items: center;
+  background: #f5f5f4;
+  border: 1px solid #e7e5e4;
+  border-radius: 999px;
+  color: #44403c;
+  display: inline-flex;
+  font-size: 0.75rem;
+  font-weight: 650;
+  gap: 0.375rem;
+  line-height: 1;
+  min-height: 1.75rem;
+  padding: 0.25rem 0.625rem;
+}
+
+.dixora-status-badge__dot {
+  background: currentColor;
+  border-radius: 999px;
+  height: 0.375rem;
+  width: 0.375rem;
+}
+
+.dixora-status-badge[data-tone="info"] {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+  color: #1d4ed8;
+}
+
+.dixora-status-badge[data-tone="success"] {
+  background: #ecfdf5;
+  border-color: #a7f3d0;
+  color: #047857;
+}
+
+.dixora-status-badge[data-tone="warning"] {
+  background: #fffbeb;
+  border-color: #fde68a;
+  color: #92400e;
+}
+
+.dixora-status-badge[data-tone="danger"] {
+  background: #fef2f2;
+  border-color: #fecaca;
+  color: #b91c1c;
+}
+
+.dixora-status-badge[data-tone="brand"] {
+  background: #fff1eb;
+  border-color: #fed0bc;
+  color: #a8340c;
+}
+
+@media (max-width: 40rem) {
+  .dixora-page-header {
+    flex-direction: column;
+  }
+
+  .dixora-page-header__actions {
+    width: 100%;
+  }
+}

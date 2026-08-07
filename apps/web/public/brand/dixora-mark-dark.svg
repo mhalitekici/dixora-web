@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 112 112" role="img" aria-labelledby="title">
+  <title id="title">Dixora</title>
+  <path
+    d="M31 17h31c19.9 0 36 16.1 36 36v6c0 19.9-16.1 36-36 36H53"
+    fill="none"
+    stroke="#F7F4F2"
+    stroke-width="13"
+    stroke-linecap="square"
+    stroke-linejoin="round"
+  />
+  <path d="M31 17v25l11 11V30H31Z" fill="#F7F4F2" />
+  <path
+    d="m29 45 43 50M72 50 29 96"
+    fill="none"
+    stroke="#FF6B2C"
+    stroke-width="11"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+  />
+</svg>

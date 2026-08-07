@@ -1,0 +1,30 @@
+{
+  "name": "Dixora Restaurant Operations",
+  "short_name": "Dixora",
+  "description": "Restoran operasyonu, sipariş, mutfak, QR menü ve stok yönetimi.",
+  "start_url": "/login",
+  "display": "standalone",
+  "background_color": "#fffdfc",
+  "theme_color": "#242122",
+  "orientation": "any",
+  "icons": [
+    {
+      "src": "/brand/app-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/app-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/brand/app-icon-maskable-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
+  ]
+}

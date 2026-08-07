@@ -1,0 +1,252 @@
+name: ${COMPOSE_PROJECT_NAME:-dixora}
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-dixora}
+      POSTGRES_USER: ${POSTGRES_USER:-dixora}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-local-postgres}
+    ports:
+      - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infrastructure/docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - dixora
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command:
+      [
+        "redis-server",
+        "--appendonly",
+        "yes",
+        "--maxmemory-policy",
+        "noeviction",
+      ]
+    ports:
+      - "127.0.0.1:${REDIS_PORT:-6379}:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 5s
+    networks:
+      - dixora
+
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dixora}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-local-minio}
+    ports:
+      - "127.0.0.1:${MINIO_API_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_PORT:-9001}:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - dixora
+
+  minio-init:
+    image: minio/mc:latest
+    restart: "no"
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-dixora}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-change-me-local-minio}
+      S3_BUCKET: ${S3_BUCKET:-dixora-media}
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}"
+        mc mb --ignore-existing "local/$${S3_BUCKET}"
+        mc anonymous set none "local/$${S3_BUCKET}"
+    networks:
+      - dixora
+
+  api:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/api.Dockerfile
+    restart: unless-stopped
+    environment:
+      DIXORA_ENVIRONMENT: ${DIXORA_ENVIRONMENT:-development}
+      DIXORA_API_PREFIX: ${DIXORA_API_PREFIX:-/api/v1}
+      DIXORA_DATABASE_URL: ${DIXORA_DATABASE_URL:-postgresql+asyncpg://dixora:change-me-local-postgres@postgres:5432/dixora}
+      DIXORA_REDIS_URL: ${DIXORA_REDIS_URL:-redis://redis:6379/0}
+      DIXORA_JWT_SECRET: ${DIXORA_JWT_SECRET:-change-me-with-at-least-32-random-characters}
+      DIXORA_ACCESS_TOKEN_MINUTES: ${DIXORA_ACCESS_TOKEN_MINUTES:-15}
+      DIXORA_REFRESH_TOKEN_DAYS: ${DIXORA_REFRESH_TOKEN_DAYS:-30}
+      DIXORA_SESSION_REFRESH_TOKEN_HOURS: ${DIXORA_SESSION_REFRESH_TOKEN_HOURS:-24}
+      DIXORA_LOGIN_RATE_LIMIT_ATTEMPTS: ${DIXORA_LOGIN_RATE_LIMIT_ATTEMPTS:-5}
+      DIXORA_LOGIN_RATE_LIMIT_WINDOW_MINUTES: ${DIXORA_LOGIN_RATE_LIMIT_WINDOW_MINUTES:-15}
+      DIXORA_PIN_LOGIN_ENABLED: ${DIXORA_PIN_LOGIN_ENABLED:-true}
+      DIXORA_TRUSTED_DEVICE_DAYS: ${DIXORA_TRUSTED_DEVICE_DAYS:-180}
+      DIXORA_LOYALTY_VERIFICATION_RATE_LIMIT_ATTEMPTS: ${DIXORA_LOYALTY_VERIFICATION_RATE_LIMIT_ATTEMPTS:-5}
+      DIXORA_LOYALTY_VERIFICATION_RATE_LIMIT_WINDOW_MINUTES: ${DIXORA_LOYALTY_VERIFICATION_RATE_LIMIT_WINDOW_MINUTES:-15}
+      DIXORA_LOYALTY_VERIFICATION_IP_RATE_LIMIT_ATTEMPTS: ${DIXORA_LOYALTY_VERIFICATION_IP_RATE_LIMIT_ATTEMPTS:-20}
+      DIXORA_LOYALTY_VERIFICATION_TENANT_DAILY_LIMIT: ${DIXORA_LOYALTY_VERIFICATION_TENANT_DAILY_LIMIT:-1000}
+      DIXORA_LOYALTY_VERIFICATION_PROVIDER: ${DIXORA_LOYALTY_VERIFICATION_PROVIDER:-development}
+      DIXORA_NETGSM_USERCODE: ${DIXORA_NETGSM_USERCODE:-}
+      DIXORA_NETGSM_PASSWORD: ${DIXORA_NETGSM_PASSWORD:-}
+      DIXORA_NETGSM_MSGHEADER: ${DIXORA_NETGSM_MSGHEADER:-}
+      DIXORA_NETGSM_TIMEOUT_SECONDS: ${DIXORA_NETGSM_TIMEOUT_SECONDS:-8}
+      DIXORA_CORS_ORIGINS: ${DIXORA_CORS_ORIGINS:-["http://localhost:3000"]}
+      DIXORA_PRINT_BRIDGE_KEY: ${DIXORA_PRINT_BRIDGE_KEY:-change-me-local-print-bridge}
+      DIXORA_AUTO_CREATE_SCHEMA: ${DIXORA_AUTO_CREATE_SCHEMA:-false}
+      DIXORA_DEV_SEED_ENABLED: ${DIXORA_DEV_SEED_ENABLED:-true}
+      DIXORA_LOG_LEVEL: ${DIXORA_LOG_LEVEL:-INFO}
+      DIXORA_SQL_ECHO: ${DIXORA_SQL_ECHO:-false}
+      DIXORA_S3_ENDPOINT: ${DIXORA_S3_ENDPOINT:-http://minio:9000}
+      DIXORA_S3_ACCESS_KEY: ${DIXORA_S3_ACCESS_KEY:-dixora}
+      DIXORA_S3_SECRET_KEY: ${DIXORA_S3_SECRET_KEY:-change-me-local-minio}
+      DIXORA_S3_BUCKET: ${DIXORA_S3_BUCKET:-dixora-media}
+      DIXORA_S3_REGION: ${DIXORA_S3_REGION:-us-east-1}
+      DIXORA_MEDIA_PUBLIC_BASE_URL: ${DIXORA_MEDIA_PUBLIC_BASE_URL:-http://localhost:8000/api/v1/media}
+      DIXORA_MEDIA_MAX_UPLOAD_BYTES: ${DIXORA_MEDIA_MAX_UPLOAD_BYTES:-5242880}
+      DIXORA_MEDIA_MIN_DIMENSION: ${DIXORA_MEDIA_MIN_DIMENSION:-64}
+      DIXORA_MEDIA_MAX_DIMENSION: ${DIXORA_MEDIA_MAX_DIMENSION:-8192}
+      DIXORA_MEDIA_MAX_PIXELS: ${DIXORA_MEDIA_MAX_PIXELS:-36000000}
+    command:
+      [
+        "sh",
+        "-c",
+        "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port 8000",
+      ]
+    ports:
+      - "${DIXORA_BIND_HOST:-127.0.0.1}:${API_PORT:-8000}:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - dixora
+
+  web:
+    build:
+      context: .
+      dockerfile: infrastructure/docker/web.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+        NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000/api/v1/ws}
+        NEXT_PUBLIC_ENABLE_PIN_LOGIN: ${NEXT_PUBLIC_ENABLE_PIN_LOGIN:-true}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      BACKEND_API_URL: ${BACKEND_API_URL:-http://api:8000/api/v1}
+      AUTH_COOKIE_SECURE: ${AUTH_COOKIE_SECURE:-false}
+      AUTH_COOKIE_DOMAIN: ${AUTH_COOKIE_DOMAIN:-}
+      AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS: ${AUTH_REFRESH_COOKIE_MAX_AGE_SECONDS:-2592000}
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api/v1}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000/api/v1/ws}
+      NEXT_PUBLIC_ENABLE_PIN_LOGIN: ${NEXT_PUBLIC_ENABLE_PIN_LOGIN:-true}
+    ports:
+      - "${DIXORA_BIND_HOST:-127.0.0.1}:${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:3000').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    init: true
+    networks:
+      - dixora
+
+  print-bridge:
+    build:
+      context: .
+      dockerfile: apps/print-bridge/Dockerfile
+    restart: unless-stopped
+    environment:
+      PRINT_BRIDGE_PORT: 9100
+      PRINT_BRIDGE_ID: ${PRINT_BRIDGE_ID:-local-mock-bridge}
+      PRINT_BRIDGE_API_URL: ${PRINT_BRIDGE_API_URL:-http://api:8000}
+      PRINT_BRIDGE_TOKEN: ${PRINT_BRIDGE_TOKEN:-pb_dev_dixora_lab_bridge_2026}
+      PRINT_BRIDGE_API_KEY: ${PRINT_BRIDGE_API_KEY:-change-me-local-print-bridge}
+      PRINT_BRIDGE_PRINTER_IDS: ${PRINT_BRIDGE_PRINTER_IDS:-MOCK-KITCHEN,MOCK-BAR}
+      PRINT_BRIDGE_POLL_INTERVAL_MS: ${PRINT_BRIDGE_POLL_INTERVAL_MS:-2000}
+      PRINT_BRIDGE_REQUEST_TIMEOUT_MS: ${PRINT_BRIDGE_REQUEST_TIMEOUT_MS:-5000}
+      PRINT_BRIDGE_MAX_CLAIM: ${PRINT_BRIDGE_MAX_CLAIM:-5}
+      PRINT_BRIDGE_MOCK_DELAY_MS: ${PRINT_BRIDGE_MOCK_DELAY_MS:-250}
+      PRINT_BRIDGE_MOCK_FAILURE_RATE: ${PRINT_BRIDGE_MOCK_FAILURE_RATE:-0}
+      PRINT_BRIDGE_ALLOW_INSECURE_MOCK: ${PRINT_BRIDGE_ALLOW_INSECURE_MOCK:-false}
+    ports:
+      - "127.0.0.1:${PRINT_BRIDGE_PORT:-9100}:9100"
+    depends_on:
+      api:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "node",
+          "-e",
+          "fetch('http://127.0.0.1:9100/healthz').then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    init: true
+    networks:
+      - dixora
+
+networks:
+  dixora:
+    name: ${COMPOSE_PROJECT_NAME:-dixora}-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:

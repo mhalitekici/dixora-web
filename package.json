@@ -1,0 +1,43 @@
+{
+  "name": "dixora",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Dixora multi-tenant restaurant and hospitality management platform",
+  "packageManager": "npm@11.8.0",
+  "engines": {
+    "node": ">=22"
+  },
+  "workspaces": [
+    "apps/web",
+    "apps/print-bridge",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspaces --if-present",
+    "dev:web": "npm run dev --workspace web",
+    "dev:print-bridge": "npm run dev --workspace @dixora/print-bridge",
+    "build": "npm run build --workspaces --if-present",
+    "lint": "npm run lint --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present && npm exec --workspace web -- tsc --noEmit",
+    "test": "npm run test --workspaces --if-present",
+    "format": "prettier --write \"*.{json,md,yml}\" \"docs/**/*.md\" \"apps/print-bridge/src/**/*.ts\" \"apps/print-bridge/*.{json,md}\" \"packages/*/src/**/*.{ts,tsx,css}\" \"packages/*/*.{json,md}\" \"packages/config/tsconfig/*.json\"",
+    "format:check": "prettier --check \"*.{json,md,yml}\" \"docs/**/*.md\" \"apps/print-bridge/src/**/*.ts\" \"apps/print-bridge/*.{json,md}\" \"packages/*/src/**/*.{ts,tsx,css}\" \"packages/*/*.{json,md}\" \"packages/config/tsconfig/*.json\"",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run test",
+    "compose:config": "docker compose config --quiet",
+    "compose:up": "docker compose up --build",
+    "compose:down": "docker compose down",
+    "compose:logs": "docker compose logs --follow --tail=200"
+  },
+  "devDependencies": {
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.2.12",
+    "next": "16.2.12",
+    "prettier": "^3.6.2",
+    "typescript": "^5.9.2"
+  },
+  "overrides": {
+    "minimatch": "10.2.6",
+    "postcss": "8.5.25",
+    "sharp": "0.35.3"
+  }
+}

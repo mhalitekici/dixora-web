@@ -1,0 +1,15 @@
+.git
+.env
+**/.next
+**/.venv
+**/__pycache__
+**/.mypy_cache
+**/.pytest_cache
+**/.ruff_cache
+**/dist
+**/node_modules
+**/*.log
+apps/print-bridge
+apps/web
+docs
+packages
