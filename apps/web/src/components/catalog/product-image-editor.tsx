@@ -2,6 +2,7 @@
 
 import { Loader2, Maximize2, Move } from "lucide-react"
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -26,6 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog"
 import { Label } from "@/components/ui/label"
+import { cn } from "@/lib/utils"
 
 export type ProductImageEditorSource = {
   file: File
@@ -43,37 +45,50 @@ export function ProductImageEditor({
   onCancel: () => void
   onComplete: (file: File) => void
 }) {
-  const cropRef = useRef<HTMLDivElement>(null)
   const dragRef = useRef<{
     pointerX: number
     pointerY: number
     position: CropPosition
   } | null>(null)
-  const [imageSize, setImageSize] = useState({ width: 1, height: 1 })
-  const [viewportSize, setViewportSize] = useState(1)
+  const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
+  const [viewportSize, setViewportSize] = useState(0)
   const [position, setPosition] = useState<CropPosition>({ x: 0, y: 0 })
   const [zoom, setZoom] = useState(1)
   const [outputSize, setOutputSize] = useState(1200)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  // The dialog portal mounts its content in its own later commit (it has to
+  // wait for a container element to become available), so a plain useRef +
+  // useLayoutEffect keyed on `open` can fire before this div even exists in
+  // the DOM and then never run again. A callback ref sidesteps that: React
+  // invokes it exactly when the node is actually attached, no matter which
+  // render pass that happens in.
+  const [cropElement, setCropElement] = useState<HTMLDivElement | null>(null)
+  const cropRef = useCallback((node: HTMLDivElement | null) => {
+    setCropElement(node)
+  }, [])
+
   useEffect(() => {
-    const element = cropRef.current
-    if (!element || !open) return
-    const update = () => setViewportSize(Math.max(1, element.clientWidth))
+    if (!cropElement) return
+    const update = () => setViewportSize(cropElement.clientWidth)
     update()
     const observer = new ResizeObserver(update)
-    observer.observe(element)
+    observer.observe(cropElement)
     return () => observer.disconnect()
-  }, [open])
+  }, [cropElement])
 
+  // The image's natural size isn't known until it loads, and the viewport
+  // isn't measured until the dialog has painted — rendering the crop with
+  // either still at its placeholder value would size the image as a sliver.
+  const ready = Boolean(imageSize) && viewportSize > 0
   const placement = useMemo(
     () =>
       calculateCropPlacement({
-        sourceHeight: imageSize.height,
-        sourceWidth: imageSize.width,
-        targetHeight: viewportSize,
-        targetWidth: viewportSize,
+        sourceHeight: imageSize?.height ?? 1,
+        sourceWidth: imageSize?.width ?? 1,
+        targetHeight: viewportSize || 1,
+        targetWidth: viewportSize || 1,
         zoom,
         position,
       }),
@@ -186,10 +201,11 @@ export function ProductImageEditor({
               <img
                 src={source.url}
                 alt="Kırpılacak ürün görseli"
-                width={imageSize.width}
-                height={imageSize.height}
                 draggable={false}
-                className="pointer-events-none absolute max-w-none select-none"
+                className={cn(
+                  "pointer-events-none absolute max-w-none select-none transition-opacity",
+                  ready ? "opacity-100" : "opacity-0",
+                )}
                 style={{
                   height: placement.drawHeight,
                   left: placement.left,
@@ -202,7 +218,15 @@ export function ProductImageEditor({
                     height: event.currentTarget.naturalHeight,
                   })
                 }
+                onError={() =>
+                  setError("Görsel yüklenemedi. Lütfen dosyayı tekrar seçin.")
+                }
               />
+            ) : null}
+            {source && !ready ? (
+              <div className="absolute inset-0 flex items-center justify-center">
+                <Loader2 className="size-6 animate-spin text-white/70" />
+              </div>
             ) : null}
             <div className="pointer-events-none absolute inset-0 grid grid-cols-3 grid-rows-3 opacity-45">
               {Array.from({ length: 9 }).map((_, index) => (
@@ -283,7 +307,7 @@ export function ProductImageEditor({
           <Button type="button" variant="outline" disabled={busy} onClick={onCancel}>
             Vazgeç
           </Button>
-          <Button type="button" disabled={busy || !source} onClick={() => void applyCrop()}>
+          <Button type="button" disabled={busy || !source || !ready} onClick={() => void applyCrop()}>
             {busy ? <Loader2 className="animate-spin" /> : null}
             {busy ? "Görsel hazırlanıyor…" : "Kırpmayı uygula"}
           </Button>

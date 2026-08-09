@@ -425,7 +425,6 @@ export function TableManagement() {
     () => ({
       available: tables.filter((table) => table.state === "AVAILABLE").length,
       active: tables.filter((table) => !["AVAILABLE", "DISABLED"].includes(table.state)).length,
-      ready: tables.filter((table) => table.state === "READY").length,
       bill: tables.filter((table) =>
         ["BILL_REQUESTED", "PAYMENT_PENDING"].includes(table.state),
       ).length,
@@ -567,11 +566,10 @@ export function TableManagement() {
         }
       />
 
-      <div className="mb-4 grid grid-cols-2 gap-3 md:grid-cols-4">
+      <div className="mb-4 grid grid-cols-3 gap-3">
         {[
           ["Müsait", counts.available, "bg-emerald-500"],
           ["Aktif", counts.active, "bg-brand"],
-          ["Servise hazır", counts.ready, "bg-blue-500"],
           ["Hesap bekliyor", counts.bill, "bg-violet-500"],
         ].map(([label, value, color]) => (
           <div key={String(label)} className="flex items-center gap-3 rounded-2xl border bg-card p-3.5">

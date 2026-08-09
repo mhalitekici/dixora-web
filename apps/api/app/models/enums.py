@@ -40,6 +40,11 @@ class TableState(StrEnum):
     DISABLED = "DISABLED"
 
 
+class HotelRoomStatus(StrEnum):
+    VACANT = "VACANT"
+    OCCUPIED = "OCCUPIED"
+
+
 class TableSessionStatus(StrEnum):
     OPEN = "OPEN"
     CLOSED = "CLOSED"

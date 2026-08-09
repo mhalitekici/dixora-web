@@ -37,6 +37,12 @@ from app.models import (
 from app.models.enums import QrOrderMode, TenantState
 from app.rbac import ensure_role, ensure_tenant_role_presets
 from app.security import hash_password, utcnow, verify_password
+from app.services.pricing import (
+    DEFAULT_ADDITIONAL_BRANCH_PRICE,
+    DEFAULT_BASE_MONTHLY_PRICE,
+    DEFAULT_CURRENCY,
+    DEFAULT_INCLUDED_BRANCHES,
+)
 
 DEVELOPMENT_PASSWORDS = {
     "superadmin@dixora.app": "Dixora!2026",
@@ -123,6 +129,7 @@ async def seed_database(db: AsyncSession) -> None:
     # Legacy seeded operational accounts remain valid, but these roles are not assignable
     # from the business panel.
     roles["CASHIER"] = await ensure_role(db, tenant_id=tenant.id, code="CASHIER")
+    roles["KITCHEN"] = await ensure_role(db, tenant_id=tenant.id, code="KITCHEN", name="Aşçı")
     users = [
         ("owner@dixora.test", "İşletme Sahibi", "BUSINESS_OWNER", None, None),
         ("manager@dixora.test", "Şube Yöneticisi", "BUSINESS_MANAGER", None, None),
@@ -419,16 +426,21 @@ async def seed_database(db: AsyncSession) -> None:
         {"code": "STANDARD"},
         {
             "name": "Dixora Standard",
-            "monthly_price": Decimal("1499.99"),
-            "currency": "TRY",
-            "max_branches": 1,
+            "monthly_price": DEFAULT_BASE_MONTHLY_PRICE,
+            "currency": DEFAULT_CURRENCY,
+            "included_branches": DEFAULT_INCLUDED_BRANCHES,
+            "additional_branch_price": DEFAULT_ADDITIONAL_BRANCH_PRICE,
+            # Extra branches are billed, not blocked, so there is no hard cap.
+            "max_branches": None,
             "max_users": 50,
         },
     )
     standard_plan.name = "Dixora Standard"
-    standard_plan.monthly_price = Decimal("1499.99")
-    standard_plan.currency = "TRY"
-    standard_plan.max_branches = 1
+    standard_plan.monthly_price = DEFAULT_BASE_MONTHLY_PRICE
+    standard_plan.currency = DEFAULT_CURRENCY
+    standard_plan.included_branches = DEFAULT_INCLUDED_BRANCHES
+    standard_plan.additional_branch_price = DEFAULT_ADDITIONAL_BRANCH_PRICE
+    standard_plan.max_branches = None
     standard_plan.max_users = 50
     for feature in [
         "QR_MENU",

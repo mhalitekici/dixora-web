@@ -1,6 +1,8 @@
 import { ArrowDown, ArrowRight, Check } from "lucide-react";
 
 import { OperationsStage } from "./operations-stage";
+import { BASE_MONTHLY_PRICE_LABEL } from "@/lib/pricing";
+
 import styles from "./landing.module.css";
 
 export function HeroSection() {
@@ -42,7 +44,7 @@ export function HeroSection() {
           </div>
           <p className={styles.heroPrice}>
             30 gün ücretsiz <span aria-hidden="true">·</span> Sonrasında{" "}
-            <strong>₺1.499,99 / ay</strong>
+            <strong>{BASE_MONTHLY_PRICE_LABEL} / ay</strong>
           </p>
         </div>
 

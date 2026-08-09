@@ -11,6 +11,7 @@ from app.models.enums import (
     ApprovalStatus,
     ApprovalType,
     DiscountKind,
+    HotelRoomStatus,
     KitchenTicketStatus,
     OrderItemStatus,
     OrderSource,
@@ -66,6 +67,7 @@ class BusinessRegistrationRequest(BaseModel):
     )
     password: str = Field(min_length=10, max_length=256)
     terms_accepted: Literal[True]
+    contract_version: str = Field(default="unknown", max_length=40)
 
 
 class BusinessRegistrationOut(BaseModel):
@@ -199,6 +201,37 @@ class BranchOut(ORMModel):
     phone: str | None
     working_hours: WorkingHours
     is_active: bool
+    archived_at: datetime | None = None
+
+
+class BranchPricingOut(BaseModel):
+    """What the business is billed for its branches, and what one more costs."""
+
+    currency: str
+    base_monthly_price: Decimal
+    included_branches: int
+    additional_branch_price: Decimal
+    active_branches: int
+    billable_extra_branches: int
+    monthly_total: Decimal
+    next_branch_monthly_total: Decimal
+
+
+class BranchArchiveRequest(BaseModel):
+    reason: str | None = Field(default=None, max_length=255)
+
+
+class UserBranchAccessUpdate(BaseModel):
+    """The complete set of branches this user may operate in."""
+
+    branch_ids: list[UUID]
+
+
+class UserBranchAccessOut(BaseModel):
+    user_id: UUID
+    primary_branch_id: UUID | None
+    branch_ids: list[UUID]
+    has_all_branch_access: bool
 
 
 class BranchUpdate(BaseModel):
@@ -274,6 +307,33 @@ class PasswordChange(BaseModel):
     password: str = Field(min_length=10, max_length=256)
 
 
+class SelfPasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=10, max_length=256)
+
+
+class AdminPasswordResetRequest(BaseModel):
+    """Super-admin initiated reset. The password is never echoed back."""
+
+    new_password: str = Field(min_length=10, max_length=256)
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class AdminPasswordResetOut(BaseModel):
+    user_id: UUID
+    username: str
+    sessions_revoked: int
+
+
+class BusinessUserOut(BaseModel):
+    id: UUID
+    username: str
+    display_name: str
+    email: str | None
+    role: str
+    is_active: bool
+
+
 class PinChange(BaseModel):
     pin: str | None = Field(
         default=None,
@@ -336,6 +396,11 @@ class BusinessUpdate(BaseModel):
         pattern=r"^[A-Z]{3}$",
     )
     prevent_negative_stock: bool | None = None
+
+
+class BusinessReactivateRequest(BaseModel):
+    extend_days: int = Field(default=30, ge=1, le=365)
+    note: str | None = Field(default=None, max_length=500)
 
 
 class TenantOut(ORMModel):
@@ -404,6 +469,7 @@ class CategoryCreate(BaseModel):
     branch_id: UUID | None = None
     sort_order: int = 0
     is_active: bool = True
+    translations: dict[str, dict[str, str]] = {}
 
 
 class CategoryUpdate(BaseModel):
@@ -412,6 +478,7 @@ class CategoryUpdate(BaseModel):
     color: str | None = Field(default=None, pattern=r"^#[0-9A-Fa-f]{6}$")
     sort_order: int | None = None
     is_active: bool | None = None
+    translations: dict[str, dict[str, str]] | None = None
 
 
 class CategoryOut(ORMModel):
@@ -424,6 +491,7 @@ class CategoryOut(ORMModel):
     color: str
     sort_order: int
     is_active: bool
+    translations: dict[str, dict[str, str]] = {}
 
 
 class StationCreate(BaseModel):
@@ -463,8 +531,15 @@ class ProductCreate(BaseModel):
     track_inventory: bool = False
     sort_order: int = 0
     allergens: list[str] = []
+    calories: int | None = Field(default=None, ge=0, le=20000)
     tags: list[str] = []
+    translations: dict[str, dict[str, str]] = {}
     modifier_group_ids: list[UUID] = []
+
+    @field_validator("sku")
+    @classmethod
+    def _blank_sku_to_none(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
 
 
 class ProductUpdate(BaseModel):
@@ -487,8 +562,15 @@ class ProductUpdate(BaseModel):
     track_inventory: bool | None = None
     sort_order: int | None = None
     allergens: list[str] | None = None
+    calories: int | None = Field(default=None, ge=0, le=20000)
     tags: list[str] | None = None
+    translations: dict[str, dict[str, str]] | None = None
     modifier_group_ids: list[UUID] | None = None
+
+    @field_validator("sku")
+    @classmethod
+    def _blank_sku_to_none(cls, value: str | None) -> str | None:
+        return value.strip() or None if value is not None else None
 
 
 class ProductCsvPreviewRow(BaseModel):
@@ -536,6 +618,10 @@ class ProductOut(ORMModel):
     preparation_minutes: int | None
     track_inventory: bool
     sort_order: int
+    allergens: list[str]
+    calories: int | None
+    tags: list[str]
+    translations: dict[str, dict[str, str]] = {}
 
 
 class ModifierGroupCreate(BaseModel):
@@ -763,6 +849,98 @@ class PaymentCreate(BaseModel):
     reference: str | None = Field(default=None, max_length=160)
 
 
+class TranslationFieldsIn(BaseModel):
+    """One locale's version of a catalog entry, as typed by the business."""
+
+    name: str | None = Field(default=None, max_length=200)
+    description: str | None = Field(default=None, max_length=2000)
+
+
+class TranslationFieldsOut(BaseModel):
+    name: str | None = None
+    description: str | None = None
+    # True when the Turkish source was edited after this translation was saved,
+    # so the panel can nudge the owner to refresh it.
+    stale: bool = False
+
+
+class EntityTranslationsUpdate(BaseModel):
+    translations: dict[str, TranslationFieldsIn]
+
+
+class EntityTranslationsOut(BaseModel):
+    entity_type: str
+    entity_id: UUID
+    source_locale: str
+    supported_locales: list[str]
+    source: TranslationFieldsOut
+    translations: dict[str, TranslationFieldsOut]
+
+
+class RoomFolioOrderOut(BaseModel):
+    order_id: UUID
+    reference: str
+    table_name: str | None
+    created_at: datetime
+    items: list[OrderItemOut]
+    order_total: Decimal
+    room_charge_amount: Decimal
+
+
+class RoomFolioOut(BaseModel):
+    reference: str
+    orders: list[RoomFolioOrderOut]
+    total: Decimal
+
+
+class HotelRoomCreate(BaseModel):
+    room_number: str = Field(min_length=1, max_length=20)
+    notes: str | None = Field(default=None, max_length=500)
+    sort_order: int = 0
+
+
+class HotelRoomUpdate(BaseModel):
+    room_number: str | None = Field(default=None, min_length=1, max_length=20)
+    notes: str | None = Field(default=None, max_length=500)
+    is_active: bool | None = None
+    sort_order: int | None = None
+
+
+class HotelRoomCheckIn(BaseModel):
+    guest_name: str = Field(min_length=1, max_length=160)
+    expected_version: int = Field(ge=1)
+
+
+class HotelRoomCheckOut(BaseModel):
+    payment_method: str = Field(pattern=r"^[A-Z][A-Z0-9_]{1,39}$")
+    expected_version: int = Field(ge=1)
+
+
+class HotelRoomOut(ORMModel):
+    id: UUID
+    room_number: str
+    status: HotelRoomStatus
+    guest_name: str | None
+    checked_in_at: datetime | None
+    notes: str | None
+    is_active: bool
+    sort_order: int
+    version: int
+    folio_reference: str | None
+
+
+class HotelRoomCheckoutOut(ORMModel):
+    id: UUID
+    room_id: UUID
+    room_number: str
+    guest_name: str
+    total_amount: Decimal
+    payment_method: str
+    checked_in_at: datetime | None
+    checked_out_at: datetime
+    created_at: datetime
+
+
 class TableTransferRequest(BaseModel):
     destination_table_id: UUID
     reason: str = Field(min_length=3, max_length=255)
@@ -821,6 +999,29 @@ class ApprovalOut(ORMModel):
     requested_by_user_id: UUID
     resolved_by_user_id: UUID | None
     created_at: datetime
+
+
+class ApprovalRequestAdminOut(BaseModel):
+    id: UUID
+    order_id: UUID | None
+    order_item_id: UUID | None
+    approval_type: ApprovalType
+    status: ApprovalStatus
+    payload: dict[str, object]
+    reason: str
+    created_at: datetime
+    resolved_at: datetime | None
+    requested_by_user_id: UUID
+    requested_by_name: str | None
+    resolved_by_user_id: UUID | None
+    resolved_by_name: str | None
+    table_name: str | None
+    order_item_name: str | None
+    order_total: Decimal | None
+
+
+class ApprovalPendingCountOut(BaseModel):
+    pending: int
 
 
 class InventoryItemCreate(BaseModel):
@@ -971,6 +1172,7 @@ class PublicMenuProduct(BaseModel):
     selling_price: Decimal
     image_url: str | None
     allergens: list[str]
+    calories: int | None = None
     modifier_groups: list[PublicMenuModifierGroup] = []
 
 
@@ -1146,11 +1348,20 @@ class PrinterDeviceOut(ORMModel):
 
 
 class ShiftOpen(BaseModel):
+    cashier_name: str = Field(min_length=2, max_length=120)
     opening_cash: Decimal = Field(default=Decimal("0.00"), ge=0)
+    note: str | None = Field(default=None, max_length=500)
 
 
 class ShiftClose(BaseModel):
     closing_cash: Decimal = Field(ge=0)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class ShiftHandoff(BaseModel):
+    counted_cash: Decimal = Field(ge=0)
+    next_cashier_name: str = Field(min_length=2, max_length=120)
+    next_opening_cash: Decimal | None = Field(default=None, ge=0)
     note: str | None = Field(default=None, max_length=500)
 
 
@@ -1159,8 +1370,12 @@ class ShiftOut(ORMModel):
     tenant_id: UUID
     branch_id: UUID
     user_id: UUID
+    user_display_name: str | None = None
+    cashier_name: str | None
+    predecessor_shift_id: UUID | None
     status: str
     opening_cash: Decimal
+    opening_note: str | None
     closing_cash: Decimal | None
     cash_sales: Decimal
     card_sales: Decimal
@@ -1169,6 +1384,11 @@ class ShiftOut(ORMModel):
     opened_at: datetime
     closed_at: datetime | None
     closing_note: str | None
+
+
+class ShiftHandoffOut(BaseModel):
+    closed: ShiftOut
+    opened: ShiftOut
 
 
 class DashboardHourlySaleOut(BaseModel):

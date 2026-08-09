@@ -1,7 +1,7 @@
 "use client";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { BellRing, Check, Loader2, QrCode, ReceiptText, X } from "lucide-react";
+import { Check, Loader2, QrCode, ReceiptText, X } from "lucide-react";
 import Link from "next/link";
 import { toast } from "sonner";
 
@@ -85,7 +85,6 @@ export function WaiterNotifications() {
 
   const orders = query.data?.orders ?? [];
   const requests = query.data?.requests ?? [];
-  const ready = orders.filter((order) => ["READY", "PARTIALLY_READY"].includes(order.status));
   const bill = orders.filter((order) => order.status === "BILL_REQUESTED");
 
   return (
@@ -93,7 +92,7 @@ export function WaiterNotifications() {
       <header className="mb-4">
         <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-brand">Canlı uyarılar</p>
         <h1 className="mt-1 text-2xl font-semibold tracking-[-0.04em]">Bildirimler</h1>
-        <p className="mt-1 text-xs text-muted-foreground">Hazır ürünler, hesap talepleri ve QR istekleri</p>
+        <p className="mt-1 text-xs text-muted-foreground">Hesap talepleri ve QR istekleri</p>
       </header>
       <div className="space-y-3">
         {requests.map((request) => {
@@ -164,16 +163,6 @@ export function WaiterNotifications() {
             </article>
           );
         })}
-        {ready.map((order) => (
-          <Link key={order.id} href={`/waiter/orders/${order.id}`} className="flex items-center gap-3 rounded-2xl border border-emerald-600/25 bg-emerald-500/[0.045] p-4">
-            <span className="flex size-10 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-700"><BellRing className="size-4" /></span>
-            <span className="min-w-0 flex-1">
-              <span className="block text-sm font-semibold">Sipariş servise hazır</span>
-              <span className="text-[0.65rem] text-muted-foreground">#{order.id.slice(0, 8)} · {order.source}</span>
-            </span>
-            <StatusBadge tone="success">Hazır</StatusBadge>
-          </Link>
-        ))}
         {bill.map((order) => (
           <Link key={order.id} href={`/waiter/orders/${order.id}`} className="flex items-center gap-3 rounded-2xl border border-violet-600/20 bg-violet-500/[0.04] p-4">
             <span className="flex size-10 items-center justify-center rounded-xl bg-violet-500/15 text-violet-700"><ReceiptText className="size-4" /></span>
@@ -184,7 +173,7 @@ export function WaiterNotifications() {
             <StatusBadge tone="purple">Hesap</StatusBadge>
           </Link>
         ))}
-        {!requests.length && !ready.length && !bill.length ? (
+        {!requests.length && !bill.length ? (
           <div className="flex min-h-56 flex-col items-center justify-center rounded-2xl border border-dashed text-center">
             <Check className="size-6 text-emerald-600" />
             <h2 className="mt-3 text-sm font-semibold">Bekleyen bildirim yok</h2>

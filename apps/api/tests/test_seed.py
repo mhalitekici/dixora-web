@@ -95,7 +95,12 @@ async def test_development_reseed_reconciles_documented_credentials(api: ApiCont
             b"pb_dev_dixora_lab_bridge_2026"
         ).hexdigest()
         assert bridge.is_active is True
-        assert standard.monthly_price == Decimal("1499.99")
+        # Branch-based pricing: base covers one branch, extras are billed per branch.
+        assert standard.monthly_price == Decimal("1200.00")
+        assert standard.included_branches == 1
+        assert standard.additional_branch_price == Decimal("850.00")
+        # Additional branches are charged for, not blocked by a hard cap.
+        assert standard.max_branches is None
         assert standard_features
         assert all(feature.is_enabled for feature in standard_features)
         assert owner.is_active is True

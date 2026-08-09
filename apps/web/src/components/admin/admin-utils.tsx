@@ -8,7 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { toErrorMessage } from "@/lib/api/errors";
 import { cn } from "@/lib/utils";
 
-import type { OrderStatus, QrRequestStatus, TableState } from "./types";
+import type { ApprovalStatus, ApprovalType, OrderStatus, QrRequestStatus, TableState } from "./types";
 
 export const orderStatusText: Record<OrderStatus, string> = {
   DRAFT: "Taslak",
@@ -44,6 +44,27 @@ export const qrStatusText: Record<QrRequestStatus, string> = {
   REJECTED: "Reddedildi",
   EXPIRED: "Süresi doldu",
 };
+
+export const approvalTypeText: Record<ApprovalType, string> = {
+  DISCOUNT: "İndirim talebi",
+  ITEM_CANCELLATION: "Ürün iptal talebi",
+  ORDER_VOID: "Sipariş iptal talebi",
+  STOCK_OVERRIDE: "Stok müdahalesi",
+  TABLE_TRANSFER: "Masa transferi",
+};
+
+export const approvalStatusText: Record<ApprovalStatus, string> = {
+  PENDING: "Onay bekliyor",
+  APPROVED: "Onaylandı",
+  REJECTED: "Reddedildi",
+  CANCELLED: "İptal edildi",
+};
+
+export function toneForApproval(status: ApprovalStatus) {
+  if (status === "APPROVED") return "success" as const;
+  if (status === "REJECTED" || status === "CANCELLED") return "danger" as const;
+  return "warning" as const;
+}
 
 export function money(value: string | number, currency = "TRY") {
   const amount = Number(value);

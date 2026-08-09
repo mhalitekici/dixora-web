@@ -26,6 +26,14 @@ class Database:
         if settings.database_url.startswith("sqlite+aiosqlite:///:memory:"):
             engine_kwargs["poolclass"] = StaticPool
             engine_kwargs["connect_args"] = {"check_same_thread": False}
+        else:
+            # Sized explicitly rather than left on SQLAlchemy's 5+10 default: the
+            # ceiling is (pool_size + max_overflow) x api_workers connections, which
+            # must stay comfortably under PostgreSQL's max_connections.
+            engine_kwargs["pool_size"] = settings.db_pool_size
+            engine_kwargs["max_overflow"] = settings.db_max_overflow
+            engine_kwargs["pool_timeout"] = settings.db_pool_timeout
+            engine_kwargs["pool_recycle"] = settings.db_pool_recycle
         self.engine: AsyncEngine = create_async_engine(settings.database_url, **engine_kwargs)
         self.session_factory = async_sessionmaker(
             self.engine,

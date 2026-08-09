@@ -18,6 +18,7 @@ import { z } from "zod";
 
 import { EmptyState } from "@/components/shared/empty-state";
 import { PageHeader } from "@/components/shared/page-header";
+import { ChangePasswordCard } from "@/components/admin/change-password-card";
 import { SectionCard } from "@/components/shared/section-card";
 import { StatCard } from "@/components/shared/stat-card";
 import { StatusBadge } from "@/components/shared/status-badge";
@@ -180,6 +181,9 @@ export function BusinessSettings() {
             </SectionCard>
           </div>
 
+          <div className="mt-5 grid gap-5 xl:grid-cols-[1fr_0.8fr]">
+            <ChangePasswordCard />
+          </div>
         </>
       )}
     </>

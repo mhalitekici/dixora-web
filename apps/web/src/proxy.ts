@@ -2,7 +2,13 @@ import { NextRequest, NextResponse } from "next/server";
 
 const ACCESS_COOKIE = "dixora_access";
 const REFRESH_COOKIE = "dixora_refresh";
-const protectedRoots = ["/admin", "/waiter", "/cashier", "/kitchen", "/super-admin"];
+const protectedRoots = ["/admin", "/waiter", "/cashier", "/super-admin"];
+// KITCHEN/BAR are retired presets (the kitchen display was replaced by
+// printed tickets) and deliberately have no entry here: any account still
+// carrying one of these roles has no page it's allowed to open, so it must
+// fall through to the `?? "/login"` default below rather than round-trip
+// through a home that itself gets rejected by roleCanOpen — that would be
+// an infinite redirect loop instead of a clean sign-out.
 const roleHomes: Record<string, string> = {
   SUPER_ADMIN: "/super-admin",
   BUSINESS_OWNER: "/admin",
@@ -10,8 +16,6 @@ const roleHomes: Record<string, string> = {
   ACCOUNTANT: "/admin/reports",
   CASHIER: "/cashier",
   WAITER: "/waiter/tables",
-  KITCHEN: "/kitchen",
-  BAR: "/kitchen",
 };
 
 export function proxy(request: NextRequest) {
@@ -147,9 +151,6 @@ function roleCanOpen(role: string, pathname: string) {
   if (pathname.startsWith("/cashier")) {
     return ["CASHIER", "BUSINESS_OWNER", "BUSINESS_MANAGER"].includes(role);
   }
-  if (pathname.startsWith("/kitchen")) {
-    return ["KITCHEN", "BAR", "BUSINESS_OWNER", "BUSINESS_MANAGER"].includes(role);
-  }
   return true;
 }
 
@@ -159,7 +160,6 @@ export const config = {
     "/admin/:path*",
     "/waiter/:path*",
     "/cashier/:path*",
-    "/kitchen/:path*",
     "/super-admin/:path*",
   ],
 };

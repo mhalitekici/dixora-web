@@ -5,6 +5,53 @@ from decimal import Decimal
 from tests.conftest import ApiContext, auth_headers, login, seeded_resources
 
 
+async def test_product_allergens_and_calories_round_trip_through_create_update(
+    api: ApiContext,
+) -> None:
+    owner = await login(api)
+    headers = auth_headers(owner)
+    resources = await seeded_resources(api, headers)
+    category_id = resources["burger"]["category_id"]
+
+    created = await api.client.post(
+        "/api/v1/catalog/products",
+        headers=headers,
+        json={
+            "category_id": category_id,
+            "name": "Kalori Testi Tabağı",
+            "selling_price": "120.00",
+            "allergens": ["Gluten", "Süt"],
+            "calories": 650,
+        },
+    )
+    assert created.status_code == 201, created.text
+    body = created.json()
+    assert body["allergens"] == ["Gluten", "Süt"]
+    assert body["calories"] == 650
+
+    fetched = await api.client.get(f"/api/v1/catalog/products/{body['id']}", headers=headers)
+    assert fetched.status_code == 200, fetched.text
+    assert fetched.json()["allergens"] == ["Gluten", "Süt"]
+    assert fetched.json()["calories"] == 650
+
+    updated = await api.client.patch(
+        f"/api/v1/catalog/products/{body['id']}",
+        headers=headers,
+        json={"allergens": ["Fındık"], "calories": 400},
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["allergens"] == ["Fındık"]
+    assert updated.json()["calories"] == 400
+
+    cleared = await api.client.patch(
+        f"/api/v1/catalog/products/{body['id']}",
+        headers=headers,
+        json={"calories": None},
+    )
+    assert cleared.status_code == 200, cleared.text
+    assert cleared.json()["calories"] is None
+
+
 async def test_recipe_update_replaces_ingredients_and_returns_enriched_recipe(
     api: ApiContext,
 ) -> None:

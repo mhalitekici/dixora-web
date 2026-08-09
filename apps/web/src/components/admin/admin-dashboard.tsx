@@ -8,6 +8,7 @@ import {
   BellRing,
   ChefHat,
   CircleDollarSign,
+  ClipboardCheck,
   Clock3,
   Grid2X2,
   PackageMinus,
@@ -177,7 +178,7 @@ export function AdminDashboard() {
                 icon: ChefHat,
                 label: "Hazırlık kuyruğu",
                 value: `${dashboard.waiting_preparation} sipariş`,
-                href: "/kitchen",
+                href: "/admin/live",
               },
               {
                 icon: TimerReset,
@@ -193,9 +194,9 @@ export function AdminDashboard() {
               },
               {
                 icon: BellRing,
-                label: "Yazıcı / istasyon",
+                label: "Yazıcı uyarıları",
                 value: `${dashboard.printer_warnings + dashboard.station_warnings} uyarı`,
-                href: "/admin/kitchen",
+                href: "/admin/printers",
               },
             ].map(({ icon: Icon, label, value, href }) => (
               <Link
@@ -308,7 +309,7 @@ export function AdminDashboard() {
 
       <div className="mt-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          [ChefHat, "Mutfak ekranı", "Hazırlık akışını yönet", "/kitchen"],
+          [ClipboardCheck, "Onaylar", "İptal ve indirim taleplerini yönet", "/admin/approvals"],
           [Clock3, "Canlı operasyon", "Masa ve siparişleri izle", "/admin/live"],
           [Banknote, "Kasa", "Tahsilat ve vardiya", "/cashier"],
           [PackageMinus, "Envanter", "Stok ve reçeteler", "/admin/inventory"],

@@ -6,6 +6,7 @@ from app.api import (
     businesses,
     catalog,
     dashboard,
+    hotel_rooms,
     inventory,
     kitchen,
     loyalty,
@@ -33,6 +34,7 @@ api_router.include_router(dashboard.router)
 api_router.include_router(catalog.router)
 api_router.include_router(media.router)
 api_router.include_router(tables.router)
+api_router.include_router(hotel_rooms.router)
 api_router.include_router(inventory.router)
 api_router.include_router(orders.router)
 api_router.include_router(qr.router)

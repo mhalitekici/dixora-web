@@ -26,14 +26,15 @@ export function usePublicQrMenu(
   businessSlug: string,
   branchSlug: string,
   tableToken?: string | null,
+  lang?: string,
 ) {
   return useQuery({
     queryKey: [
       ...queryKeys.qrMenu.publicMenu(businessSlug, branchSlug),
-      { tableToken: tableToken ?? null },
+      { tableToken: tableToken ?? null, lang: lang ?? "tr" },
     ],
     queryFn: ({ signal }) =>
-      qrApi.publicMenu(businessSlug, branchSlug, tableToken, signal),
+      qrApi.publicMenu(businessSlug, branchSlug, tableToken, signal, lang),
     retry: (failureCount, error) =>
       "status" in error &&
       typeof error.status === "number" &&

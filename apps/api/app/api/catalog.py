@@ -18,6 +18,7 @@ from app.errors import DomainError
 from app.models import (
     Branch,
     Category,
+    ContentTranslation,
     Modifier,
     ModifierGroup,
     PreparationStation,
@@ -28,6 +29,8 @@ from app.schemas import (
     CategoryCreate,
     CategoryOut,
     CategoryUpdate,
+    EntityTranslationsOut,
+    EntityTranslationsUpdate,
     ModifierCreate,
     ModifierGroupCreate,
     ModifierGroupOut,
@@ -44,6 +47,7 @@ from app.schemas import (
     ProductUpdate,
     StationCreate,
     StationOut,
+    TranslationFieldsOut,
 )
 from app.services.audit import add_audit_log
 from app.services.product_csv import (
@@ -54,6 +58,13 @@ from app.services.product_csv import (
     build_product_xlsx_template,
     normalize_lookup_name,
     parse_product_import,
+)
+from app.services.translation import (
+    SOURCE_LOCALE,
+    SUPPORTED_LOCALES,
+    is_supported_locale,
+    save_translation,
+    source_fingerprint,
 )
 
 router = APIRouter(prefix="/catalog", tags=["catalog"])
@@ -163,6 +174,7 @@ async def create_category(
         color=payload.color,
         sort_order=payload.sort_order,
         is_active=payload.is_active,
+        translations=payload.translations,
     )
     db.add(category)
     await db.flush()
@@ -783,6 +795,116 @@ async def delete_product(
         resource_id=product.id,
     )
     await db.commit()
+
+
+async def _product_for_translation(db: DbSession, tenant_id: UUID, product_id: UUID) -> Product:
+    product = (
+        await db.execute(
+            select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id)
+        )
+    ).scalar_one_or_none()
+    if product is None:
+        raise DomainError("product_not_found", "Product not found", status_code=404)
+    return product
+
+
+@router.get(
+    "/products/{product_id}/translations",
+    response_model=EntityTranslationsOut,
+)
+async def get_product_translations(
+    product_id: UUID,
+    identity: CatalogReader,
+    db: DbSession,
+) -> EntityTranslationsOut:
+    """Every language this business has entered for one product."""
+    tenant_id = require_tenant(identity)
+    product = await _product_for_translation(db, tenant_id, product_id)
+
+    rows = (
+        (
+            await db.execute(
+                select(ContentTranslation).where(
+                    ContentTranslation.tenant_id == tenant_id,
+                    ContentTranslation.entity_type == "product",
+                    ContentTranslation.entity_id == product.id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    by_locale: dict[str, TranslationFieldsOut] = {}
+    for row in rows:
+        entry = by_locale.setdefault(row.locale, TranslationFieldsOut())
+        source_text = product.name if row.field == "name" else (product.description or "")
+        if row.source_hash != source_fingerprint(source_text):
+            entry.stale = True
+        if row.field == "name":
+            entry.name = row.translated_text
+        elif row.field == "description":
+            entry.description = row.translated_text
+
+    return EntityTranslationsOut(
+        entity_type="product",
+        entity_id=product.id,
+        source_locale=SOURCE_LOCALE,
+        supported_locales=[code for code in SUPPORTED_LOCALES if code != SOURCE_LOCALE],
+        source=TranslationFieldsOut(name=product.name, description=product.description),
+        translations=by_locale,
+    )
+
+
+@router.put(
+    "/products/{product_id}/translations",
+    response_model=EntityTranslationsOut,
+)
+async def update_product_translations(
+    product_id: UUID,
+    payload: EntityTranslationsUpdate,
+    identity: CatalogManager,
+    db: DbSession,
+) -> EntityTranslationsOut:
+    """Save the business's own translations. Blank values clear a translation."""
+    tenant_id = require_tenant(identity)
+    product = await _product_for_translation(db, tenant_id, product_id)
+
+    for locale, fields in payload.translations.items():
+        if locale == SOURCE_LOCALE or not is_supported_locale(locale):
+            raise DomainError(
+                "unsupported_locale",
+                "This language is not available for the QR menu",
+                status_code=422,
+                details={"locale": locale},
+            )
+        for field, value, source_text in (
+            ("name", fields.name, product.name),
+            ("description", fields.description, product.description or ""),
+        ):
+            if value is None:
+                continue
+            await save_translation(
+                db,
+                tenant_id=tenant_id,
+                entity_type="product",
+                entity_id=product.id,
+                field=field,
+                locale=locale,
+                translated_text=value,
+                source_text=source_text,
+            )
+
+    add_audit_log(
+        db,
+        identity=identity,
+        action="catalog.product_translations_updated",
+        resource_type="product",
+        resource_id=product.id,
+        new_value={"locales": sorted(payload.translations)},
+    )
+    await db.commit()
+    return await get_product_translations(product_id, identity, db)
 
 
 @router.post("/stations", response_model=StationOut, status_code=status.HTTP_201_CREATED)

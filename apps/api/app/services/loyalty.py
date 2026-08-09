@@ -44,6 +44,7 @@ from app.models.enums import (
     OrderItemStatus,
     OrderStatus,
     PaymentStatus,
+    TableSessionStatus,
     TableState,
 )
 from app.security import as_utc, utcnow
@@ -1311,7 +1312,7 @@ async def _settle_fully_discounted_order(db: AsyncSession, order: Order) -> None
     if order.table_session_id is None:
         return
     table_session = await db.get(TableSession, order.table_session_id)
-    if table_session is None:
+    if table_session is None or table_session.status != TableSessionStatus.OPEN:
         return
     other_open_checks = (
         await db.execute(

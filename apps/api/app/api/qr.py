@@ -59,6 +59,12 @@ from app.services.orders import create_order
 from app.services.product_images import safe_public_image_url
 from app.services.public_refs import public_reference
 from app.services.qr_config import new_qr_menu_config
+from app.services.translation import (
+    SOURCE_LOCALE,
+    TranslationKey,
+    is_supported_locale,
+    translate_fields,
+)
 
 router = APIRouter(prefix="/qr", tags=["qr-menu"])
 QrReader = Annotated[Identity, Depends(require_permissions("qr.read"))]
@@ -191,7 +197,7 @@ async def _public_context(
             select(Tenant).where(
                 Tenant.slug == business_slug,
                 Tenant.is_active.is_(True),
-                Tenant.state.notin_(["SUSPENDED", "CANCELLED", "ARCHIVED"]),
+                Tenant.state.notin_(["PAST_DUE", "SUSPENDED", "CANCELLED", "ARCHIVED"]),
             )
         )
     ).scalar_one_or_none()
@@ -235,7 +241,7 @@ async def public_branches(
             select(Tenant).where(
                 Tenant.slug == business_slug,
                 Tenant.is_active.is_(True),
-                Tenant.state.notin_(["SUSPENDED", "CANCELLED", "ARCHIVED"]),
+                Tenant.state.notin_(["PAST_DUE", "SUSPENDED", "CANCELLED", "ARCHIVED"]),
             )
         )
     ).scalar_one_or_none()
@@ -272,8 +278,10 @@ async def public_menu(
     response: Response,
     settings: Settings = Depends(get_app_settings),
     table_token: str | None = Query(default=None, min_length=16, max_length=64),
+    lang: str = Query(default=SOURCE_LOCALE, min_length=2, max_length=12),
 ) -> PublicMenuOut:
     response.headers["Cache-Control"] = "private, no-store"
+    locale = lang if is_supported_locale(lang) else SOURCE_LOCALE
     tenant, branch, config = await _public_context(db, business_slug, branch_slug)
     table: DiningTable | None = None
     session_token: str | None = None
@@ -373,6 +381,47 @@ async def public_menu(
     group_ids_by_product: dict[UUID, list[UUID]] = {}
     for link in links:
         group_ids_by_product.setdefault(link.product_id, []).append(link.modifier_group_id)
+
+    translation_keys: list[TranslationKey] = []
+    for category in categories:
+        translation_keys.append(
+            TranslationKey("category", category.id, "name", category.name)
+        )
+        if category.description:
+            translation_keys.append(
+                TranslationKey("category", category.id, "description", category.description)
+            )
+    for product in products:
+        translation_keys.append(TranslationKey("product", product.id, "name", product.name))
+        if product.description:
+            translation_keys.append(
+                TranslationKey("product", product.id, "description", product.description)
+            )
+    for group in groups:
+        translation_keys.append(
+            TranslationKey("modifier_group", group.id, "name", group.name)
+        )
+        for modifier in group.modifiers:
+            translation_keys.append(
+                TranslationKey("modifier", modifier.id, "name", modifier.name)
+            )
+    translations = await translate_fields(
+        db,
+        tenant_id=tenant.id,
+        locale=locale,
+        keys=translation_keys,
+    )
+
+    def localized(entity_type: str, entity_id: UUID, field: str, fallback: str) -> str:
+        return translations.get((entity_type, entity_id, field), fallback)
+
+    def localized_optional(
+        entity_type: str, entity_id: UUID, field: str, fallback: str | None
+    ) -> str | None:
+        if not fallback:
+            return fallback
+        return translations.get((entity_type, entity_id, field), fallback)
+
     return PublicMenuOut(
         business=tenant.name,
         branch=branch.name,
@@ -397,8 +446,10 @@ async def public_menu(
                     kind="category",
                     resource_id=category.id,
                 ),
-                name=category.name,
-                description=category.description,
+                name=localized("category", category.id, "name", category.name),
+                description=localized_optional(
+                    "category", category.id, "description", category.description
+                ),
                 color=category.color,
                 sort_order=category.sort_order,
             )
@@ -418,11 +469,14 @@ async def public_menu(
                     kind="category",
                     resource_id=product.category_id,
                 ),
-                name=product.name,
-                description=product.description,
+                name=localized("product", product.id, "name", product.name),
+                description=localized_optional(
+                    "product", product.id, "description", product.description
+                ),
                 selling_price=product.selling_price,
                 image_url=safe_public_image_url(settings, product.image_url),
                 allergens=product.allergens,
+                calories=product.calories,
                 modifier_groups=[
                     PublicMenuModifierGroup(
                         id=public_reference(
@@ -431,7 +485,12 @@ async def public_menu(
                             kind="modifier_group",
                             resource_id=groups_by_id[group_id].id,
                         ),
-                        name=groups_by_id[group_id].name,
+                        name=localized(
+                            "modifier_group",
+                            groups_by_id[group_id].id,
+                            "name",
+                            groups_by_id[group_id].name,
+                        ),
                         is_required=groups_by_id[group_id].is_required,
                         minimum_selection=groups_by_id[group_id].minimum_selection,
                         maximum_selection=groups_by_id[group_id].maximum_selection,
@@ -443,7 +502,9 @@ async def public_menu(
                                     kind="modifier",
                                     resource_id=modifier.id,
                                 ),
-                                name=modifier.name,
+                                name=localized(
+                                    "modifier", modifier.id, "name", modifier.name
+                                ),
                                 price_delta=modifier.price_delta,
                             )
                             for modifier in groups_by_id[group_id].modifiers

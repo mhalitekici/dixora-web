@@ -9,6 +9,7 @@ import {
   CreditCard,
   ReceiptText,
   TrendingUp,
+  WalletCards,
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
@@ -28,13 +29,23 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { PageHeader } from "@/components/shared/page-header";
 import { SectionCard } from "@/components/shared/section-card";
 import { StatCard } from "@/components/shared/stat-card";
+import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
 
 import { adminApi, adminKeys } from "./admin-api";
 import {
   AdapterNotice,
+  dateTime,
   ErrorState,
   FieldError,
   LoadingState,
@@ -96,6 +107,10 @@ export function ReportDashboard() {
     queryKey: adminKeys.report(previousApiRange.from, previousApiRange.to),
     queryFn: ({ signal }) =>
       adminApi.salesSummary(previousApiRange.from, previousApiRange.to, signal),
+  });
+  const shiftHistoryQuery = useQuery({
+    queryKey: adminKeys.shiftHistory(100),
+    queryFn: ({ signal }) => adminApi.shiftHistory(100, signal),
   });
 
   const applyPreset = (days: number) => {
@@ -299,6 +314,87 @@ export function ReportDashboard() {
           )}
         </SectionCard>
       </div>
+
+      <SectionCard
+        className="mt-5"
+        title="Vardiya geçmişi"
+        description="Kasa açılış/kapanış hareketleri, beklenen ve sayılan nakit farkıyla birlikte."
+      >
+        {shiftHistoryQuery.isLoading ? (
+          <LoadingState label="Vardiyalar yükleniyor…" />
+        ) : shiftHistoryQuery.isError ? (
+          <ErrorState error={shiftHistoryQuery.error} onRetry={() => void shiftHistoryQuery.refetch()} />
+        ) : (shiftHistoryQuery.data ?? []).length === 0 ? (
+          <EmptyState
+            compact
+            title="Henüz vardiya kaydı yok"
+            description="Kasiyerler vardiya açıp kapattıkça geçmiş burada listelenir."
+            icon={WalletCards}
+          />
+        ) : (
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Kasiyer</TableHead>
+                  <TableHead>Açılış</TableHead>
+                  <TableHead>Kapanış</TableHead>
+                  <TableHead className="text-right">Açılış nakdi</TableHead>
+                  <TableHead className="text-right">Beklenen</TableHead>
+                  <TableHead className="text-right">Sayılan</TableHead>
+                  <TableHead className="text-right">Fark</TableHead>
+                  <TableHead>Durum</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {(shiftHistoryQuery.data ?? []).map((shift) => {
+                  const expected = Number(shift.opening_cash) + Number(shift.cash_sales);
+                  const variance = shift.cash_variance !== null ? Number(shift.cash_variance) : null;
+                  return (
+                    <TableRow key={shift.id}>
+                      <TableCell className="font-medium">
+                        {shift.cashier_name || shift.user_display_name || "—"}
+                        {shift.predecessor_shift_id ? (
+                          <span className="ml-1.5 text-xs text-muted-foreground">(devir)</span>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {dateTime(shift.opened_at)}
+                      </TableCell>
+                      <TableCell className="text-xs text-muted-foreground">
+                        {shift.closed_at ? dateTime(shift.closed_at) : "—"}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {money(shift.opening_cash)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">{money(expected)}</TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {shift.closing_cash !== null ? money(shift.closing_cash) : "—"}
+                      </TableCell>
+                      <TableCell
+                        className={
+                          variance === null
+                            ? "text-right tabular-nums text-muted-foreground"
+                            : Math.abs(variance) < 0.01
+                              ? "text-right tabular-nums text-emerald-600"
+                              : "text-right tabular-nums text-destructive"
+                        }
+                      >
+                        {variance === null ? "—" : money(variance)}
+                      </TableCell>
+                      <TableCell>
+                        <StatusBadge tone={shift.status === "OPEN" ? "info" : "neutral"} dot={false}>
+                          {shift.status === "OPEN" ? "Açık" : "Kapalı"}
+                        </StatusBadge>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+        )}
+      </SectionCard>
 
       <AdapterNotice className="mt-5" title="Rapor kapsamı">
         Backend şu anda yalnız satış özeti ve ödeme yöntemi kırılımı döndürüyor. Grafikler bu gerçek

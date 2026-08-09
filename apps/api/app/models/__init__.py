@@ -10,6 +10,7 @@ from app.models.catalog import (
     ProductModifierGroup,
     ProductVariant,
 )
+from app.models.hospitality import HotelRoom, HotelRoomCheckout
 from app.models.identity import (
     AuthSession,
     Branch,
@@ -20,6 +21,7 @@ from app.models.identity import (
     Tenant,
     TrustedDevice,
     User,
+    UserBranchMembership,
 )
 from app.models.inventory import (
     InventoryItem,
@@ -68,6 +70,7 @@ from app.models.subscriptions import (
     SubscriptionPlan,
     TenantFeatureOverride,
 )
+from app.models.translations import ContentTranslation
 
 __all__ = [
     "ApprovalRequest",
@@ -79,8 +82,11 @@ __all__ = [
     "Cancellation",
     "CashierShift",
     "Category",
+    "ContentTranslation",
     "DiningTable",
     "Discount",
+    "HotelRoom",
+    "HotelRoomCheckout",
     "InventoryItem",
     "InventoryLocation",
     "Invoice",
@@ -133,4 +139,5 @@ __all__ = [
     "TenantFeatureOverride",
     "TrustedDevice",
     "User",
+    "UserBranchMembership",
 ]

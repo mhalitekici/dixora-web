@@ -19,11 +19,12 @@ export const qrApi = {
     branchSlug: string,
     tableToken?: string | null,
     signal?: AbortSignal,
+    lang?: string,
   ): Promise<PublicQrMenuDto> {
     return api.get<PublicQrMenuDto>(
       `qr/public/${segment(businessSlug)}/${segment(branchSlug)}`,
       {
-        search: { table_token: tableToken || undefined },
+        search: { table_token: tableToken || undefined, lang: lang || undefined },
         signal,
       },
     )

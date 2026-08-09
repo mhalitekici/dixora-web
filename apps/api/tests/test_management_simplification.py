@@ -5,6 +5,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.models import Role, Subscription, SubscriptionPlan
+from app.rbac import ensure_role
 from tests.conftest import ApiContext, auth_headers, login, seeded_resources
 
 
@@ -33,26 +34,17 @@ async def test_role_presets_and_employee_scope_are_server_enforced(api: ApiConte
     headers = auth_headers(owner)
     roles_response = await api.client.get("/api/v1/roles", headers=headers)
     branches_response = await api.client.get("/api/v1/branches", headers=headers)
-    stations_response = await api.client.get("/api/v1/catalog/stations", headers=headers)
     assert roles_response.status_code == 200
     assert {role["code"]: role["name"] for role in roles_response.json()} == {
         "BUSINESS_ADMIN": "Yönetici",
         "BUSINESS_MANAGER": "Müdür",
         "WAITER": "Garson",
-        "KITCHEN": "Aşçı",
     }
     branch = branches_response.json()[0]
-    station = stations_response.json()[0]
     role_by_code = {role["code"]: role for role in roles_response.json()}
     assert "loyalty.manage" in role_by_code["BUSINESS_ADMIN"]["permissions"]
     assert "loyalty.manage" not in role_by_code["BUSINESS_MANAGER"]["permissions"]
     assert {"loyalty.read", "loyalty.redeem"}.issubset(role_by_code["WAITER"]["permissions"])
-    assert not any(
-        permission.startswith("loyalty.") for permission in role_by_code["KITCHEN"]["permissions"]
-    )
-    assert {"printing.read", "printing.manage"}.issubset(
-        role_by_code["KITCHEN"]["permissions"]
-    )
 
     admin_with_branch = await api.client.post(
         "/api/v1/users",
@@ -68,39 +60,6 @@ async def test_role_presets_and_employee_scope_are_server_enforced(api: ApiConte
     assert admin_with_branch.status_code == 422
     assert admin_with_branch.json()["error"]["code"] == "admin_scope_must_be_global"
 
-    kitchen_without_station = await api.client.post(
-        "/api/v1/users",
-        headers=headers,
-        json={
-            "username": "kitchen-no-station",
-            "display_name": "Kitchen No Station",
-            "role_id": role_by_code["KITCHEN"]["id"],
-            "branch_id": branch["id"],
-            "temporary_password": "Temporary!2026",
-        },
-    )
-    assert kitchen_without_station.status_code == 422
-    assert kitchen_without_station.json()["error"]["code"] == "kitchen_station_required"
-
-    kitchen = await api.client.post(
-        "/api/v1/users",
-        headers=headers,
-        json={
-            "username": "station-chef",
-            "display_name": "Station Chef",
-            "phone": "+90 555 111 22 33",
-            "role_id": role_by_code["KITCHEN"]["id"],
-            "branch_id": branch["id"],
-            "preparation_station_id": station["id"],
-            "temporary_password": "Temporary!2026",
-            "is_active": False,
-        },
-    )
-    assert kitchen.status_code == 201, kitchen.text
-    assert kitchen.json()["phone"] == "+90 555 111 22 33"
-    assert kitchen.json()["preparation_station_id"] == station["id"]
-    assert kitchen.json()["is_active"] is False
-
     async with api.database.session_factory() as session:
         owner_role_id = (
             await session.execute(
@@ -110,6 +69,31 @@ async def test_role_presets_and_employee_scope_are_server_enforced(api: ApiConte
                 )
             )
         ).scalar_one()
+        # KITCHEN is a retired preset (the kitchen display was replaced by
+        # printed tickets): simulate a tenant with a grandfathered KITCHEN
+        # role row (from before the retirement) and confirm it can no
+        # longer be assigned to new employees.
+        kitchen_role = await ensure_role(
+            session,
+            tenant_id=UUID(owner["user"]["tenant_id"]),
+            code="KITCHEN",
+            name="Aşçı",
+        )
+        kitchen_role_id = kitchen_role.id
+        await session.commit()
+    kitchen_rejected = await api.client.post(
+        "/api/v1/users",
+        headers=headers,
+        json={
+            "username": "station-chef",
+            "display_name": "Station Chef",
+            "role_id": str(kitchen_role_id),
+            "branch_id": branch["id"],
+            "temporary_password": "Temporary!2026",
+        },
+    )
+    assert kitchen_rejected.status_code == 422
+    assert kitchen_rejected.json()["error"]["code"] == "role_not_assignable"
     protected_owner_role = await api.client.post(
         "/api/v1/users",
         headers=headers,
@@ -125,12 +109,6 @@ async def test_role_presets_and_employee_scope_are_server_enforced(api: ApiConte
 
 
 async def test_employee_station_is_tenant_and_branch_scoped(api: ApiContext) -> None:
-    first_owner = await login(api)
-    first_headers = auth_headers(first_owner)
-    foreign_station = (
-        await api.client.get("/api/v1/catalog/stations", headers=first_headers)
-    ).json()[0]
-
     registration = await api.client.post(
         "/api/v1/registrations",
         json={
@@ -150,9 +128,19 @@ async def test_employee_station_is_tenant_and_branch_scoped(api: ApiContext) -> 
         business=registration.json()["business_slug"],
     )
     second_headers = auth_headers(second_owner)
-    roles = (await api.client.get("/api/v1/roles", headers=second_headers)).json()
     branch = (await api.client.get("/api/v1/branches", headers=second_headers)).json()[0]
-    kitchen_role = next(role for role in roles if role["code"] == "KITCHEN")
+
+    # KITCHEN is a retired preset; simulate a tenant with a grandfathered
+    # KITCHEN role row and confirm the retirement holds across tenants too.
+    async with api.database.session_factory() as session:
+        kitchen_role = await ensure_role(
+            session,
+            tenant_id=UUID(second_owner["user"]["tenant_id"]),
+            code="KITCHEN",
+            name="Aşçı",
+        )
+        kitchen_role_id = kitchen_role.id
+        await session.commit()
 
     response = await api.client.post(
         "/api/v1/users",
@@ -160,14 +148,13 @@ async def test_employee_station_is_tenant_and_branch_scoped(api: ApiContext) -> 
         json={
             "username": "cross-tenant-chef",
             "display_name": "Cross Tenant Chef",
-            "role_id": kitchen_role["id"],
+            "role_id": str(kitchen_role_id),
             "branch_id": branch["id"],
-            "preparation_station_id": foreign_station["id"],
             "temporary_password": "Temporary!2026",
         },
     )
-    assert response.status_code == 404
-    assert response.json()["error"]["code"] == "station_not_found"
+    assert response.status_code == 422
+    assert response.json()["error"]["code"] == "role_not_assignable"
 
 
 async def test_branch_limit_contact_and_working_hours(api: ApiContext) -> None:

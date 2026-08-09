@@ -949,6 +949,55 @@ async def add_payment(
     return payment
 
 
+async def list_approval_requests(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    branch_id: UUID,
+    status: ApprovalStatus | None = None,
+    approval_type: ApprovalType | None = None,
+    limit: int = 200,
+) -> list[ApprovalRequest]:
+    predicates = [
+        ApprovalRequest.tenant_id == tenant_id,
+        ApprovalRequest.branch_id == branch_id,
+    ]
+    if status is not None:
+        predicates.append(ApprovalRequest.status == status)
+    if approval_type is not None:
+        predicates.append(ApprovalRequest.approval_type == approval_type)
+    rows = (
+        (
+            await db.execute(
+                select(ApprovalRequest)
+                .where(*predicates)
+                .order_by(ApprovalRequest.created_at.desc())
+                .limit(limit)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
+async def count_pending_approval_requests(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    branch_id: UUID,
+) -> int:
+    return (
+        await db.execute(
+            select(func.count(ApprovalRequest.id)).where(
+                ApprovalRequest.tenant_id == tenant_id,
+                ApprovalRequest.branch_id == branch_id,
+                ApprovalRequest.status == ApprovalStatus.PENDING,
+            )
+        )
+    ).scalar_one()
+
+
 async def request_discount(
     db: AsyncSession,
     *,
@@ -1050,6 +1099,78 @@ async def approve_discount(
         resource_type="order",
         resource_id=order.id,
         new_value={"discount_amount": str(amount), "total": str(order.total)},
+        reason=approval.reason,
+    )
+    return approval
+
+
+async def reject_cancellation(
+    db: AsyncSession,
+    *,
+    approval_id: UUID,
+    identity: Identity,
+) -> ApprovalRequest:
+    approval = (
+        await db.execute(
+            select(ApprovalRequest)
+            .where(
+                ApprovalRequest.id == approval_id,
+                ApprovalRequest.tenant_id == identity.tenant_id,
+                ApprovalRequest.approval_type.in_(
+                    [ApprovalType.ITEM_CANCELLATION, ApprovalType.ORDER_VOID]
+                ),
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if approval is None:
+        raise DomainError("approval_not_found", "Approval request not found", status_code=404)
+    if approval.status != ApprovalStatus.PENDING:
+        return approval
+    approval.status = ApprovalStatus.REJECTED
+    approval.resolved_by_user_id = identity.user_id
+    approval.resolved_at = datetime.now(UTC)
+    add_audit_log(
+        db,
+        identity=identity,
+        action="cancellation.rejected",
+        resource_type="approval_request",
+        resource_id=approval.id,
+        reason=approval.reason,
+    )
+    return approval
+
+
+async def reject_discount(
+    db: AsyncSession,
+    *,
+    approval_id: UUID,
+    identity: Identity,
+) -> ApprovalRequest:
+    approval = (
+        await db.execute(
+            select(ApprovalRequest)
+            .where(
+                ApprovalRequest.id == approval_id,
+                ApprovalRequest.tenant_id == identity.tenant_id,
+                ApprovalRequest.approval_type == ApprovalType.DISCOUNT,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if approval is None:
+        raise DomainError("approval_not_found", "Approval request not found", status_code=404)
+    if approval.status != ApprovalStatus.PENDING:
+        return approval
+    approval.status = ApprovalStatus.REJECTED
+    approval.resolved_by_user_id = identity.user_id
+    approval.resolved_at = datetime.now(UTC)
+    add_audit_log(
+        db,
+        identity=identity,
+        action="discount.rejected",
+        resource_type="approval_request",
+        resource_id=approval.id,
         reason=approval.reason,
     )
     return approval
@@ -1483,6 +1604,41 @@ async def request_cancellation(
     return approval
 
 
+async def _release_table_if_no_open_checks(db: AsyncSession, order: Order) -> None:
+    """Move the table to CLEANING once its last live check goes away.
+
+    Without this a voided or fully cancelled order leaves the table parked in
+    whatever state the kitchen last set (PREPARING, READY, ...) with nothing
+    open on it, so the floor shows a busy table that no longer exists. Mirrors
+    what settling a check already does, and stops short of closing the session:
+    releasing the physical table stays an explicit operator action.
+    """
+    if not order.table_session_id:
+        return
+    table_session = await db.get(TableSession, order.table_session_id)
+    if table_session is None or table_session.status != TableSessionStatus.OPEN:
+        return
+    other_open_checks = (
+        await db.execute(
+            select(func.count(Order.id)).where(
+                Order.tenant_id == order.tenant_id,
+                Order.table_session_id == order.table_session_id,
+                Order.id != order.id,
+                Order.status.notin_(
+                    [OrderStatus.PAID, OrderStatus.CANCELLED, OrderStatus.VOIDED]
+                ),
+            )
+        )
+    ).scalar_one()
+    if other_open_checks:
+        return
+    table = await db.get(DiningTable, table_session.table_id)
+    if table is None or table.state in {TableState.AVAILABLE, TableState.DISABLED}:
+        return
+    table.state = TableState.CLEANING
+    table.version += 1
+
+
 async def approve_cancellation(
     db: AsyncSession,
     *,
@@ -1622,6 +1778,7 @@ async def approve_cancellation(
             ticket_item.status = item.status
     if approval.approval_type == ApprovalType.ORDER_VOID:
         order.status = OrderStatus.VOIDED
+        await _release_table_if_no_open_checks(db, order)
     else:
         cancelled_amount = sum((item.line_total for item in target_items), Decimal("0"))
         order.subtotal = money(max(Decimal("0"), order.subtotal - cancelled_amount))
@@ -1636,6 +1793,7 @@ async def approve_cancellation(
             for item in order.items
         ):
             order.status = OrderStatus.CANCELLED
+            await _release_table_if_no_open_checks(db, order)
     order.version += 1
     approval.status = ApprovalStatus.APPROVED
     approval.resolved_by_user_id = identity.user_id

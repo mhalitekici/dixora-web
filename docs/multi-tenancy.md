@@ -104,3 +104,36 @@ depend on secrecy of IDs.
 - Are jobs, events, files, logs, and metrics scoped?
 - Does an error reveal another tenant's existence?
 - Is the path covered by an automated negative test?
+
+## Branch scope resolution (server-side)
+
+`branch_id` frequently arrives as a query parameter or body field, so it is
+untrusted input. It is never used directly.
+
+At authentication time `get_current_identity` resolves the concrete set of
+branches the user may act in and stores it on `Identity.accessible_branch_ids`:
+
+- a user with **no primary branch** (`User.branch_id IS NULL`) spans the whole
+  business — this is how owners and administrators have always worked;
+- a user **pinned to a branch** is scoped to it, widened by any active rows in
+  `user_branch_memberships` (how one regional manager covers several branches).
+
+`require_branch(identity, requested)` then validates `requested` against that
+set and raises `branch_forbidden` (403) otherwise. Because every branch-scoped
+endpoint already funnels through this helper, adding a new endpoint that accepts
+a `branch_id` parameter inherits the check automatically — do not re-implement
+it, and never read `branch_id` straight from the request.
+
+Regression coverage lives in `tests/test_branch_isolation.py`.
+
+## Realtime fan-out and multiple workers
+
+A WebSocket lives in exactly one API worker, but the request that should notify
+it may be handled by any of them. With `DIXORA_REDIS_URL` set, `RedisRealtimeHub`
+publishes events to a **per-tenant** channel (`dixora:realtime:tenant:<uuid>`)
+and each worker delivers to its own sockets, preserving the same tenant/branch
+routing rules as the in-process hub. Workers subscribe only to tenants they
+actually serve, so isolation holds at the transport, not just at delivery.
+
+`API_WORKERS > 1` therefore **requires** `DIXORA_REDIS_URL`. Without it the API
+falls back to the process-local hub, which is correct only for a single worker.

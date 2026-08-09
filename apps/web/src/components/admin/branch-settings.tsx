@@ -2,7 +2,17 @@
 
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Building2, Clock3, LoaderCircle, MapPin, Plus, Save, Store } from "lucide-react";
+import {
+  Archive,
+  ArchiveRestore,
+  Building2,
+  Clock3,
+  LoaderCircle,
+  MapPin,
+  Plus,
+  Save,
+  Store,
+} from "lucide-react";
 import { useState } from "react";
 import { useForm, type UseFormReturn } from "react-hook-form";
 import { toast } from "sonner";
@@ -72,6 +82,10 @@ export function BranchSettings() {
     queryKey: adminKeys.branchUsage(),
     queryFn: ({ signal }) => adminApi.branchUsage(signal),
   });
+  const pricingQuery = useQuery({
+    queryKey: adminKeys.branchPricing(),
+    queryFn: ({ signal }) => adminApi.branchPricing(signal),
+  });
   const branches = branchesQuery.data ?? [];
   const selected = branches.find((branch) => branch.id === selectedId) ?? branches[0];
 
@@ -79,6 +93,7 @@ export function BranchSettings() {
     Promise.all([
       queryClient.invalidateQueries({ queryKey: adminKeys.branches() }),
       queryClient.invalidateQueries({ queryKey: adminKeys.branchUsage() }),
+      queryClient.invalidateQueries({ queryKey: adminKeys.branchPricing() }),
     ]);
   const createMutation = useMutation({
     mutationFn: adminApi.createBranch,
@@ -100,6 +115,26 @@ export function BranchSettings() {
     onError: (error) => toast.error(error instanceof Error ? error.message : "Şube güncellenemedi."),
   });
 
+  const archiveMutation = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) =>
+      adminApi.archiveBranch(id, reason),
+    onSuccess: async () => {
+      toast.success("Şube arşivlendi. Geçmiş kayıtları korunuyor.");
+      await invalidate();
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Şube arşivlenemedi."),
+  });
+  const restoreMutation = useMutation({
+    mutationFn: (id: string) => adminApi.restoreBranch(id),
+    onSuccess: async () => {
+      toast.success("Şube yeniden açıldı.");
+      await invalidate();
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Şube geri alınamadı."),
+  });
+
   const error = branchesQuery.error ?? usageQuery.error;
   if (branchesQuery.isLoading || usageQuery.isLoading) {
     return <LoadingState label="Şubeler yükleniyor…" />;
@@ -117,7 +152,16 @@ export function BranchSettings() {
   }
 
   const usage = usageQuery.data;
+  const pricing = pricingQuery.data;
   const limitLabel = usage?.max_branches === null ? "Sınırsız" : `${usage?.active_branches ?? 0}/${usage?.max_branches ?? 0}`;
+  const money = (value: string | number | undefined) =>
+    value === undefined
+      ? "—"
+      : new Intl.NumberFormat("tr-TR", {
+          style: "currency",
+          currency: pricing?.currency ?? "TRY",
+          minimumFractionDigits: 2,
+        }).format(Number(value));
 
   return (
     <>
@@ -139,6 +183,32 @@ export function BranchSettings() {
         <Summary label="Aktif şube limiti" value={limitLabel} icon={MapPin} />
         <Summary label="Toplam kayıt" value={String(usage?.total_branches ?? 0)} icon={Store} />
       </div>
+
+      {pricing && Number(pricing.base_monthly_price) > 0 ? (
+        <div className="mb-4 rounded-xl border bg-card p-4">
+          <div className="flex flex-wrap items-baseline justify-between gap-2">
+            <div>
+              <p className="text-sm font-medium">Aylık abonelik tutarı</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {pricing.included_branches} şube pakete dahil · {pricing.active_branches} aktif şube
+                {pricing.billable_extra_branches > 0
+                  ? ` · ${pricing.billable_extra_branches} ek şube × ${money(pricing.additional_branch_price)}`
+                  : ""}
+              </p>
+            </div>
+            <p className="text-2xl font-semibold tabular-nums">
+              {money(pricing.monthly_total)}
+            </p>
+          </div>
+          <p className="mt-3 border-t pt-3 text-xs text-muted-foreground">
+            Yeni bir şube açarsanız aylık tutar{" "}
+            <strong className="text-foreground">
+              {money(pricing.next_branch_monthly_total)}
+            </strong>{" "}
+            olur. Arşivlediğiniz şubeler ücretlendirilmez.
+          </p>
+        </div>
+      ) : null}
 
       {!usage?.can_create ? (
         <div className="mb-4 rounded-xl border border-amber-500/30 bg-amber-500/5 p-3 text-sm">
@@ -180,7 +250,10 @@ export function BranchSettings() {
               key={selected.id}
               branch={selected}
               pending={updateMutation.isPending}
+              archivePending={archiveMutation.isPending || restoreMutation.isPending}
               onSubmit={(input) => updateMutation.mutate({ id: selected.id, input })}
+              onArchive={() => archiveMutation.mutate({ id: selected.id })}
+              onRestore={() => restoreMutation.mutate(selected.id)}
             />
           </SectionCard>
         </div>
@@ -212,11 +285,17 @@ export function BranchSettings() {
 function BranchEditor({
   branch,
   pending,
+  archivePending,
   onSubmit,
+  onArchive,
+  onRestore,
 }: {
   branch: Branch;
   pending: boolean;
+  archivePending: boolean;
   onSubmit: (input: Parameters<typeof adminApi.updateBranch>[1]) => void;
+  onArchive: () => void;
+  onRestore: () => void;
 }) {
   const [workingHours, setWorkingHours] = useState<WorkingHours>(branch.working_hours);
   const form = useForm<BranchValues>({
@@ -246,13 +325,40 @@ function BranchEditor({
       <BranchFields form={form} slugReadOnly />
       <WorkingHoursEditor value={workingHours} onChange={setWorkingHours} />
       <div className="flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-        <div className="flex items-center gap-3">
-          <Switch
-            id="branch-active"
-            checked={branch.is_active}
-            onCheckedChange={(is_active) => onSubmit({ is_active })}
-          />
-          <Label htmlFor="branch-active">Şube operasyona açık</Label>
+        <div className="flex items-center gap-2">
+          {branch.is_active ? (
+            <Button
+              type="button"
+              variant="outline"
+              disabled={archivePending}
+              onClick={() => {
+                if (
+                  window.confirm(
+                    `${branch.name} şubesi arşivlensin mi?
+
+Yeni sipariş alınamaz ve şube değiştiricide görünmez. ` +
+                      "Geçmiş siparişler, ödemeler ve raporlar korunur; şubeyi istediğiniz zaman geri açabilirsiniz. " +
+                      "Arşivlenen şubeler faturalandırılmaz.",
+                  )
+                ) {
+                  onArchive();
+                }
+              }}
+            >
+              {archivePending ? <LoaderCircle className="animate-spin" /> : <Archive />}
+              Şubeyi arşivle
+            </Button>
+          ) : (
+            <Button type="button" variant="outline" disabled={archivePending} onClick={onRestore}>
+              {archivePending ? <LoaderCircle className="animate-spin" /> : <ArchiveRestore />}
+              Şubeyi yeniden aç
+            </Button>
+          )}
+          {!branch.is_active ? (
+            <span className="text-xs text-muted-foreground">
+              Arşivlenmiş · geçmiş kayıtlar korunuyor
+            </span>
+          ) : null}
         </div>
         <Button type="submit" disabled={pending}>
           {pending ? <LoaderCircle className="animate-spin" /> : <Save />}

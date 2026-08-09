@@ -11,9 +11,15 @@ import {
 } from "react-hook-form";
 import { z } from "zod";
 
+import { MembershipAgreementDialog } from "@/components/marketing/membership-agreement-dialog";
+import { MEMBERSHIP_AGREEMENT_VERSION } from "@/components/marketing/membership-agreement";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import {
+  ADDITIONAL_BRANCH_PRICE_LABEL,
+  BASE_MONTHLY_PRICE_LABEL,
+} from "@/lib/pricing";
 
 const registrationSchema = z.object({
   business_name: z.string().trim().min(2, "İşletme adını girin.").max(140),
@@ -80,7 +86,10 @@ export function TrialRegistrationForm() {
       const response = await fetch("/api/register", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(values),
+        body: JSON.stringify({
+          ...values,
+          contract_version: MEMBERSHIP_AGREEMENT_VERSION,
+        }),
       });
       const body = (await response.json().catch(() => null)) as
         | RegistrationResult
@@ -274,9 +283,11 @@ export function TrialRegistrationForm() {
           {...form.register("terms_accepted")}
         />
         <span>
-          Kullanım ve gizlilik koşullarını kabul ediyorum. 30 günlük deneme
-          sonunda devam etmek istersem Standard paketin aylık ₺1.499,99
-          olduğunu biliyorum.
+          <MembershipAgreementDialog /> ve gizlilik koşullarını okudum, kabul
+          ediyorum. 30 günlük deneme sonunda devam etmek istersem Standard
+          paketin 1 şube dahil aylık {BASE_MONTHLY_PRICE_LABEL} (KDV hariç),
+          her ek aktif şubenin ise aylık {ADDITIONAL_BRANCH_PRICE_LABEL} (KDV
+          hariç) olduğunu biliyorum.
         </span>
       </label>
       {errors.terms_accepted ? (

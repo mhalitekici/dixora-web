@@ -9,6 +9,7 @@ from sqlalchemy import delete, select
 from app.models import Product, QrMenuConfig
 from tests.conftest import ApiContext, auth_headers, login, seeded_resources
 from tests.test_orders import _create_burger_order
+from tests.test_tenant_isolation import _create_tenant_b
 
 
 async def test_first_qr_config_save_uses_safe_defaults_and_disabled_mode_is_private(
@@ -303,3 +304,174 @@ async def test_item_cancellation_approval_reverses_inventory(api: ApiContext) ->
     refreshed = await api.client.get(f"/api/v1/orders/{order['id']}", headers=owner_headers)
     assert refreshed.json()["items"][0]["status"] == "CANCELLED"
     assert refreshed.json()["status"] == "CANCELLED"
+
+
+async def test_cancellation_request_can_be_rejected_and_leaves_item_untouched(
+    api: ApiContext,
+) -> None:
+    owner = await login(api)
+    owner_headers = auth_headers(owner)
+    resources = await seeded_resources(api, owner_headers)
+    order = await _create_burger_order(
+        api,
+        owner_headers,
+        table_id=resources["tables"][8]["id"],
+        product_id=resources["burger"]["id"],
+        key="cancel-reject-key-0001",
+    )
+    waiter = await login(api, username="waiter@dixora.test")
+    requested = await api.client.post(
+        f"/api/v1/orders/{order['id']}/cancellation-requests",
+        headers=auth_headers(waiter),
+        json={
+            "order_item_id": order["items"][0]["id"],
+            "reason": "Kitchen asked to keep it",
+        },
+    )
+    assert requested.status_code == 201, requested.text
+    forbidden = await api.client.post(
+        f"/api/v1/orders/cancellation-requests/{requested.json()['id']}/reject",
+        headers=auth_headers(waiter),
+    )
+    assert forbidden.status_code == 403
+    rejected = await api.client.post(
+        f"/api/v1/orders/cancellation-requests/{requested.json()['id']}/reject",
+        headers=owner_headers,
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["status"] == "REJECTED"
+    # Idempotent: rejecting again is a no-op, not an error.
+    again = await api.client.post(
+        f"/api/v1/orders/cancellation-requests/{requested.json()['id']}/reject",
+        headers=owner_headers,
+    )
+    assert again.status_code == 200
+    assert again.json()["status"] == "REJECTED"
+    refreshed = await api.client.get(f"/api/v1/orders/{order['id']}", headers=owner_headers)
+    assert refreshed.json()["items"][0]["status"] != "CANCELLED"
+    assert refreshed.json()["status"] != "CANCELLED"
+
+
+async def test_approval_requests_list_and_pending_count(api: ApiContext) -> None:
+    owner = await login(api)
+    owner_headers = auth_headers(owner)
+    resources = await seeded_resources(api, owner_headers)
+    order = await _create_burger_order(
+        api,
+        owner_headers,
+        table_id=resources["tables"][9]["id"],
+        product_id=resources["burger"]["id"],
+        key="approvals-list-key-0001",
+    )
+    waiter_headers = auth_headers(await login(api, username="waiter@dixora.test"))
+
+    baseline = await api.client.get(
+        "/api/v1/orders/approval-requests/pending-count", headers=owner_headers
+    )
+    assert baseline.status_code == 200, baseline.text
+    starting_pending = baseline.json()["pending"]
+
+    discount_request = await api.client.post(
+        f"/api/v1/orders/{order['id']}/discount-requests",
+        headers=waiter_headers,
+        json={"kind": "PERCENTAGE", "value": "5", "reason": "Loyal customer"},
+    )
+    assert discount_request.status_code == 201, discount_request.text
+    cancellation_request = await api.client.post(
+        f"/api/v1/orders/{order['id']}/cancellation-requests",
+        headers=waiter_headers,
+        json={"order_item_id": order["items"][0]["id"], "reason": "Wrong item"},
+    )
+    assert cancellation_request.status_code == 201, cancellation_request.text
+
+    # Cashier/waiter permission boundary: waiter cannot read the resolution queue.
+    forbidden = await api.client.get("/api/v1/orders/approval-requests", headers=waiter_headers)
+    assert forbidden.status_code == 403
+
+    pending = await api.client.get(
+        "/api/v1/orders/approval-requests", headers=owner_headers, params={"status": "PENDING"}
+    )
+    assert pending.status_code == 200, pending.text
+    pending_ids = {row["id"] for row in pending.json()}
+    assert discount_request.json()["id"] in pending_ids
+    assert cancellation_request.json()["id"] in pending_ids
+    by_id = {row["id"]: row for row in pending.json()}
+    discount_row = by_id[discount_request.json()["id"]]
+    assert discount_row["table_name"] == resources["tables"][9]["name"]
+    assert discount_row["requested_by_name"]
+    cancellation_row = by_id[cancellation_request.json()["id"]]
+    assert cancellation_row["order_item_name"] == order["items"][0]["product_name_snapshot"]
+
+    count_after = await api.client.get(
+        "/api/v1/orders/approval-requests/pending-count", headers=owner_headers
+    )
+    assert count_after.json()["pending"] == starting_pending + 2
+
+    approve = await api.client.post(
+        f"/api/v1/orders/discount-requests/{discount_request.json()['id']}/approve",
+        headers=owner_headers,
+    )
+    assert approve.status_code == 200, approve.text
+    reject = await api.client.post(
+        f"/api/v1/orders/cancellation-requests/{cancellation_request.json()['id']}/reject",
+        headers=owner_headers,
+    )
+    assert reject.status_code == 200, reject.text
+
+    count_final = await api.client.get(
+        "/api/v1/orders/approval-requests/pending-count", headers=owner_headers
+    )
+    assert count_final.json()["pending"] == starting_pending
+
+    resolved = await api.client.get(
+        "/api/v1/orders/approval-requests",
+        headers=owner_headers,
+        params={"status": "REJECTED"},
+    )
+    assert any(row["id"] == cancellation_request.json()["id"] for row in resolved.json())
+
+
+async def test_approval_requests_are_tenant_isolated(api: ApiContext) -> None:
+    owner = await login(api)
+    owner_headers = auth_headers(owner)
+    resources = await seeded_resources(api, owner_headers)
+    order = await _create_burger_order(
+        api,
+        owner_headers,
+        table_id=resources["tables"][10]["id"],
+        product_id=resources["burger"]["id"],
+        key="approvals-isolation-key-0001",
+    )
+    discount_request = await api.client.post(
+        f"/api/v1/orders/{order['id']}/discount-requests",
+        headers=owner_headers,
+        json={"kind": "PERCENTAGE", "value": "5", "reason": "Loyal customer"},
+    )
+    assert discount_request.status_code == 201, discount_request.text
+    approval_id = discount_request.json()["id"]
+
+    other = await _create_tenant_b(api)
+    other_headers = auth_headers(
+        await login(
+            api,
+            username="owner@other.test",
+            password="Other!2026",
+            business="other-restaurant",
+        )
+    )
+
+    listed = await api.client.get("/api/v1/orders/approval-requests", headers=other_headers)
+    assert listed.status_code == 200, listed.text
+    assert all(row["id"] != approval_id for row in listed.json())
+
+    approve_attempt = await api.client.post(
+        f"/api/v1/orders/discount-requests/{approval_id}/approve",
+        headers=other_headers,
+    )
+    assert approve_attempt.status_code == 404
+    reject_attempt = await api.client.post(
+        f"/api/v1/orders/cancellation-requests/{approval_id}/reject",
+        headers=other_headers,
+    )
+    assert reject_attempt.status_code == 404
+    _ = other

@@ -48,8 +48,39 @@ class Branch(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     working_hours: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Archived branches keep every historical order, payment and audit row; they
+    # are simply retired from day-to-day operation. Kept alongside `is_active`
+    # so existing queries that filter on it keep working unchanged.
+    archived_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     tenant: Mapped[Tenant] = relationship(back_populates="branches")
+
+
+class UserBranchMembership(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """Extra branches a user may operate in, beyond their primary `User.branch_id`.
+
+    A user pinned to a branch (`User.branch_id`) is scoped to it; membership rows
+    widen that scope so one regional manager can cover, say, Erenköy and Kadıköy
+    without being granted business-wide access. Users with no primary branch
+    (owners/administrators) already span the whole business and need no rows here.
+    """
+
+    __tablename__ = "user_branch_memberships"
+    __table_args__ = (
+        UniqueConstraint("user_id", "branch_id", name="uq_user_branch_membership"),
+        Index("ix_user_branch_memberships_user_active", "user_id", "is_active"),
+    )
+
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    branch_id: Mapped[UUID] = mapped_column(
+        ForeignKey("branches.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
 
 class Permission(UUIDPrimaryKeyMixin, TimestampMixin, Base):

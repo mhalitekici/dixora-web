@@ -35,6 +35,7 @@ def test_production_accepts_generated_secrets_and_safe_flags() -> None:
         auto_create_schema=False,
         cors_origins=["https://app.dixora.example"],
         loyalty_verification_provider="disabled",
+        translation_provider="disabled",
     )
     assert settings.environment == "production"
 

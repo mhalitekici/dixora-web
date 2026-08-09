@@ -6,7 +6,7 @@ from uuid import UUID, uuid4
 
 import jwt
 from fastapi import APIRouter, Depends, Request, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -37,6 +37,7 @@ from app.schemas import (
     PinLoginRequest,
     RealtimeTicketOut,
     RefreshRequest,
+    SelfPasswordChange,
     SwitchBranchRequest,
     TenantSessionSummary,
     TrustedDeviceEnrollment,
@@ -45,6 +46,7 @@ from app.security import (
     as_utc,
     decode_token,
     generate_trusted_device_token,
+    hash_password,
     issue_token_pair,
     rotate_refresh_token,
     switch_refresh_token_branch,
@@ -53,6 +55,7 @@ from app.security import (
     verify_password,
 )
 from app.services.audit import add_audit_log
+from app.services.subscriptions import enforce_trial_expiry, tenant_access_blocked
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
@@ -319,10 +322,9 @@ async def login(
         )
         await db.commit()
         raise DomainError("invalid_credentials", "Invalid login credentials", status_code=401)
-    if not user.is_active or (
-        tenant is not None
-        and (not tenant.is_active or tenant.state.value in {"SUSPENDED", "CANCELLED", "ARCHIVED"})
-    ):
+    if tenant is not None:
+        await enforce_trial_expiry(db, tenant)
+    if not user.is_active or (tenant is not None and tenant_access_blocked(tenant)):
         raise DomainError("account_inactive", "Account or business is inactive", status_code=403)
     branch_id = await _validate_branch(db, user, payload.branch_id)
     tokens = await issue_token_pair(
@@ -403,11 +405,8 @@ async def pin_login(
             user_agent=request.headers.get("user-agent"),
         )
         raise DomainError("invalid_credentials", "Invalid login credentials", status_code=401)
-    if not tenant.is_active or tenant.state.value in {
-        "SUSPENDED",
-        "CANCELLED",
-        "ARCHIVED",
-    }:
+    await enforce_trial_expiry(db, tenant)
+    if tenant_access_blocked(tenant):
         raise DomainError("account_inactive", "Account or business is inactive", status_code=403)
     branch = (
         await db.execute(
@@ -583,6 +582,90 @@ async def logout(
     await db.commit()
 
 
+@router.post("/password", status_code=status.HTTP_204_NO_CONTENT)
+async def change_own_password(
+    payload: SelfPasswordChange,
+    request: Request,
+    identity: CurrentIdentity,
+    db: DbSession,
+) -> None:
+    """Let a signed-in user rotate their own password.
+
+    The current password is verified server-side (never trusted from the
+    client), and every *other* session for this user is revoked so a stolen
+    refresh token cannot outlive the rotation. The caller's own session is
+    intentionally preserved so changing a password does not log you out of the
+    terminal you are standing at.
+    """
+    user = (
+        await db.execute(
+            select(User)
+            .where(User.id == identity.user_id)
+            .options(selectinload(User.role).selectinload(Role.permissions))
+        )
+    ).scalar_one_or_none()
+    if user is None or not user.is_active:
+        raise DomainError("account_inactive", "Account is inactive", status_code=403)
+
+    # Repeated wrong "current password" attempts are credential guessing against
+    # an already-open session, so they are throttled like a login would be.
+    ip_address = request.client.host if request.client else None
+    credential_key = _credential_key("password-change", None, str(user.id))
+    await _enforce_login_rate_limit(
+        db,
+        get_app_settings(request),
+        action="user.password_change_failed",
+        credential_key=credential_key,
+        ip_address=ip_address,
+    )
+
+    if not verify_password(payload.current_password, user.password_hash):
+        add_audit_log(
+            db,
+            identity=identity,
+            action="user.password_change_failed",
+            resource_type="user",
+            resource_id=user.id,
+            reason=credential_key,
+            ip_address=ip_address,
+            user_agent=request.headers.get("user-agent"),
+        )
+        await db.commit()
+        raise DomainError(
+            "invalid_current_password",
+            "Mevcut şifreniz doğru değil.",
+            status_code=400,
+        )
+
+    if verify_password(payload.new_password, user.password_hash):
+        raise DomainError(
+            "password_unchanged",
+            "Yeni şifre mevcut şifreden farklı olmalı.",
+            status_code=400,
+        )
+
+    user.password_hash = hash_password(payload.new_password)
+    await db.execute(
+        update(AuthSession)
+        .where(
+            AuthSession.user_id == user.id,
+            AuthSession.id != identity.session_id,
+            AuthSession.revoked_at.is_(None),
+        )
+        .values(revoked_at=datetime.now(UTC))
+    )
+    add_audit_log(
+        db,
+        identity=identity,
+        action="user.password_changed",
+        resource_type="user",
+        resource_id=user.id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    await db.commit()
+
+
 async def _find_logout_session(
     db: AsyncSession,
     settings: Settings,
@@ -681,8 +764,11 @@ async def accessible_branches(
         Branch.tenant_id == identity.tenant_id,
         Branch.is_active.is_(True),
     ]
-    if user.branch_id is not None:
-        predicates.append(Branch.id == user.branch_id)
+    if not identity.has_all_branch_access:
+        # Offer exactly the branches this user may act in — their primary branch
+        # plus any granted memberships — so the switcher can never present a
+        # branch the API would then refuse.
+        predicates.append(Branch.id.in_(identity.accessible_branch_ids))
     branches = (
         await db.execute(
             select(Branch).where(*predicates).order_by(Branch.name, Branch.id)

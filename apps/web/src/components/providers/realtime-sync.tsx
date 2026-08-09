@@ -12,7 +12,7 @@ type RealtimeMessage = {
   refetch_required?: boolean;
 };
 
-const operationalRoots = ["/admin", "/waiter", "/cashier", "/kitchen"];
+const operationalRoots = ["/admin", "/waiter", "/cashier"];
 const allOperationalKeys: readonly QueryKey[] = [
   ["admin-operations"],
   ["dashboard"],

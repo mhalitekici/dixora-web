@@ -13,9 +13,9 @@ from sqlalchemy.orm import selectinload
 
 from app.config import Settings
 from app.errors import DomainError
-from app.models import AuthSession, Branch, Role, Tenant, User
-from app.models.enums import TenantState
+from app.models import AuthSession, Branch, Role, Tenant, User, UserBranchMembership
 from app.security import as_utc, decode_token, utcnow
+from app.services.subscriptions import enforce_trial_expiry, tenant_access_blocked
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
@@ -33,6 +33,58 @@ class Identity:
     username: str
     display_name: str
     email: str | None
+    # Every branch this user may act in, resolved server-side from their primary
+    # branch plus membership rows. Never derived from anything the browser sends.
+    accessible_branch_ids: frozenset[UUID] = frozenset()
+    # True when the user spans the whole business (owners/administrators), which
+    # is what lets them use the consolidated "all branches" views.
+    has_all_branch_access: bool = False
+
+    def can_access_branch(self, branch_id: UUID) -> bool:
+        return branch_id in self.accessible_branch_ids
+
+
+async def resolve_accessible_branches(
+    db: AsyncSession, user: User
+) -> tuple[frozenset[UUID], bool]:
+    """Resolve which branches a user may operate in, from trusted DB state only.
+
+    A user with no primary branch spans the entire business — this is the existing
+    convention for owners and administrators. A user pinned to a branch is scoped
+    to it, widened by any active membership rows.
+    """
+    if user.tenant_id is None:
+        return frozenset(), False
+
+    if user.branch_id is None:
+        branch_ids = (
+            (
+                await db.execute(
+                    select(Branch.id).where(Branch.tenant_id == user.tenant_id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        return frozenset(branch_ids), True
+
+    membership_ids = (
+        (
+            await db.execute(
+                select(UserBranchMembership.branch_id)
+                .join(Branch, Branch.id == UserBranchMembership.branch_id)
+                .where(
+                    UserBranchMembership.user_id == user.id,
+                    UserBranchMembership.tenant_id == user.tenant_id,
+                    UserBranchMembership.is_active.is_(True),
+                    Branch.tenant_id == user.tenant_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return frozenset({user.branch_id, *membership_ids}), False
 
 
 async def get_db(request: Request) -> AsyncIterator[AsyncSession]:
@@ -88,11 +140,9 @@ async def get_current_identity(
 
     if user.tenant_id is not None:
         tenant = await db.get(Tenant, user.tenant_id)
-        if (
-            tenant is None
-            or not tenant.is_active
-            or tenant.state in {TenantState.SUSPENDED, TenantState.CANCELLED, TenantState.ARCHIVED}
-        ):
+        if tenant is not None:
+            await enforce_trial_expiry(db, tenant)
+        if tenant_access_blocked(tenant):
             raise DomainError("tenant_inactive", "Business is not active", status_code=403)
         if claim_branch_id is not None:
             branch_result = await db.execute(
@@ -110,6 +160,7 @@ async def get_current_identity(
             raise DomainError("branch_forbidden", "Branch access is not allowed", status_code=403)
 
     permissions = frozenset(permission.code for permission in user.role.permissions)
+    accessible_branch_ids, has_all_branch_access = await resolve_accessible_branches(db, user)
     return Identity(
         user_id=user.id,
         tenant_id=user.tenant_id,
@@ -122,6 +173,8 @@ async def get_current_identity(
         username=user.username,
         display_name=user.display_name,
         email=user.email,
+        accessible_branch_ids=accessible_branch_ids,
+        has_all_branch_access=has_all_branch_access,
     )
 
 
@@ -155,9 +208,21 @@ def require_tenant(identity: Identity) -> UUID:
 
 
 def require_branch(identity: Identity, requested: UUID | None = None) -> UUID:
+    """Resolve the branch to operate on, enforcing server-side access.
+
+    `requested` typically arrives from a query parameter or request body, so it is
+    untrusted by definition: it is only honoured when the authenticated user has
+    been granted that branch. Anything else is a 403, never a silent scope change.
+    """
     branch_id = requested or identity.branch_id
     if branch_id is None:
         raise DomainError(
             "branch_context_required", "A branch context is required", status_code=400
+        )
+    if not identity.can_access_branch(branch_id):
+        raise DomainError(
+            "branch_forbidden",
+            "You do not have access to this branch",
+            status_code=403,
         )
     return branch_id

@@ -1,22 +1,12 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import {
-  ArrowLeft,
-  Check,
-  ChefHat,
-  Clock3,
-  Loader2,
-  ReceiptText,
-  Send,
-  Utensils,
-} from "lucide-react";
+import { ArrowLeft, Circle, Loader2, QrCode, ReceiptText } from "lucide-react";
 import Link from "next/link";
 
 import { StatusBadge } from "@/components/shared/status-badge";
 import { StaffLoyaltyPanel } from "@/components/loyalty/staff-loyalty-panel";
 import { buttonVariants } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
 
 type Order = {
   id: string;
@@ -35,25 +25,22 @@ type Order = {
   }>;
 };
 
-const steps = [
-  { status: "SUBMITTED", label: "Gönderildi", icon: Send },
-  { status: "ACCEPTED", label: "Kabul edildi", icon: Check },
-  { status: "PREPARING", label: "Hazırlanıyor", icon: ChefHat },
-  { status: "READY", label: "Hazır", icon: Utensils },
-  { status: "SERVED", label: "Servis", icon: Check },
-];
-const orderStatusRank: Record<string, number> = {
-  DRAFT: 0,
-  SUBMITTED: 1,
-  AWAITING_APPROVAL: 1,
-  ACCEPTED: 2,
-  PREPARING: 3,
-  PARTIALLY_READY: 3,
-  READY: 4,
-  SERVED: 5,
-  BILL_REQUESTED: 5,
-  PAYMENT_PENDING: 5,
-  PAID: 5,
+// Cafe-friendly order status: the kitchen (PREPARING/READY/SERVED) timeline
+// is not shown here — only the operational state relevant to the waiter.
+const statusMeta: Record<string, { label: string; tone: Parameters<typeof StatusBadge>[0]["tone"]; hint: string }> = {
+  DRAFT: { label: "Açık", tone: "info", hint: "Sipariş henüz mutfağa gönderilmedi." },
+  SUBMITTED: { label: "Açık", tone: "info", hint: "Sipariş mutfağa/bara iletildi." },
+  AWAITING_APPROVAL: { label: "Açık", tone: "info", hint: "Sipariş onay bekliyor." },
+  ACCEPTED: { label: "Açık", tone: "info", hint: "Sipariş hazırlanıyor." },
+  PREPARING: { label: "Açık", tone: "info", hint: "Sipariş hazırlanıyor." },
+  PARTIALLY_READY: { label: "Açık", tone: "info", hint: "Sipariş hazırlanıyor." },
+  READY: { label: "Açık", tone: "info", hint: "Sipariş hazır, servis bekliyor." },
+  SERVED: { label: "Açık", tone: "info", hint: "Sipariş servis edildi." },
+  BILL_REQUESTED: { label: "Hesap İstendi", tone: "purple", hint: "Hesap talebi kasaya iletildi." },
+  PAYMENT_PENDING: { label: "Ödeme Bekliyor", tone: "purple", hint: "Kasada ödeme tamamlanmayı bekliyor." },
+  PAID: { label: "Ödendi", tone: "success", hint: "Hesap tahsil edildi." },
+  CANCELLED: { label: "İptal", tone: "danger", hint: "Sipariş iptal edildi." },
+  VOIDED: { label: "İptal", tone: "danger", hint: "Sipariş iptal edildi." },
 };
 const currency = new Intl.NumberFormat("tr-TR", {
   style: "currency",
@@ -99,7 +86,7 @@ export function OrderStatusView({ orderId }: { orderId: string }) {
   }
 
   const order = query.data;
-  const rank = orderStatusRank[order.status] ?? 0;
+  const status = statusMeta[order.status] ?? { label: order.status, tone: "neutral" as const, hint: "" };
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -112,50 +99,32 @@ export function OrderStatusView({ orderId }: { orderId: string }) {
           <ArrowLeft className="size-4" />
         </Link>
         <div className="min-w-0 flex-1">
-          <h1 className="truncate text-lg font-semibold">Sipariş #{order.id.slice(0, 8)}</h1>
+          <div className="flex items-center gap-2">
+            <h1 className="truncate text-lg font-semibold">Sipariş #{order.id.slice(0, 8)}</h1>
+            {order.source === "QR" ? (
+              <span className="flex items-center gap-1 rounded-full bg-brand-soft px-2 py-0.5 text-[0.6rem] font-semibold text-brand">
+                <QrCode className="size-3" />
+                QR
+              </span>
+            ) : null}
+          </div>
           <p className="text-[0.65rem] text-muted-foreground">
-            {order.source} · {new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit" }).format(new Date(order.created_at))}
+            {new Intl.DateTimeFormat("tr-TR", { hour: "2-digit", minute: "2-digit" }).format(new Date(order.created_at))}
           </p>
         </div>
-        <StatusBadge tone={order.status === "READY" ? "success" : "brand"} pulse={order.status === "READY"}>
-          {order.status}
+        <StatusBadge tone={status.tone} pulse={order.status === "BILL_REQUESTED"}>
+          {status.label}
         </StatusBadge>
       </header>
 
-      <section className="rounded-2xl border bg-card p-4">
-        <div className="grid grid-cols-5">
-          {steps.map((step, index) => {
-            const reached = rank >= index + 1;
-            return (
-              <div key={step.status} className="relative flex flex-col items-center text-center">
-                {index > 0 ? (
-                  <span
-                    className={cn(
-                      "absolute right-1/2 top-4 h-0.5 w-full",
-                      reached ? "bg-brand" : "bg-muted",
-                    )}
-                  />
-                ) : null}
-                <span
-                  className={cn(
-                    "relative z-10 flex size-8 items-center justify-center rounded-full border",
-                    reached
-                      ? "border-brand bg-brand text-brand-foreground"
-                      : "border-border bg-card text-muted-foreground",
-                  )}
-                >
-                  <step.icon className="size-3.5" />
-                </span>
-                <span className="mt-2 text-[0.56rem] font-semibold text-muted-foreground sm:text-[0.65rem]">
-                  {step.label}
-                </span>
-              </div>
-            );
-          })}
-        </div>
-      </section>
+      {status.hint ? (
+        <section className="mb-3 flex items-center gap-2 rounded-2xl border bg-card p-4 text-sm text-muted-foreground">
+          <Circle className="size-2 shrink-0 fill-current" />
+          {status.hint}
+        </section>
+      ) : null}
 
-      <section className="mt-3 rounded-2xl border bg-card">
+      <section className="rounded-2xl border bg-card">
         <header className="flex items-center justify-between border-b p-4">
           <div>
             <h2 className="text-sm font-semibold">Sipariş kalemleri</h2>
@@ -174,10 +143,11 @@ export function OrderStatusView({ orderId }: { orderId: string }) {
                 {item.note ? (
                   <p className="mt-1 text-[0.65rem] text-amber-700">{item.note}</p>
                 ) : null}
-                <p className="mt-1 flex items-center gap-1 text-[0.62rem] text-muted-foreground">
-                  <Clock3 className="size-3" />
-                  {item.status}
-                </p>
+                {item.status === "CANCELLED" || item.status === "VOIDED" ? (
+                  <StatusBadge tone="danger" dot={false} className="mt-1.5 h-5 px-1.5 text-[0.56rem]">
+                    İptal
+                  </StatusBadge>
+                ) : null}
               </div>
               <span className="text-xs font-semibold">{currency.format(Number(item.line_total))}</span>
             </article>

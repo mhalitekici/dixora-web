@@ -1,7 +1,8 @@
-import { ChevronRight, ImageIcon, Search } from "lucide-react"
+import { Plus, Search, UtensilsCrossed } from "lucide-react"
 import Image from "next/image"
 import { useMemo } from "react"
 
+import { translate, type QrLocale } from "@/components/qr/qr-i18n"
 import type {
   QrCategoryDto,
   QrProductDto,
@@ -17,6 +18,7 @@ interface PublicMenuCatalogProps {
   currency: string
   allergensVisible: boolean
   onSelectProduct: (product: QrProductDto) => void
+  locale: QrLocale
 }
 
 export function PublicMenuCatalog({
@@ -25,6 +27,7 @@ export function PublicMenuCatalog({
   currency,
   allergensVisible,
   onSelectProduct,
+  locale,
 }: PublicMenuCatalogProps) {
   const sections = useMemo(() => {
     const byCategory = new Map<string, QrProductDto[]>()
@@ -44,91 +47,92 @@ export function PublicMenuCatalog({
 
   if (products.length === 0) {
     return (
-      <div className="mt-8 border-y border-dashed border-[#2b2522]/25 bg-[#fffaf2] px-6 py-12 text-center">
-        <Search className="mx-auto size-8 text-[#847a74]" />
-        <h2 className="mt-3 font-serif text-xl font-semibold text-[#2b2522]">
-          Ürün bulunamadı
-        </h2>
-        <p className="mt-1 text-sm text-[#756b65]">
-          Aramanızı veya kategori filtrenizi değiştirin.
+      <div className="mt-8 rounded-2xl border border-dashed bg-card px-6 py-12 text-center">
+        <Search className="mx-auto size-8 text-muted-foreground/60" />
+        <h2 className="mt-3 text-lg font-semibold">{translate(locale, "product_not_found")}</h2>
+        <p className="mt-1 text-sm text-muted-foreground">
+          {translate(locale, "product_not_found_desc")}
         </p>
       </div>
     )
   }
 
   return (
-    <div className="mt-7 space-y-10" aria-label="Ürünler">
+    <div className="mt-6 space-y-9" aria-label="Ürünler">
       {sections.map(({ category, products: categoryProducts }, sectionIndex) => (
-        <section key={category.id} aria-labelledby={`menu-category-${category.id}`}>
-          <div className="mb-3 flex items-end gap-3">
-            <span className="font-mono text-[0.62rem] font-bold uppercase tracking-[0.16em] text-[var(--qr-primary)]">
-              Menü {String(sectionIndex + 1).padStart(2, "0")}
-            </span>
-            <span className="mb-1 h-px flex-1 bg-[#2b2522]/15" aria-hidden="true" />
-          </div>
-          <div className="mb-4 flex items-baseline justify-between gap-4">
+        <section
+          key={category.id}
+          aria-labelledby={`menu-category-${category.id}`}
+          className="animate-in fade-in-0 slide-in-from-bottom-2 fill-mode-both duration-500"
+          style={{ animationDelay: `${Math.min(sectionIndex, 4) * 70}ms` }}
+        >
+          <div className="mb-3.5 flex items-center justify-between gap-3">
             <h2
               id={`menu-category-${category.id}`}
-              className="font-serif text-2xl font-semibold tracking-[-0.025em] text-[#2b2522] sm:text-3xl"
+              className="flex items-center gap-2 text-xl font-bold tracking-[-0.02em] sm:text-[1.4rem]"
             >
+              <span
+                className="size-2.5 shrink-0 rounded-full"
+                style={{ backgroundColor: category.color || "var(--qr-primary)" }}
+                aria-hidden="true"
+              />
               {category.name}
             </h2>
-            <span className="shrink-0 font-mono text-[0.65rem] text-[#847a74]">
-              {categoryProducts.length} seçenek
+            <span className="shrink-0 text-xs font-medium text-muted-foreground">
+              {translate(locale, "options_count", { n: categoryProducts.length })}
             </span>
           </div>
 
-          <div className="divide-y divide-dashed divide-[#2b2522]/20 border-y border-[#2b2522]/15 bg-[#fffaf2]">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
             {categoryProducts.map((product) => (
               <button
                 key={product.id}
                 type="button"
                 onClick={() => onSelectProduct(product)}
-                className="focus-operational group flex min-h-32 w-full items-stretch text-left transition-colors hover:bg-[color-mix(in_srgb,var(--qr-primary)_7%,#fffaf2)] sm:min-h-36"
+                className="focus-operational group flex flex-col overflow-hidden rounded-2xl border bg-card text-left shadow-[0_1px_2px_rgb(0_0_0/0.03)] transition-[transform,box-shadow,border-color] active:scale-[0.98] sm:hover:-translate-y-0.5 sm:hover:border-[var(--qr-primary)]/30 sm:hover:shadow-lg sm:hover:shadow-black/5"
               >
-                <div className="flex min-w-0 flex-1 flex-col px-4 py-4 sm:px-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <h3 className="font-serif text-lg font-semibold leading-5 text-[#2b2522] sm:text-xl">
-                      {product.name}
-                    </h3>
-                    {!product.image_url ? (
-                      <ChevronRight className="mt-0.5 size-4 shrink-0 text-[#938983] transition-transform group-hover:translate-x-0.5" />
-                    ) : null}
-                  </div>
-                  <p className="mt-2 line-clamp-2 max-w-xl text-xs leading-5 text-[#756b65] sm:text-sm">
-                    {product.description || "İçeriğini ve seçim seçeneklerini görüntüleyin."}
-                  </p>
-                  {allergensVisible && product.allergens.length > 0 ? (
-                    <p className="mt-2 line-clamp-1 text-[0.68rem] font-medium text-[#9b4e28]">
-                      Alerjen: {product.allergens.join(", ")}
-                    </p>
-                  ) : null}
-                  <p className="mt-auto pt-3 font-mono text-sm font-bold tabular-nums text-[#2b2522] sm:text-base">
-                    {formatMinorMoney(
-                      decimalToMinor(product.selling_price),
-                      currency,
-                    )}
-                  </p>
-                </div>
-
-                {product.image_url ? (
-                  <div className="relative w-28 shrink-0 overflow-hidden border-l border-[#2b2522]/10 bg-[#e8dfd2] sm:w-40">
+                <div className="relative aspect-[4/3] w-full shrink-0 overflow-hidden bg-muted">
+                  {product.image_url ? (
                     <Image
                       src={product.image_url}
                       alt=""
                       fill
-                      sizes="(max-width: 640px) 112px, 160px"
-                      className="object-cover transition-transform duration-300 motion-reduce:transition-none group-hover:scale-[1.03]"
+                      sizes="(max-width: 640px) 45vw, 280px"
+                      className="object-cover transition-transform duration-300 motion-reduce:transition-none sm:group-hover:scale-105"
                     />
-                    <span className="absolute bottom-2 right-2 bg-[#fffaf2]/95 px-2 py-1 font-mono text-[0.58rem] font-bold uppercase tracking-[0.12em] text-[#2b2522]">
-                      İncele
+                  ) : (
+                    <div className="flex h-full items-center justify-center text-muted-foreground/40">
+                      <UtensilsCrossed className="size-7" aria-hidden="true" />
+                    </div>
+                  )}
+                </div>
+
+                <div className="flex flex-1 flex-col gap-1 p-3">
+                  <h3 className="line-clamp-1 text-sm font-semibold leading-5 sm:text-base">
+                    {product.name}
+                  </h3>
+                  <p className="line-clamp-2 flex-1 text-xs leading-5 text-muted-foreground">
+                    {product.description || translate(locale, "tap_for_details")}
+                  </p>
+                  {product.calories != null ? (
+                    <p className="text-[0.68rem] font-medium tabular-nums text-muted-foreground">
+                      {product.calories} kcal
+                    </p>
+                  ) : null}
+                  {allergensVisible && product.allergens.length > 0 ? (
+                    <p className="line-clamp-1 text-[0.68rem] font-medium text-amber-700 dark:text-amber-400">
+                      {translate(locale, "allergen_label")}: {product.allergens.join(", ")}
+                    </p>
+                  ) : null}
+                  <div className="mt-1.5 flex items-center justify-between gap-2">
+                    <span className="text-sm font-bold tabular-nums text-[var(--qr-primary)] sm:text-base">
+                      {formatMinorMoney(decimalToMinor(product.selling_price), currency)}
+                    </span>
+                    <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--qr-primary)] text-[var(--qr-on-primary)] transition-transform sm:group-hover:scale-110">
+                      <Plus className="size-4" />
                     </span>
                   </div>
-                ) : (
-                  <div className="hidden w-24 shrink-0 items-center justify-center border-l border-[#2b2522]/10 bg-[#f5eee4] text-[#9a8f88] sm:flex">
-                    <ImageIcon className="size-5" aria-hidden="true" />
-                  </div>
-                )}
+                </div>
               </button>
             ))}
           </div>

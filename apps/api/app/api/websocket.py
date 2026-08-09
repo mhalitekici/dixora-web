@@ -121,4 +121,8 @@ async def websocket_endpoint(
             if message.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:
+        pass
+    finally:
+        # Any exit path must deregister, otherwise a malformed frame leaks the
+        # connection and, under Redis, keeps the tenant subscription alive.
         await hub.disconnect(tenant_id, branch_id, websocket)

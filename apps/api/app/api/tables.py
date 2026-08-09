@@ -408,6 +408,30 @@ async def close_table_session(
         raise DomainError("table_session_not_found", "Table session not found", status_code=404)
 
     if table_session.status == TableSessionStatus.CLOSED:
+        if table.state == TableState.CLEANING:
+            # This exact session was already closed (e.g. by a concurrent
+            # retry), but nothing ever moved the table itself out of
+            # CLEANING - most likely because the check was settled after
+            # the session had already closed. Self-heal instead of leaving
+            # the table stuck forever, since no newer session has claimed
+            # it (that would have moved it past CLEANING already).
+            previous_table_state = table.state.value
+            previous_version = table.version
+            table.state = TableState.AVAILABLE
+            table.version += 1
+            add_audit_log(
+                db,
+                identity=identity,
+                action="table.cleaning_auto_released",
+                resource_type="table_session",
+                resource_id=table_session.id,
+                previous_value={
+                    "table_state": previous_table_state,
+                    "table_version": previous_version,
+                },
+                new_value={"table_state": table.state.value, "table_version": table.version},
+            )
+            await db.commit()
         return TableSessionCloseOut(
             table=TableOut.model_validate(table),
             session_id=table_session.id,

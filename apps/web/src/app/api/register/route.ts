@@ -21,6 +21,7 @@ const registrationSchema = z.object({
   email: z.string().trim().email().max(255),
   password: z.string().min(10).max(256),
   terms_accepted: z.literal(true),
+  contract_version: z.string().trim().min(1).max(40).default("unknown"),
 });
 
 export async function POST(request: NextRequest): Promise<Response> {

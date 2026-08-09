@@ -24,6 +24,7 @@ import { PublicMenuHeader } from "@/components/qr/public-menu-header"
 import { QrRequestStatus } from "@/components/qr/request-status"
 import type { PublicQrRequestDto, QrProductDto } from "@/components/qr/types"
 import { readableForeground } from "@/components/qr/qr-utils"
+import { translate, useQrLocale } from "@/components/qr/qr-i18n"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -45,7 +46,8 @@ export function PublicMenu({
   branchSlug,
   tableToken = null,
 }: PublicMenuProps) {
-  const menuQuery = usePublicQrMenu(businessSlug, branchSlug, tableToken)
+  const [locale, setLocale] = useQrLocale()
+  const menuQuery = usePublicQrMenu(businessSlug, branchSlug, tableToken, locale)
   const createRequest = useCreatePublicQrRequest(businessSlug, branchSlug)
   const [search, setSearch] = useState("")
   const [categoryId, setCategoryId] = useState<string | null>(null)
@@ -69,17 +71,17 @@ export function PublicMenu({
   }, [menu, setCartContext, tableToken])
 
   const visibleProducts = useMemo(() => {
-    const normalizedSearch = search.trim().toLocaleLowerCase("tr-TR")
+    const normalizedSearch = search.trim().toLocaleLowerCase(locale)
     return (menu?.products ?? []).filter((product) => {
       const inCategory = !categoryId || product.category_id === categoryId
       const matchesSearch =
         !normalizedSearch ||
         `${product.name} ${product.description ?? ""}`
-          .toLocaleLowerCase("tr-TR")
+          .toLocaleLowerCase(locale)
           .includes(normalizedSearch)
       return inCategory && matchesSearch
     })
-  }, [categoryId, menu?.products, search])
+  }, [categoryId, menu?.products, search, locale])
 
   if (menuQuery.isLoading) {
     return <PublicMenuSkeleton />
@@ -89,12 +91,12 @@ export function PublicMenu({
     const message =
       menuQuery.error instanceof ApiError
         ? menuQuery.error.message
-        : "Menü şu anda görüntülenemiyor."
+        : translate(locale, "menu_generic_error")
     return (
       <main className="grid min-h-dvh place-items-center bg-background px-5">
         <section className="w-full max-w-md rounded-3xl border bg-card p-7 text-center">
           <AlertCircle className="mx-auto size-10 text-destructive" />
-          <h1 className="mt-4 text-xl font-semibold">Menüye ulaşılamadı</h1>
+          <h1 className="mt-4 text-xl font-semibold">{translate(locale, "menu_unreachable_title")}</h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
             {message}
           </p>
@@ -103,7 +105,7 @@ export function PublicMenu({
             className="mt-5 h-11 rounded-xl"
             onClick={() => void menuQuery.refetch()}
           >
-            Tekrar dene
+            {translate(locale, "retry")}
           </Button>
         </section>
       </main>
@@ -115,6 +117,7 @@ export function PublicMenu({
       <QrRequestStatus
         request={submittedRequest}
         business={menu.business}
+        locale={locale}
         onBack={() => setSubmittedRequest(null)}
       />
     )
@@ -163,7 +166,7 @@ export function PublicMenu({
       idempotencyKeyRef.current = null
       setCartOpen(false)
       setSubmittedRequest(result)
-      toast.success("Sipariş talebiniz gönderildi")
+      toast.success(translate(locale, "order_request_sent"))
     } catch (error) {
       if (
         error instanceof ApiError &&
@@ -171,82 +174,79 @@ export function PublicMenu({
       ) {
         await menuQuery.refetch()
       }
-      toast.error("Sipariş gönderilemedi", {
+      toast.error(translate(locale, "order_request_failed"), {
         description:
           error instanceof Error
             ? error.message
-            : "Lütfen bağlantınızı kontrol edip tekrar deneyin.",
+            : translate(locale, "order_request_failed_desc"),
       })
     }
   }
 
   return (
-    <div
-      style={style}
-      className="min-h-dvh bg-[#f3ede3] text-[#2b2522] [color-scheme:light]"
-    >
+    <div style={style} className="min-h-dvh bg-background text-foreground">
       <QrBrandIntro
         businessSlug={businessSlug}
         branchSlug={branchSlug}
         logoUrl={menu.config.logo_url}
         primaryColor={primary}
       />
-      <PublicMenuHeader menu={menu} />
+      <PublicMenuHeader menu={menu} locale={locale} onLocaleChange={setLocale} />
 
       <main className="mx-auto max-w-4xl px-4 pb-32 pt-6 sm:px-8 sm:pt-8">
         <PublicLoyalty businessSlug={businessSlug} branchSlug={branchSlug} />
         {!orderingEnabled ? (
-          <div className="mb-6 flex gap-3 border-y border-[#c8612f]/25 bg-[#fff7ed] px-4 py-3.5 text-sm text-[#713a22]">
+          <div className="mb-6 flex gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3.5 text-sm text-amber-900 dark:text-amber-200">
             <UtensilsCrossed className="mt-0.5 size-5 shrink-0 text-[var(--qr-primary)]" />
             <div>
-              <p className="font-semibold">Menü görüntüleme modu</p>
+              <p className="font-semibold">{translate(locale, "view_mode_title")}</p>
               <p className="mt-0.5 leading-5 opacity-80">
                 {tableToken
-                  ? "İşletme şu anda QR üzerinden sipariş almıyor."
-                  : "Sipariş vermek için masanızdaki QR kodunu okutun."}
+                  ? translate(locale, "view_mode_no_table")
+                  : translate(locale, "view_mode_scan_qr")}
               </p>
             </div>
           </div>
         ) : null}
 
-        <div className="sticky top-0 z-20 -mx-4 border-b border-[#2b2522]/10 bg-[#f3ede3]/95 px-4 pb-3 pt-2 backdrop-blur sm:-mx-8 sm:px-8">
+        <div className="sticky top-0 z-20 -mx-4 border-b bg-background/95 px-4 pb-3 pt-2 backdrop-blur-xl sm:-mx-8 sm:px-8">
           <div className="relative">
-            <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-[#776d67]" />
+            <Search className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
             <Input
               type="search"
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Menüde ara"
-              aria-label="Menüde ara"
-              className="h-12 rounded-xl border-[#2b2522]/15 bg-[#fffaf2] pl-10 text-[#2b2522] shadow-none placeholder:text-[#8f847e]"
+              placeholder={translate(locale, "search_placeholder")}
+              aria-label={translate(locale, "search_placeholder")}
+              className="h-12 rounded-xl bg-card pl-10 shadow-none"
             />
           </div>
           <nav
-            aria-label="Menü kategorileri"
+            aria-label={translate(locale, "all_categories")}
             className="scrollbar-subtle mt-3 flex gap-2 overflow-x-auto pb-1"
           >
             <button
               type="button"
               onClick={() => setCategoryId(null)}
               className={cn(
-                "focus-operational min-h-9 shrink-0 rounded-lg border px-3.5 text-xs font-bold transition-colors",
+                "focus-operational min-h-9 shrink-0 rounded-xl border px-3.5 text-xs font-bold transition-[color,background-color,border-color,transform] duration-200",
                 categoryId === null
-                  ? "border-transparent bg-[var(--qr-primary)] text-[var(--qr-on-primary)]"
-                  : "border-[#2b2522]/15 bg-[#fffaf2] text-[#665d58] hover:border-[#2b2522]/30",
+                  ? "scale-105 border-transparent bg-[var(--qr-primary)] text-[var(--qr-on-primary)]"
+                  : "bg-card text-muted-foreground hover:border-[var(--qr-primary)]/30",
               )}
             >
-              Tümü
+              {translate(locale, "all_categories")}
             </button>
-            {menu.categories.map((category) => (
+            {(menu.categories ?? []).map((category) => (
               <button
                 key={category.id}
                 type="button"
                 onClick={() => setCategoryId(category.id)}
                 className={cn(
-                  "focus-operational min-h-9 shrink-0 rounded-lg border px-3.5 text-xs font-bold transition-colors",
+                  "focus-operational min-h-9 shrink-0 rounded-xl border px-3.5 text-xs font-bold transition-[color,background-color,border-color,transform] duration-200",
                   categoryId === category.id
-                    ? "border-transparent bg-[var(--qr-primary)] text-[var(--qr-on-primary)]"
-                    : "border-[#2b2522]/15 bg-[#fffaf2] text-[#665d58] hover:border-[#2b2522]/30",
+                    ? "scale-105 border-transparent bg-[var(--qr-primary)] text-[var(--qr-on-primary)]"
+                    : "bg-card text-muted-foreground hover:border-[var(--qr-primary)]/30",
                 )}
               >
                 {category.name}
@@ -254,10 +254,10 @@ export function PublicMenu({
             ))}
           </nav>
           <p
-            className="mt-2 font-mono text-[0.62rem] uppercase tracking-[0.12em] text-[#847a74]"
+            className="mt-2 text-[0.68rem] font-medium uppercase tracking-[0.1em] text-muted-foreground"
             aria-live="polite"
           >
-            {visibleProducts.length} ürün gösteriliyor
+            {translate(locale, "products_showing", { n: visibleProducts.length })}
           </p>
         </div>
 
@@ -267,21 +267,25 @@ export function PublicMenu({
           currency={menu.config.currency}
           allergensVisible={menu.config.allergens_visible}
           onSelectProduct={setSelectedProduct}
+          locale={locale}
         />
       </main>
 
       {cartCount > 0 ? (
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t bg-card/95 p-3 backdrop-blur sm:px-6">
+        <div className="animate-in slide-in-from-bottom-4 fade-in-0 fixed inset-x-0 bottom-0 z-30 border-t bg-card/95 p-3 backdrop-blur duration-300 sm:px-6">
           <Button
             type="button"
             onClick={() => setCartOpen(true)}
             className="mx-auto flex h-12 w-full max-w-lg rounded-xl bg-[var(--qr-primary)] px-4 text-[var(--qr-on-primary)] hover:opacity-90"
           >
-            <span className="flex size-7 items-center justify-center rounded-full bg-black/15 text-xs font-bold">
+            <span
+              key={cartCount}
+              className="animate-in zoom-in-50 flex size-7 items-center justify-center rounded-full bg-black/15 text-xs font-bold duration-200"
+            >
               {cartCount}
             </span>
             <ShoppingBag />
-            Sepeti görüntüle
+            {translate(locale, "view_cart")}
             <ChevronRight className="ml-auto" />
           </Button>
         </div>
@@ -294,12 +298,13 @@ export function PublicMenu({
           currency={menu.config.currency}
           orderingEnabled={orderingEnabled}
           open
+          locale={locale}
           onOpenChange={(open) => {
             if (!open) setSelectedProduct(null)
           }}
           onAdd={(line) => {
             addLine(line)
-            toast.success("Ürün sepete eklendi")
+            toast.success(translate(locale, "product_added"))
           }}
         />
       ) : null}
@@ -313,6 +318,7 @@ export function PublicMenu({
         customerNotesEnabled={menu.config.customer_notes_enabled !== false}
         submitting={createRequest.isPending}
         onSubmit={(note) => void submitRequest(note)}
+        locale={locale}
       />
     </div>
   )
@@ -320,19 +326,19 @@ export function PublicMenu({
 
 function PublicMenuSkeleton() {
   return (
-    <div className="min-h-dvh bg-[#f3ede3]" aria-busy="true" aria-label="Menü yükleniyor">
-      <Skeleton className="h-64 w-full rounded-none bg-[#393431]" />
+    <div className="min-h-dvh bg-background" aria-busy="true" aria-label="Menü yükleniyor">
+      <Skeleton className="h-56 w-full rounded-none sm:h-64" />
       <div className="mx-auto max-w-4xl space-y-5 px-4 py-6 sm:px-8">
-        <Skeleton className="h-12 w-full rounded-xl bg-[#e4dacd]" />
+        <Skeleton className="h-12 w-full rounded-xl" />
         <div className="flex gap-2">
           {[1, 2, 3, 4].map((item) => (
-            <Skeleton key={item} className="h-9 w-24 rounded-lg bg-[#e4dacd]" />
+            <Skeleton key={item} className="h-9 w-24 rounded-xl" />
           ))}
         </div>
-        <Skeleton className="mt-8 h-8 w-48 rounded-md bg-[#e4dacd]" />
-        <div className="divide-y divide-[#d9cdbf] border-y border-[#d9cdbf]">
-          {[1, 2, 3, 4].map((item) => (
-            <Skeleton key={item} className="h-32 rounded-none bg-[#eee5d9]" />
+        <Skeleton className="mt-4 h-7 w-40 rounded-md" />
+        <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+          {[1, 2, 3, 4, 5, 6].map((item) => (
+            <Skeleton key={item} className="aspect-[4/3] rounded-2xl" />
           ))}
         </div>
       </div>

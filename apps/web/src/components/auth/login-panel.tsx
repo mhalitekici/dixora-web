@@ -50,12 +50,17 @@ export type LoginMode = "password" | "pin";
 const pinLoginEnabled =
   process.env.NEXT_PUBLIC_ENABLE_PIN_LOGIN === "true";
 
+// KITCHEN/BAR are retired role presets (the kitchen display was replaced by
+// printed tickets); any account still carrying one of them has no page left
+// to open, so it's handled as a distinct case in onPasswordSubmit rather
+// than falling through to targetForRole's "/admin" default.
+const RETIRED_ROLES = new Set(["KITCHEN", "BAR"]);
+
 function targetForRole(roleValue: unknown) {
   const role = String(roleValue ?? "").toUpperCase();
   if (role.includes("SUPER_ADMIN")) return "/super-admin";
   if (role.includes("WAITER")) return "/waiter/tables";
   if (role.includes("CASHIER")) return "/cashier";
-  if (role.includes("KITCHEN") || role.includes("BAR")) return "/kitchen";
   return "/admin";
 }
 
@@ -136,6 +141,13 @@ export function LoginPanel({
         (typeof data?.user?.roles?.[0] === "string"
           ? data.user.roles[0]
           : data?.user?.roles?.[0]?.code);
+      if (RETIRED_ROLES.has(String(role ?? "").toUpperCase())) {
+        await fetch("/api/auth/logout", { method: "POST" });
+        toast.error("Bu hesap türü artık kullanılamıyor", {
+          description: "Lütfen yöneticinizle görüşün.",
+        });
+        return;
+      }
       toast.success("Giriş başarılı", {
         description: "Güvenli çalışma alanınız hazırlanıyor.",
       });

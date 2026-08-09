@@ -232,6 +232,7 @@ export type Branch = {
   phone: string | null;
   working_hours: WorkingHours;
   is_active: boolean;
+  archived_at: string | null;
 };
 
 export type DayHours = {
@@ -252,6 +253,17 @@ export type WorkingHours = Partial<
     DayHours
   >
 >;
+
+export type BranchPricing = {
+  currency: string;
+  base_monthly_price: string;
+  included_branches: number;
+  additional_branch_price: string;
+  active_branches: number;
+  billable_extra_branches: number;
+  monthly_total: string;
+  next_branch_monthly_total: string;
+};
 
 export type BranchUsage = {
   plan_name: string | null;
@@ -354,6 +366,55 @@ export type AuditLog = {
   new_value: unknown;
   reason: string | null;
   timestamp: string;
+};
+
+export type ApprovalType =
+  | "DISCOUNT"
+  | "ITEM_CANCELLATION"
+  | "ORDER_VOID"
+  | "STOCK_OVERRIDE"
+  | "TABLE_TRANSFER";
+
+export type ApprovalStatus = "PENDING" | "APPROVED" | "REJECTED" | "CANCELLED";
+
+export type ApprovalRequest = {
+  id: string;
+  order_id: string | null;
+  order_item_id: string | null;
+  approval_type: ApprovalType;
+  status: ApprovalStatus;
+  payload: Record<string, unknown>;
+  reason: string;
+  created_at: string;
+  resolved_at: string | null;
+  requested_by_user_id: string;
+  requested_by_name: string | null;
+  resolved_by_user_id: string | null;
+  resolved_by_name: string | null;
+  table_name: string | null;
+  order_item_name: string | null;
+  order_total: string | null;
+};
+
+export type CashierShift = {
+  id: string;
+  tenant_id: string;
+  branch_id: string;
+  user_id: string;
+  user_display_name: string | null;
+  cashier_name: string | null;
+  predecessor_shift_id: string | null;
+  status: string;
+  opening_cash: string;
+  opening_note: string | null;
+  closing_cash: string | null;
+  cash_sales: string;
+  card_sales: string;
+  total_sales: string;
+  cash_variance: string | null;
+  opened_at: string;
+  closed_at: string | null;
+  closing_note: string | null;
 };
 
 export type Tenant = {

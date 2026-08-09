@@ -1,9 +1,14 @@
 import { api } from "@/lib/api";
 
 import type {
+  ApprovalRequest,
+  ApprovalStatus,
+  ApprovalType,
   AuditLog,
   Branch,
+  BranchPricing,
   BranchUsage,
+  CashierShift,
   DashboardSummary,
   DiningTable,
   Employee,
@@ -34,6 +39,10 @@ export const adminKeys = {
     [...adminKeys.root, "orders", status, offset, limit] as const,
   order: (id: string) => [...adminKeys.root, "order", id] as const,
   qrRequests: (status: string) => [...adminKeys.root, "qr-requests", status] as const,
+  approvalRequests: (status: string, approvalType: string) =>
+    [...adminKeys.root, "approval-requests", status, approvalType] as const,
+  approvalPendingCount: () => [...adminKeys.root, "approval-requests", "pending-count"] as const,
+  shiftHistory: (limit: number) => [...adminKeys.root, "shift-history", limit] as const,
   stations: (branchId = "current") => [...adminKeys.root, "stations", branchId] as const,
   printJobs: (branchId = "current") => [...adminKeys.root, "print-jobs", branchId] as const,
   printerDevices: (branchId: string) =>
@@ -43,6 +52,7 @@ export const adminKeys = {
   employees: () => [...adminKeys.root, "employees"] as const,
   branches: () => [...adminKeys.root, "branches"] as const,
   branchUsage: () => [...adminKeys.root, "branch-usage"] as const,
+  branchPricing: () => [...adminKeys.root, "branch-pricing"] as const,
   roles: () => [...adminKeys.root, "roles"] as const,
   permissions: () => [...adminKeys.root, "permissions"] as const,
   report: (from: string, to: string) => [...adminKeys.root, "report", from, to] as const,
@@ -71,6 +81,30 @@ export const adminApi = {
     api.get<QrRequest[]>("qr/requests", { search: { status }, signal }),
   approveQrRequest: (id: string) => api.post<QrRequest>(`qr/requests/${id}/approve`),
   rejectQrRequest: (id: string) => api.post<QrRequest>(`qr/requests/${id}/reject`),
+  approvalRequests: (
+    input: { status?: ApprovalStatus | "ALL"; approvalType?: ApprovalType | "ALL" } = {},
+    signal?: AbortSignal,
+  ) =>
+    api.get<ApprovalRequest[]>("orders/approval-requests", {
+      search: {
+        status: input.status && input.status !== "ALL" ? input.status : undefined,
+        approval_type:
+          input.approvalType && input.approvalType !== "ALL" ? input.approvalType : undefined,
+      },
+      signal,
+    }),
+  approvalPendingCount: (signal?: AbortSignal) =>
+    api.get<{ pending: number }>("orders/approval-requests/pending-count", { signal }),
+  approveDiscountRequest: (id: string) =>
+    api.post<ApprovalRequest>(`orders/discount-requests/${id}/approve`),
+  rejectDiscountRequest: (id: string) =>
+    api.post<ApprovalRequest>(`orders/discount-requests/${id}/reject`),
+  approveCancellationRequest: (id: string) =>
+    api.post<ApprovalRequest>(`orders/cancellation-requests/${id}/approve`),
+  rejectCancellationRequest: (id: string) =>
+    api.post<ApprovalRequest>(`orders/cancellation-requests/${id}/reject`),
+  shiftHistory: (limit = 100, signal?: AbortSignal) =>
+    api.get<CashierShift[]>("shifts/history", { search: { limit }, signal }),
   stations: (signal?: AbortSignal, branchId?: string) =>
     api.get<Station[]>("catalog/stations", {
       search: { branch_id: branchId },
@@ -156,6 +190,11 @@ export const adminApi = {
   branches: (signal?: AbortSignal) => api.get<Branch[]>("branches", { signal }),
   branchUsage: (signal?: AbortSignal) =>
     api.get<BranchUsage>("branches/usage", { signal }),
+  branchPricing: (signal?: AbortSignal) =>
+    api.get<BranchPricing>("branches/pricing", { signal }),
+  archiveBranch: (id: string, reason?: string) =>
+    api.post<Branch>(`branches/${id}/archive`, { reason: reason ?? null }),
+  restoreBranch: (id: string) => api.post<Branch>(`branches/${id}/restore`, {}),
   createBranch: (input: {
     name: string;
     slug: string;

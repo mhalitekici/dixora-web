@@ -9,23 +9,37 @@ import {
   ChevronRight,
   CircleDollarSign,
   CircleOff,
+  ClipboardCheck,
+  Copy,
   CreditCard,
   DoorClosed,
   Grid2X2,
   Loader2,
   Merge,
+  MonitorDot,
   MoreHorizontal,
   Plus,
   Printer,
+  QrCode,
   ReceiptText,
   Search,
   Split,
   Tags,
+  Volume2,
+  VolumeX,
   WalletCards,
+  X,
 } from "lucide-react";
+import Link from "next/link";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import {
+  useApproveQrRequest,
+  useQrRequests,
+  useRejectQrRequest,
+} from "@/components/qr/qr-hooks";
+import type { QrRequestDto } from "@/components/qr/types";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { StaffLoyaltyPanel } from "@/components/loyalty/staff-loyalty-panel";
@@ -55,6 +69,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { formatDateTime, formatRelativeTime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 
 import {
@@ -62,6 +77,7 @@ import {
   selectCurrentTableOrder,
   terminalOrderStatuses,
 } from "./cashier-rules";
+import { useAlertChime } from "./use-alert-chime";
 
 type Area = { id: string; name: string };
 type DiningTable = {
@@ -88,7 +104,20 @@ type OrderItem = {
   status: string;
   note?: string | null;
 };
-type Payment = { id: string; method: string; amount: string | number; status: string };
+type Payment = {
+  id: string;
+  method: string;
+  amount: string | number;
+  status: string;
+  reference?: string | null;
+};
+type HotelRoomSummary = {
+  id: string;
+  room_number: string;
+  status: "VACANT" | "OCCUPIED";
+  guest_name: string | null;
+  folio_reference: string | null;
+};
 type Order = {
   id: string;
   table_id?: string | null;
@@ -108,6 +137,31 @@ type ApprovalRequest = {
   order_id: string;
   order_item_id: string | null;
   status: string;
+};
+type ApprovalSummary = {
+  id: string;
+  order_id: string | null;
+  approval_type: "DISCOUNT" | "ITEM_CANCELLATION" | "ORDER_VOID" | "STOCK_OVERRIDE" | "TABLE_TRANSFER";
+  status: string;
+  reason: string;
+  created_at: string;
+  table_name: string | null;
+  order_item_name: string | null;
+  requested_by_name: string | null;
+};
+type PrintJobSummary = {
+  id: string;
+  kind: "ORIGINAL" | "COPY" | "REPRINT";
+  payload: Record<string, unknown>;
+  created_at: string;
+};
+type CashierShiftSummary = {
+  id: string;
+  status: string;
+  cashier_name?: string | null;
+  opening_cash: string | number;
+  cash_sales: string | number;
+  card_sales: string | number;
 };
 type MergeCandidate = {
   table: DiningTable;
@@ -134,6 +188,30 @@ function unwrap<T>(value: unknown): T[] {
   return [];
 }
 
+class ApiCallError extends Error {
+  code?: string;
+  constructor(message: string, code?: string) {
+    super(message);
+    this.code = code;
+  }
+}
+
+const PAYMENT_METHOD_LABELS: Record<string, string> = {
+  CASH: "Nakit",
+  CARD: "Kart",
+  ROOM_CHARGE: "Oda",
+};
+
+const CLOSE_TABLE_ERROR_MESSAGES: Record<string, string> = {
+  table_has_open_orders: "Masayı kapatmadan önce açık siparişleri ödeyin veya iptal edin.",
+  table_has_unsettled_balance: "Masada tahsil edilmemiş veya iade edilmemiş bir bakiye var. Lütfen ödemeleri kontrol edin.",
+  table_version_conflict: "Masa bilgisi güncellendi, lütfen tekrar deneyin.",
+  table_session_conflict: "Masada birden fazla açık oturum var, önce bunları çözün.",
+  table_disabled: "Devre dışı masalar kapatılamaz.",
+  table_session_not_open: "Bu oturum zaten kapatılmış.",
+};
+
+
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/backend${path}`, {
     ...init,
@@ -144,35 +222,135 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     | {
         detail?: string;
         message?: string;
-        error?: { message?: string };
+        error?: { message?: string; code?: string };
       }
     | null;
   if (!response.ok) {
     const error = payload as {
       detail?: string;
       message?: string;
-      error?: { message?: string };
+      error?: { message?: string; code?: string };
     } | null;
-    throw new Error(
-      error?.error?.message ??
+    const code = error?.error?.code;
+    throw new ApiCallError(
+      (code && CLOSE_TABLE_ERROR_MESSAGES[code]) ??
+        error?.error?.message ??
         error?.detail ??
         error?.message ??
         "İşlem tamamlanamadı.",
+      code,
     );
   }
   return payload as T;
 }
 
-const tableState: Record<string, { label: string; tone: Parameters<typeof StatusBadge>[0]["tone"]; color: string }> = {
-  AVAILABLE: { label: "Müsait", tone: "neutral", color: "border-border" },
-  OCCUPIED: { label: "Açık", tone: "info", color: "border-blue-500/30" },
-  ORDER_PENDING: { label: "Sipariş", tone: "warning", color: "border-amber-500/35" },
-  PREPARING: { label: "Hazırlık", tone: "brand", color: "border-brand/35" },
-  READY: { label: "Hazır", tone: "success", color: "border-emerald-500/40" },
-  BILL_REQUESTED: { label: "Hesap", tone: "purple", color: "border-violet-500/40" },
-  PAYMENT_PENDING: { label: "Ödeme", tone: "purple", color: "border-violet-500/40" },
-  CLEANING: { label: "Kapanış", tone: "neutral", color: "border-slate-500/30" },
+// Cafe-friendly table states: kitchen prep/ready states are collapsed into
+// a single "Dolu" state so the cashier isn't shown a kitchen timeline.
+// Each state gets a distinct, high-contrast card treatment (not just a
+// border tint) so open vs. empty tables are legible at a glance.
+type TableStateMeta = {
+  label: string;
+  tone: Parameters<typeof StatusBadge>[0]["tone"];
+  card: string;
+  badge: string;
+  dot: string;
+  pulse?: boolean;
 };
+const tableState: Record<string, TableStateMeta> = {
+  AVAILABLE: {
+    label: "Boş",
+    tone: "success",
+    card: "border-emerald-300/70 bg-emerald-50 hover:border-emerald-400 dark:border-emerald-500/25 dark:bg-emerald-500/10",
+    badge: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300",
+    dot: "bg-emerald-500",
+  },
+  OCCUPIED: {
+    label: "Dolu",
+    tone: "info",
+    card: "border-blue-300/70 bg-blue-50 hover:border-blue-400 dark:border-blue-500/25 dark:bg-blue-500/10",
+    badge: "bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-300",
+    dot: "bg-blue-500",
+  },
+  ORDER_PENDING: {
+    label: "Dolu",
+    tone: "info",
+    card: "border-blue-300/70 bg-blue-50 hover:border-blue-400 dark:border-blue-500/25 dark:bg-blue-500/10",
+    badge: "bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-300",
+    dot: "bg-blue-500",
+  },
+  PREPARING: {
+    label: "Dolu",
+    tone: "info",
+    card: "border-blue-300/70 bg-blue-50 hover:border-blue-400 dark:border-blue-500/25 dark:bg-blue-500/10",
+    badge: "bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-300",
+    dot: "bg-blue-500",
+  },
+  READY: {
+    label: "Dolu",
+    tone: "info",
+    card: "border-blue-300/70 bg-blue-50 hover:border-blue-400 dark:border-blue-500/25 dark:bg-blue-500/10",
+    badge: "bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-300",
+    dot: "bg-blue-500",
+  },
+  BILL_REQUESTED: {
+    label: "Hesap İstendi",
+    tone: "purple",
+    card: "border-violet-400 bg-violet-100 hover:border-violet-500 dark:border-violet-500/40 dark:bg-violet-500/15",
+    badge: "bg-violet-200 text-violet-900 dark:bg-violet-500/25 dark:text-violet-200",
+    dot: "bg-violet-500",
+    pulse: true,
+  },
+  PAYMENT_PENDING: {
+    label: "Ödeme Bekliyor",
+    tone: "warning",
+    card: "border-amber-400 bg-amber-100 hover:border-amber-500 dark:border-amber-500/40 dark:bg-amber-500/15",
+    badge: "bg-amber-200 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200",
+    dot: "bg-amber-500",
+    pulse: true,
+  },
+  CLEANING: {
+    label: "Temizleniyor",
+    tone: "neutral",
+    card: "border-slate-300 bg-slate-100 dark:border-slate-500/25 dark:bg-slate-500/10",
+    badge: "bg-slate-200 text-slate-700 dark:bg-slate-500/20 dark:text-slate-300",
+    dot: "bg-slate-400",
+  },
+  DISABLED: {
+    label: "Kapalı",
+    tone: "neutral",
+    card: "border-border bg-muted/40 opacity-70",
+    badge: "bg-muted text-muted-foreground",
+    dot: "bg-muted-foreground/40",
+  },
+};
+const TABLE_LEGEND: Array<{ label: string; dot: string }> = [
+  { label: "Boş", dot: "bg-emerald-500" },
+  { label: "Dolu", dot: "bg-blue-500" },
+  { label: "Hesap İstendi", dot: "bg-violet-500" },
+  { label: "Ödeme Bekliyor", dot: "bg-amber-500" },
+];
+
+// Cafe-friendly order status: hides the kitchen (PREPARING/READY/SERVED)
+// timeline and shows only the operational state the cashier acts on.
+const orderStatusLabel: Record<string, string> = {
+  DRAFT: "Açık",
+  SUBMITTED: "Açık",
+  AWAITING_APPROVAL: "Açık",
+  ACCEPTED: "Açık",
+  PREPARING: "Açık",
+  PARTIALLY_READY: "Açık",
+  READY: "Açık",
+  SERVED: "Açık",
+  BILL_REQUESTED: "Hesap İstendi",
+  PAYMENT_PENDING: "Ödeme Bekliyor",
+  PAID: "Ödendi",
+  CANCELLED: "İptal",
+  VOIDED: "İptal",
+};
+
+function simplifiedOrderStatus(status: string): string {
+  return orderStatusLabel[status] ?? status;
+}
 
 const loyaltyEligibleOrderStatuses = new Set([
   "ACCEPTED",
@@ -223,11 +401,14 @@ export function CashierWorkspace() {
     | "split"
     | "cancel-item"
     | "close-table"
+    | "qr-queue"
+    | "approvals-queue"
     | null
   >(null);
   const [productSearch, setProductSearch] = useState("");
   const [paymentMethod, setPaymentMethod] = useState("CASH");
   const [paymentAmount, setPaymentAmount] = useState("");
+  const [roomReference, setRoomReference] = useState("");
   const [discountKind, setDiscountKind] = useState("PERCENTAGE");
   const [discountValue, setDiscountValue] = useState("10");
   const [reason, setReason] = useState("");
@@ -261,6 +442,30 @@ export function CashierWorkspace() {
         await api<unknown>("/catalog/products?limit=200"),
       ).filter((item) => item.is_available),
   });
+  const shiftQuery = useQuery({
+    queryKey: ["shifts", "current"],
+    queryFn: async () => api<CashierShiftSummary | null>("/shifts/current"),
+    refetchInterval: 30_000,
+  });
+  const hotelRoomsQuery = useQuery({
+    queryKey: ["cashier", "hotel-rooms"],
+    queryFn: async () => api<HotelRoomSummary[]>("/hotel-rooms"),
+    staleTime: 30_000,
+  });
+  const occupiedRoomReferences = (hotelRoomsQuery.data ?? [])
+    .filter((room) => room.status === "OCCUPIED" && room.folio_reference)
+    .map((room) => room.folio_reference as string);
+  const qrRequestsQuery = useQrRequests("PENDING");
+  const approveQrRequest = useApproveQrRequest();
+  const rejectQrRequest = useRejectQrRequest();
+  const approvalsQuery = useQuery({
+    queryKey: ["cashier", "approval-requests", "PENDING"],
+    queryFn: async () =>
+      unwrap<ApprovalSummary>(
+        await api<unknown>("/orders/approval-requests?status=PENDING"),
+      ),
+    refetchInterval: 10_000,
+  });
 
   const areas = areasQuery.data ?? [];
   const tables = useMemo(() => tablesQuery.data ?? [], [tablesQuery.data]);
@@ -287,14 +492,35 @@ export function CashierWorkspace() {
           ? "Kapanıştan sonra masa yeniden sipariş almaya açılır."
           : "Bu masa oturumu kapatılmaya uygun değil.";
 
+  const qrPendingRequests = useMemo(() => qrRequestsQuery.data ?? [], [qrRequestsQuery.data]);
+  const qrPendingTableIds = useMemo(
+    () => new Set(qrPendingRequests.map((request) => request.table_id)),
+    [qrPendingRequests],
+  );
+
+  const {
+    alerting: qrAlerting,
+    acknowledge: acknowledgeQrAlert,
+    soundEnabled: alertSoundEnabled,
+    setSoundPreference: setAlertSoundEnabled,
+  } = useAlertChime(qrPendingRequests.length, !qrRequestsQuery.isLoading);
+  const billRequestedCount = orders.filter((order) => order.status === "BILL_REQUESTED").length;
+  const pendingApprovals = approvalsQuery.data ?? [];
+
   const filteredTables = useMemo(
     () =>
-      tables.filter((table) => {
-        const areaMatch = selectedArea === "all" || table.area_id === selectedArea;
-        const searchMatch = table.name.toLocaleLowerCase("tr-TR").includes(tableSearch.toLocaleLowerCase("tr-TR"));
-        return areaMatch && searchMatch;
-      }),
-    [selectedArea, tableSearch, tables],
+      tables
+        .filter((table) => {
+          const areaMatch = selectedArea === "all" || table.area_id === selectedArea;
+          const searchMatch = table.name.toLocaleLowerCase("tr-TR").includes(tableSearch.toLocaleLowerCase("tr-TR"));
+          return areaMatch && searchMatch;
+        })
+        .sort((a, b) => {
+          const priority = (table: DiningTable) =>
+            table.state === "BILL_REQUESTED" ? 0 : qrPendingTableIds.has(table.id) ? 1 : 2;
+          return priority(a) - priority(b);
+        }),
+    [selectedArea, tableSearch, tables, qrPendingTableIds],
   );
   const filteredProducts = products.filter((product) =>
     product.name.toLocaleLowerCase("tr-TR").includes(productSearch.toLocaleLowerCase("tr-TR")),
@@ -351,12 +577,16 @@ export function CashierWorkspace() {
   const paymentMutation = useMutation({
     mutationFn: async () => {
       if (!selectedOrder) throw new Error("Canlı sipariş verisi bulunamadı.");
+      if (paymentMethod === "ROOM_CHARGE" && !roomReference.trim()) {
+        throw new Error("Oda numarası veya adı girin.");
+      }
       return api(`/orders/${selectedOrder.id}/payments`, {
         method: "POST",
         body: JSON.stringify({
           method: paymentMethod,
           amount: paymentAmount,
           idempotency_key: crypto.randomUUID(),
+          reference: paymentMethod === "ROOM_CHARGE" ? roomReference.trim() : null,
         }),
       });
     },
@@ -365,6 +595,7 @@ export function CashierWorkspace() {
         description: `${currency.format(Number(paymentAmount))} · ${paymentMethod}`,
       });
       setDialog(null);
+      setRoomReference("");
       refreshOperations();
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Ödeme kaydedilemedi."),
@@ -532,6 +763,54 @@ export function CashierWorkspace() {
       ),
   });
 
+  const approveCancellationMutation = useMutation({
+    mutationFn: async (approval: ApprovalSummary) =>
+      api(`/orders/cancellation-requests/${approval.id}/approve`, { method: "POST" }),
+    onSuccess: () => {
+      toast.success("İptal talebi onaylandı");
+      refreshOperations();
+      void approvalsQuery.refetch();
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Talep onaylanamadı."),
+  });
+
+  const rejectCancellationMutation = useMutation({
+    mutationFn: async (approval: ApprovalSummary) =>
+      api(`/orders/cancellation-requests/${approval.id}/reject`, { method: "POST" }),
+    onSuccess: () => {
+      toast.success("İptal talebi reddedildi");
+      refreshOperations();
+      void approvalsQuery.refetch();
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Talep reddedilemedi."),
+  });
+
+  async function handleApproveQr(request: QrRequestDto) {
+    try {
+      await approveQrRequest.mutateAsync(request.id);
+      toast.success("QR siparişi onaylandı ve siparişe aktarıldı");
+      refreshOperations();
+    } catch (error) {
+      toast.error("QR siparişi onaylanamadı", {
+        description: error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
+      });
+    }
+  }
+
+  async function handleRejectQr(request: QrRequestDto) {
+    try {
+      await rejectQrRequest.mutateAsync(request.id);
+      toast.success("QR siparişi reddedildi");
+      refreshOperations();
+    } catch (error) {
+      toast.error("QR siparişi reddedilemedi", {
+        description: error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
+      });
+    }
+  }
+
   const splitMutation = useMutation({
     mutationFn: async () => {
       if (!selectedOrder) throw new Error("Canlı sipariş verisi bulunamadı.");
@@ -554,8 +833,21 @@ export function CashierWorkspace() {
     onError: (error) => toast.error(error instanceof Error ? error.message : "Hesap bölünemedi."),
   });
 
+  const printJobsQuery = useQuery({
+    queryKey: ["cashier", "print-jobs", selectedOrder?.id],
+    queryFn: async () =>
+      unwrap<PrintJobSummary>(
+        await api<unknown>(`/printing/jobs?order_id=${selectedOrder?.id}`),
+      ),
+    enabled: Boolean(selectedOrder?.id),
+  });
+  const billPrintJobs = (printJobsQuery.data ?? []).filter(
+    (job) => (job.payload as { type?: string })?.type === "BILL",
+  );
+  const hasOriginalBillPrint = billPrintJobs.some((job) => job.kind !== "REPRINT");
+
   const printMutation = useMutation({
-    mutationFn: async () => {
+    mutationFn: async (kind: "ORIGINAL" | "REPRINT") => {
       if (!selectedOrder) throw new Error("Canlı sipariş verisi bulunamadı.");
       return api("/printing/jobs", {
         method: "POST",
@@ -565,14 +857,29 @@ export function CashierWorkspace() {
             type: "BILL",
             order_id: selectedOrder.id,
             table_name: selectedTable?.name,
-            copy: true,
+            copy: kind === "REPRINT",
+            stage: selectedOrder.status === "PAID" ? "CLOSING" : "PRE_PAYMENT",
           },
-          kind: "REPRINT",
-          idempotency_key: `bill-reprint:${selectedOrder.id}:${crypto.randomUUID()}`,
+          kind,
+          idempotency_key:
+            kind === "ORIGINAL"
+              ? `bill-original:${selectedOrder.id}`
+              : `bill-reprint:${selectedOrder.id}:${crypto.randomUUID()}`,
         }),
       });
     },
-    onSuccess: () => toast.success("Yeniden baskı kuyruğa alındı", { description: "Fiş REPRINT olarak işaretlendi." }),
+    onSuccess: (_, kind) => {
+      toast.success(
+        kind === "ORIGINAL" ? "Hesap fişi yazdırılıyor" : "Yeniden baskı kuyruğa alındı",
+        {
+          description:
+            kind === "ORIGINAL"
+              ? "Fiş ilk kez ORIGINAL olarak basılıyor."
+              : "Fiş REPRINT olarak denetim kaydına yazıldı.",
+        },
+      );
+      void printJobsQuery.refetch();
+    },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Baskı işi oluşturulamadı."),
   });
 
@@ -638,7 +945,120 @@ export function CashierWorkspace() {
   }
 
   return (
-    <div className="grid min-h-[calc(100dvh-4rem)] bg-muted/25 xl:grid-cols-[280px_minmax(0,1fr)_350px]">
+    <div className="flex min-h-[calc(100dvh-4rem)] flex-col bg-muted/25">
+      <div className="flex flex-wrap items-center gap-2 border-b bg-card px-4 py-2.5">
+        {shiftQuery.data ? (
+          <Link
+            href="/cashier/shift"
+            className="flex items-center gap-2 rounded-xl border border-emerald-500/25 bg-emerald-500/10 px-3 py-1.5 text-xs font-semibold text-emerald-700 dark:text-emerald-300"
+            title="Vardiya özetini görüntüle, kapat veya devret"
+          >
+            <MonitorDot className="size-3.5" />
+            {shiftQuery.data.cashier_name || "Vardiya Açık"}
+            <span className="hidden text-[0.68rem] font-normal opacity-80 sm:inline">
+              Açılış {currency.format(Number(shiftQuery.data.opening_cash))}
+            </span>
+          </Link>
+        ) : null}
+        <button
+          type="button"
+          onClick={() => {
+            const table = tables.find((item) => item.state === "BILL_REQUESTED");
+            if (table) setSelectedTableId(table.id);
+          }}
+          disabled={billRequestedCount === 0}
+          className={cn(
+            "flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors",
+            billRequestedCount > 0
+              ? "border-violet-500/30 bg-violet-500/10 text-violet-700 dark:text-violet-300"
+              : "border-border bg-muted/50 text-muted-foreground",
+          )}
+          title="Hesap isteyen masalar sol listede önceliklidir"
+        >
+          <ReceiptText className="size-3.5" />
+          Hesap İstekleri
+          <span className="rounded-full bg-current/15 px-1.5 tabular-nums">{billRequestedCount}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            acknowledgeQrAlert();
+            setDialog("qr-queue");
+          }}
+          className={cn(
+            "flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors",
+            qrPendingRequests.length > 0
+              ? "border-brand/30 bg-brand-soft text-brand"
+              : "border-border bg-muted/50 text-muted-foreground",
+          )}
+        >
+          <QrCode className="size-3.5" />
+          QR Siparişleri
+          <span className="rounded-full bg-current/15 px-1.5 tabular-nums">{qrPendingRequests.length}</span>
+        </button>
+        <button
+          type="button"
+          onClick={() => setDialog("approvals-queue")}
+          className={cn(
+            "flex items-center gap-2 rounded-xl border px-3 py-1.5 text-xs font-semibold transition-colors",
+            pendingApprovals.length > 0
+              ? "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300"
+              : "border-border bg-muted/50 text-muted-foreground",
+          )}
+        >
+          <ClipboardCheck className="size-3.5" />
+          Onay Bekleyenler
+          <span className="rounded-full bg-current/15 px-1.5 tabular-nums">{pendingApprovals.length}</span>
+        </button>
+      </div>
+      {qrAlerting ? (
+        <div
+          role="alert"
+          aria-live="assertive"
+          className="flex flex-wrap items-center gap-3 border-b border-brand/30 bg-brand-soft px-4 py-3 text-sm"
+        >
+          <span className="relative flex size-2.5 shrink-0">
+            <span className="absolute inline-flex size-full animate-ping rounded-full bg-brand/60 motion-reduce:animate-none" />
+            <span className="relative inline-flex size-2.5 rounded-full bg-brand" />
+          </span>
+          <span className="font-semibold text-brand">
+            {qrPendingRequests.length} yeni QR sipariş talebi bekliyor
+          </span>
+          <div className="ml-auto flex items-center gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={() => setAlertSoundEnabled(!alertSoundEnabled)}
+              aria-pressed={alertSoundEnabled}
+              title={alertSoundEnabled ? "Sesi kapat" : "Sesi aç"}
+            >
+              {alertSoundEnabled ? (
+                <Volume2 className="size-4" />
+              ) : (
+                <VolumeX className="size-4" />
+              )}
+              <span className="sr-only">
+                {alertSoundEnabled ? "Uyarı sesini kapat" : "Uyarı sesini aç"}
+              </span>
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={acknowledgeQrAlert}>
+              Sesi durdur
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={() => {
+                acknowledgeQrAlert();
+                setDialog("qr-queue");
+              }}
+            >
+              Kuyruğu aç
+            </Button>
+          </div>
+        </div>
+      ) : null}
+      <div className="grid flex-1 xl:grid-cols-[280px_minmax(0,1fr)_350px]">
       <aside className="border-r bg-card xl:min-h-[calc(100dvh-4rem)]">
         <div className="border-b p-3">
           <div className="mb-3 flex items-center justify-between">
@@ -686,28 +1106,57 @@ export function CashierWorkspace() {
             </button>
           ))}
         </div>
-        <ScrollArea className="h-[320px] xl:h-[calc(100dvh-13.4rem)]">
+        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-2">
+          {TABLE_LEGEND.map((item) => (
+            <span key={item.label} className="flex items-center gap-1.5 text-[0.62rem] font-medium text-muted-foreground">
+              <span className={cn("size-2 rounded-full", item.dot)} />
+              {item.label}
+            </span>
+          ))}
+        </div>
+        <ScrollArea className="h-[320px] xl:h-[calc(100dvh-15.4rem)]">
           <div className="grid grid-cols-2 gap-2 p-2 xl:grid-cols-1">
             {filteredTables.map((table) => {
               const meta = tableState[table.state] ?? tableState.AVAILABLE;
               const order = selectCurrentTableOrder(orders, table);
+              const hasQrRequest = qrPendingTableIds.has(table.id);
               return (
                 <button
                   type="button"
                   key={table.id}
                   onClick={() => setSelectedTableId(table.id)}
                   className={cn(
-                    "flex min-h-18 items-center gap-3 rounded-xl border bg-card p-2.5 text-left transition-colors",
-                    meta.color,
-                    selectedTableId === table.id && "border-primary bg-primary/[0.035] ring-2 ring-primary/10",
+                    "relative flex min-h-19 items-center gap-3 rounded-xl border-2 p-2.5 text-left transition-colors",
+                    meta.card,
+                    selectedTableId === table.id && "border-primary ring-2 ring-primary/20",
                   )}
                 >
-                  <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-muted text-sm font-bold">
+                  {hasQrRequest ? (
+                    <span
+                      className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-sm"
+                      title="QR sipariş talebi var"
+                    >
+                      <QrCode className="size-3" />
+                    </span>
+                  ) : null}
+                  <span
+                    className={cn(
+                      "flex size-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold",
+                      meta.badge,
+                    )}
+                  >
                     {table.name}
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span className="block text-xs font-semibold">{meta.label}</span>
-                    <span className="mt-0.5 block truncate text-[0.62rem] text-muted-foreground">
+                    <span className="flex items-center gap-1.5">
+                      <span className={cn("relative flex size-1.5 shrink-0 rounded-full", meta.dot)}>
+                        {meta.pulse ? (
+                          <span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-60", meta.dot)} />
+                        ) : null}
+                      </span>
+                      <span className="text-xs font-bold uppercase tracking-wide">{meta.label}</span>
+                    </span>
+                    <span className="mt-0.5 block truncate text-[0.68rem] font-medium text-muted-foreground">
                       {order ? currency.format(Number(order.total)) : `${table.capacity} kişilik`}
                     </span>
                   </span>
@@ -731,7 +1180,7 @@ export function CashierWorkspace() {
               </h2>
               {selectedOrder ? (
                 <StatusBadge tone={tableState[selectedTable?.state ?? "AVAILABLE"]?.tone ?? "neutral"}>
-                  {selectedOrder.status}
+                  {simplifiedOrderStatus(selectedOrder.status)}
                 </StatusBadge>
               ) : null}
             </div>
@@ -765,21 +1214,11 @@ export function CashierWorkspace() {
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-semibold">{item.product_name_snapshot}</p>
                       <div className="mt-1 flex items-center gap-2">
-                        <StatusBadge
-                          tone={
-                            item.status === "READY"
-                              ? "success"
-                              : item.status === "PREPARING"
-                                ? "brand"
-                                : item.status === "SERVED"
-                                  ? "neutral"
-                                  : "info"
-                          }
-                          dot={false}
-                          className="h-5 px-1.5 text-[0.56rem]"
-                        >
-                          {item.status}
-                        </StatusBadge>
+                        {terminalItemStatuses.has(item.status) ? (
+                          <StatusBadge tone="danger" dot={false} className="h-5 px-1.5 text-[0.56rem]">
+                            İptal
+                          </StatusBadge>
+                        ) : null}
                         {item.note ? <span className="truncate text-[0.62rem] text-amber-700">{item.note}</span> : null}
                       </div>
                     </div>
@@ -859,7 +1298,7 @@ export function CashierWorkspace() {
           </div>
         </ScrollArea>
 
-        <footer className="grid grid-cols-2 gap-2 border-t bg-card p-3 sm:grid-cols-4">
+        <footer className="grid grid-cols-2 gap-2 border-t bg-card p-3 sm:grid-cols-3 lg:grid-cols-5">
           <Button
             variant="outline"
             className="h-10 rounded-xl"
@@ -906,9 +1345,37 @@ export function CashierWorkspace() {
             <Merge />
             Masaları birleştir
           </Button>
-          <Button variant="outline" className="h-10 rounded-xl" disabled={!selectedOrder || printMutation.isPending} onClick={() => printMutation.mutate()}>
-            {printMutation.isPending ? <Loader2 className="animate-spin" /> : <Printer />}
+          <Button
+            variant="outline"
+            className="h-10 rounded-xl"
+            disabled={!selectedOrder || printMutation.isPending}
+            onClick={() => printMutation.mutate("ORIGINAL")}
+            title="Hesap fişini ilk kez yazdır"
+          >
+            {printMutation.isPending && printMutation.variables === "ORIGINAL" ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <Printer />
+            )}
             Fiş yazdır
+          </Button>
+          <Button
+            variant="outline"
+            className="h-10 rounded-xl"
+            disabled={!selectedOrder || printMutation.isPending || !hasOriginalBillPrint}
+            onClick={() => printMutation.mutate("REPRINT")}
+            title={
+              hasOriginalBillPrint
+                ? "Fişi REPRINT olarak yeniden yazdır"
+                : "Önce hesap fişini bir kez yazdırın"
+            }
+          >
+            {printMutation.isPending && printMutation.variables === "REPRINT" ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <Copy />
+            )}
+            Yeniden yazdır
           </Button>
         </footer>
       </section>
@@ -972,6 +1439,7 @@ export function CashierWorkspace() {
             }
             onClick={() => {
               setPaymentAmount(remaining.toFixed(2));
+              setRoomReference("");
               setDialog("payment");
             }}
           >
@@ -1039,9 +1507,20 @@ export function CashierWorkspace() {
                 {selectedOrder.payments.map((payment) => (
                   <div key={payment.id} className="flex items-center gap-2 rounded-xl bg-muted/45 p-2.5">
                     <span className="flex size-8 items-center justify-center rounded-lg bg-card">
-                      {payment.method === "CASH" ? <Banknote className="size-4" /> : <CreditCard className="size-4" />}
+                      {payment.method === "CASH" ? (
+                        <Banknote className="size-4" />
+                      ) : payment.method === "ROOM_CHARGE" ? (
+                        <ReceiptText className="size-4" />
+                      ) : (
+                        <CreditCard className="size-4" />
+                      )}
                     </span>
-                    <span className="min-w-0 flex-1 text-xs font-semibold">{payment.method}</span>
+                    <span className="min-w-0 flex-1 text-xs font-semibold">
+                      {PAYMENT_METHOD_LABELS[payment.method] ?? payment.method}
+                      {payment.reference ? (
+                        <span className="ml-1 font-normal text-muted-foreground">· {payment.reference}</span>
+                      ) : null}
+                    </span>
                     <span className="text-xs font-semibold">{currency.format(Number(payment.amount))}</span>
                   </div>
                 ))}
@@ -1055,6 +1534,7 @@ export function CashierWorkspace() {
           </div>
         </div>
       </aside>
+      </div>
 
       <Dialog
         open={dialog === "close-table"}
@@ -1073,7 +1553,9 @@ export function CashierWorkspace() {
           <div className="rounded-xl border bg-muted/35 p-3 text-sm">
             <div className="flex items-center justify-between gap-3">
               <span className="text-muted-foreground">Hesap durumu</span>
-              <span className="font-semibold">{selectedOrder?.status ?? "—"}</span>
+              <span className="font-semibold">
+                {selectedOrder ? simplifiedOrderStatus(selectedOrder.status) : "—"}
+              </span>
             </div>
             <div className="mt-2 flex items-center justify-between gap-3">
               <span className="text-muted-foreground">Kalan bakiye</span>
@@ -1176,6 +1658,30 @@ export function CashierWorkspace() {
                 })}
               </div>
             </div>
+            {paymentMethod === "ROOM_CHARGE" ? (
+              <div className="space-y-2">
+                <Label htmlFor="payment-room-reference">Oda numarası / adı</Label>
+                <Input
+                  id="payment-room-reference"
+                  value={roomReference}
+                  onChange={(event) => setRoomReference(event.target.value)}
+                  placeholder="Örn. 214 veya Ahmet Yılmaz"
+                  className="h-11 rounded-xl"
+                  list="occupied-room-references"
+                  autoFocus
+                />
+                <datalist id="occupied-room-references">
+                  {occupiedRoomReferences.map((reference) => (
+                    <option key={reference} value={reference} />
+                  ))}
+                </datalist>
+                {occupiedRoomReferences.length > 0 ? (
+                  <p className="text-xs text-muted-foreground">
+                    Şu an dolu odalar: {occupiedRoomReferences.join(", ")}
+                  </p>
+                ) : null}
+              </div>
+            ) : null}
             <div className="space-y-2">
               <Label htmlFor="payment-amount">Tutar</Label>
               <Input
@@ -1209,6 +1715,7 @@ export function CashierWorkspace() {
               disabled={
                 !Number(paymentAmount) ||
                 Number(paymentAmount) > remaining ||
+                (paymentMethod === "ROOM_CHARGE" && !roomReference.trim()) ||
                 paymentMutation.isPending
               }
               onClick={() => paymentMutation.mutate()}
@@ -1377,7 +1884,7 @@ export function CashierWorkspace() {
                 <SelectContent>
                   {mergeCandidates.map(({ table, order }) => (
                     <SelectItem key={table.id} value={table.id}>
-                      {table.name} · {order.status} ·{" "}
+                      {table.name} · {simplifiedOrderStatus(order.status)} ·{" "}
                       {currency.format(Number(order.total))}
                     </SelectItem>
                   ))}
@@ -1595,6 +2102,188 @@ export function CashierWorkspace() {
               Alt hesap oluştur
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={dialog === "qr-queue"} onOpenChange={(open) => !open && setDialog(null)}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>QR sipariş talepleri</DialogTitle>
+            <DialogDescription>
+              Onaylanan talepler doğrudan siparişe dönüşür ve masa hesabına eklenir.
+            </DialogDescription>
+          </DialogHeader>
+          {qrRequestsQuery.isLoading ? (
+            <div className="flex min-h-32 items-center justify-center">
+              <Loader2 className="size-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : qrRequestsQuery.isError ? (
+            <div className="flex min-h-32 flex-col items-center justify-center text-center">
+              <AlertTriangle className="size-7 text-destructive" />
+              <p className="mt-3 text-sm font-semibold">QR talepleri alınamadı</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => void qrRequestsQuery.refetch()}
+              >
+                Tekrar dene
+              </Button>
+            </div>
+          ) : qrPendingRequests.length === 0 ? (
+            <div className="flex min-h-32 flex-col items-center justify-center text-center">
+              <QrCode className="size-7 text-muted-foreground/50" />
+              <p className="mt-3 text-sm font-semibold">Bekleyen QR talebi yok</p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                Yeni müşteri talepleri geldiğinde burada görünür.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {qrPendingRequests.map((request) => {
+                const table = tables.find((item) => item.id === request.table_id);
+                const itemCount = request.items_payload.reduce((total, item) => {
+                  const quantity = Number((item as { quantity?: unknown }).quantity);
+                  return total + (Number.isFinite(quantity) ? quantity : 0);
+                }, 0);
+                const approving =
+                  approveQrRequest.isPending && approveQrRequest.variables === request.id;
+                const rejecting =
+                  rejectQrRequest.isPending && rejectQrRequest.variables === request.id;
+                return (
+                  <article key={request.id} className="rounded-xl border bg-card p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-semibold">{table?.name ?? "Masa"}</p>
+                      <span className="text-xs text-muted-foreground">
+                        {formatRelativeTime(request.created_at)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {itemCount} ürün · {formatDateTime(request.created_at)}
+                    </p>
+                    {request.customer_note ? (
+                      <p className="mt-2 rounded-lg border border-amber-500/15 bg-amber-500/5 p-2 text-xs italic text-amber-900 dark:text-amber-200">
+                        “{request.customer_note}”
+                      </p>
+                    ) : null}
+                    <div className="mt-3 grid grid-cols-2 gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        disabled={approving || rejecting}
+                        onClick={() => void handleRejectQr(request)}
+                      >
+                        {rejecting ? <Loader2 className="animate-spin" /> : <X />}
+                        Reddet
+                      </Button>
+                      <Button
+                        size="sm"
+                        disabled={approving || rejecting}
+                        onClick={() => void handleApproveQr(request)}
+                      >
+                        {approving ? <Loader2 className="animate-spin" /> : <Check />}
+                        Onayla
+                      </Button>
+                    </div>
+                  </article>
+                );
+              })}
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={dialog === "approvals-queue"} onOpenChange={(open) => !open && setDialog(null)}>
+        <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>Onay bekleyenler</DialogTitle>
+            <DialogDescription>
+              Ürün iptal taleplerini burada onaylayabilirsiniz. İndirim talepleri yönetici
+              onayı gerektirir.
+            </DialogDescription>
+          </DialogHeader>
+          {approvalsQuery.isLoading ? (
+            <div className="flex min-h-32 items-center justify-center">
+              <Loader2 className="size-5 animate-spin text-muted-foreground" />
+            </div>
+          ) : approvalsQuery.isError ? (
+            <div className="flex min-h-32 flex-col items-center justify-center text-center">
+              <AlertTriangle className="size-7 text-destructive" />
+              <p className="mt-3 text-sm font-semibold">Onay talepleri alınamadı</p>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => void approvalsQuery.refetch()}
+              >
+                Tekrar dene
+              </Button>
+            </div>
+          ) : pendingApprovals.length === 0 ? (
+            <div className="flex min-h-32 flex-col items-center justify-center text-center">
+              <ClipboardCheck className="size-7 text-muted-foreground/50" />
+              <p className="mt-3 text-sm font-semibold">Bekleyen talep yok</p>
+            </div>
+          ) : (
+            <div className="space-y-2">
+              {pendingApprovals.map((approval) => {
+                const isCancellation =
+                  approval.approval_type === "ITEM_CANCELLATION" ||
+                  approval.approval_type === "ORDER_VOID";
+                const approving =
+                  approveCancellationMutation.isPending &&
+                  approveCancellationMutation.variables?.id === approval.id;
+                const rejecting =
+                  rejectCancellationMutation.isPending &&
+                  rejectCancellationMutation.variables?.id === approval.id;
+                return (
+                  <article key={approval.id} className="rounded-xl border bg-card p-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="font-semibold">{approval.table_name ?? "Masa bilinmiyor"}</p>
+                      <span className="text-xs text-muted-foreground">
+                        {formatRelativeTime(approval.created_at)}
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {approval.approval_type === "DISCOUNT"
+                        ? "İndirim talebi"
+                        : approval.order_item_name
+                          ? `İptal talebi · ${approval.order_item_name}`
+                          : "Sipariş iptal talebi"}
+                    </p>
+                    <p className="mt-2 text-xs italic text-muted-foreground">“{approval.reason}”</p>
+                    {isCancellation ? (
+                      <div className="mt-3 grid grid-cols-2 gap-2">
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          disabled={approving || rejecting}
+                          onClick={() => rejectCancellationMutation.mutate(approval)}
+                        >
+                          {rejecting ? <Loader2 className="animate-spin" /> : <X />}
+                          Reddet
+                        </Button>
+                        <Button
+                          size="sm"
+                          disabled={approving || rejecting}
+                          onClick={() => approveCancellationMutation.mutate(approval)}
+                        >
+                          {approving ? <Loader2 className="animate-spin" /> : <Check />}
+                          Onayla
+                        </Button>
+                      </div>
+                    ) : (
+                      <p className="mt-3 rounded-lg bg-muted/50 px-2.5 py-1.5 text-[0.68rem] font-medium text-muted-foreground">
+                        Yönetici onayı bekleniyor · Onaylar ekranından yönetilir
+                      </p>
+                    )}
+                  </article>
+                );
+              })}
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </div>

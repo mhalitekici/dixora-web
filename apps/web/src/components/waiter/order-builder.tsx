@@ -4,8 +4,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowLeft,
+  Check,
   ChefHat,
   ChevronDown,
+  CircleOff,
   Loader2,
   MessageSquareText,
   Minus,
@@ -133,19 +135,9 @@ function itemUnitPrice(item: PendingItem) {
   );
 }
 
-function orderItemStatus(status: string) {
-  const map: Record<string, { label: string; tone: Parameters<typeof StatusBadge>[0]["tone"] }> = {
-    DRAFT: { label: "Taslak", tone: "neutral" },
-    SUBMITTED: { label: "Gönderildi", tone: "info" },
-    ACCEPTED: { label: "Kabul edildi", tone: "info" },
-    PREPARING: { label: "Hazırlanıyor", tone: "brand" },
-    READY: { label: "Hazır", tone: "success" },
-    SERVED: { label: "Servis edildi", tone: "neutral" },
-    CANCELLED: { label: "İptal", tone: "danger" },
-    VOIDED: { label: "Void", tone: "danger" },
-  };
-  return map[status] ?? { label: status, tone: "neutral" as const };
-}
+// Cafe-friendly item status: the kitchen prep/ready/served timeline is not
+// shown to the waiter — only whether the item is still active or cancelled.
+const terminalItemStatuses = new Set(["CANCELLED", "VOIDED"]);
 
 export function OrderBuilder({ tableId }: { tableId: string }) {
   const queryClient = useQueryClient();
@@ -159,6 +151,8 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
   const [productNote, setProductNote] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [cartOpen, setCartOpen] = useState(false);
+  const [cancellationItem, setCancellationItem] = useState<OrderItem | null>(null);
+  const [cancellationReason, setCancellationReason] = useState("");
   const submissionKey = useRef<string | null>(null);
   const detailRequest = useRef(0);
 
@@ -280,6 +274,28 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
       void queryClient.invalidateQueries({ queryKey: ["waiter", "table", tableId] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Hesap talebi iletilemedi."),
+  });
+
+  const cancellationMutation = useMutation({
+    mutationFn: async () => {
+      if (!order || !cancellationItem) throw new Error("Canlı sipariş kalemi bulunamadı.");
+      const trimmedReason = cancellationReason.trim();
+      if (trimmedReason.length < 3) {
+        throw new Error("İptal nedeni en az 3 karakter olmalıdır.");
+      }
+      return api(`/orders/${order.id}/cancellation-requests`, {
+        method: "POST",
+        body: JSON.stringify({ order_item_id: cancellationItem.id, reason: trimmedReason }),
+      });
+    },
+    onSuccess: () => {
+      toast.success("İptal talebi kasaya/yöneticiye gönderildi");
+      setCancellationItem(null);
+      setCancellationReason("");
+      void queryClient.invalidateQueries({ queryKey: ["waiter", "table", tableId] });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "İptal talebi oluşturulamadı."),
   });
 
   async function openProduct(product: Product) {
@@ -407,7 +423,7 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
               </div>
               <div className="space-y-2">
                 {order.items.map((item) => {
-                  const status = orderItemStatus(item.status);
+                  const cancelled = terminalItemStatuses.has(item.status);
                   return (
                     <div key={item.id} className="rounded-xl border bg-muted/20 p-3">
                       <div className="flex items-start gap-2">
@@ -427,12 +443,27 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                               {item.note}
                             </p>
                           ) : null}
+                          {cancelled ? (
+                            <StatusBadge tone="danger" dot={false} className="mt-1.5 h-5 px-1.5 text-[0.56rem]">
+                              İptal
+                            </StatusBadge>
+                          ) : null}
                         </div>
-                        <div className="text-right">
+                        <div className="flex flex-col items-end gap-1.5 text-right">
                           <p className="text-xs font-semibold">{currency.format(Number(item.line_total))}</p>
-                          <StatusBadge tone={status.tone} dot={false} className="mt-1 h-5 px-1.5 text-[0.56rem]">
-                            {status.label}
-                          </StatusBadge>
+                          {!cancelled ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setCancellationItem(item);
+                                setCancellationReason("");
+                              }}
+                              className="inline-flex items-center gap-1 text-[0.62rem] font-medium text-muted-foreground hover:text-destructive"
+                            >
+                              <CircleOff className="size-3" />
+                              İptal talebi
+                            </button>
+                          ) : null}
                         </div>
                       </div>
                     </div>
@@ -576,7 +607,11 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
               </h1>
             </div>
             <p className="text-[0.65rem] text-muted-foreground">
-              {order ? `${order.items.length} gönderilmiş kalem · ${order.status}` : "Yeni masa oturumu"}
+              {order
+                ? `${order.items.length} gönderilmiş kalem · ${
+                    order.status === "BILL_REQUESTED" ? "Hesap istendi" : "Açık"
+                  }`
+                : "Yeni masa oturumu"}
             </p>
           </div>
           {order ? (
@@ -874,6 +909,89 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
               </span>
             </Button>
           </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(cancellationItem)}
+        onOpenChange={(open) => {
+          if (!open && !cancellationMutation.isPending) {
+            setCancellationItem(null);
+            setCancellationReason("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Kalem iptal talebi oluştur</DialogTitle>
+            <DialogDescription>
+              Bu işlem kalemi hemen iptal etmez. Talep kasa/yönetici onayına gönderilir ve
+              yalnızca onaydan sonra siparişe uygulanır.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            id="waiter-cancel-item-form"
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              cancellationMutation.mutate();
+            }}
+          >
+            <div className="rounded-xl border bg-muted/35 p-3">
+              <p className="truncate text-sm font-semibold">
+                {cancellationItem?.product_name_snapshot}
+              </p>
+              <p className="mt-1 text-xs text-muted-foreground">
+                {Number(cancellationItem?.quantity ?? 0)} adet ·{" "}
+                {currency.format(Number(cancellationItem?.line_total ?? 0))}
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="waiter-cancellation-reason">İptal nedeni</Label>
+              <Textarea
+                id="waiter-cancellation-reason"
+                value={cancellationReason}
+                onChange={(event) => setCancellationReason(event.target.value)}
+                minLength={3}
+                maxLength={255}
+                aria-describedby="waiter-cancellation-reason-help"
+                className="rounded-xl"
+                placeholder="Yanlış ürün girildi…"
+                autoFocus
+              />
+              <p
+                id="waiter-cancellation-reason-help"
+                className={cn(
+                  "text-xs",
+                  cancellationReason.length > 0 && cancellationReason.trim().length < 3
+                    ? "text-destructive"
+                    : "text-muted-foreground",
+                )}
+              >
+                Denetim kaydı için en az 3 karakter · {cancellationReason.length}/255
+              </p>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={cancellationMutation.isPending}
+                onClick={() => {
+                  setCancellationItem(null);
+                  setCancellationReason("");
+                }}
+              >
+                Vazgeç
+              </Button>
+              <Button
+                type="submit"
+                disabled={cancellationReason.trim().length < 3 || cancellationMutation.isPending}
+              >
+                {cancellationMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
+                Onaya gönder
+              </Button>
+            </DialogFooter>
+          </form>
         </DialogContent>
       </Dialog>
     </div>

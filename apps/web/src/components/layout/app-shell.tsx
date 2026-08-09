@@ -1,5 +1,6 @@
 "use client";
 
+import { useQuery } from "@tanstack/react-query";
 import {
   Check,
   Building2,
@@ -7,6 +8,7 @@ import {
   CircleAlert,
   CircleHelp,
   Loader2,
+  LifeBuoy,
   LogOut,
   Menu,
   PanelLeftClose,
@@ -20,6 +22,7 @@ import { usePathname, useRouter } from "next/navigation";
 import { useMemo, useState, type ReactNode } from "react";
 import { toast } from "sonner";
 
+import { adminApi, adminKeys } from "@/components/admin/admin-api";
 import { BrandLogo } from "@/components/brand/brand-logo";
 import { type NavGroup } from "@/components/layout/nav-config";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
@@ -72,13 +75,13 @@ function permissionForNavigation(href: string): string | null {
     ["/admin/branch-settings", "settings.manage"],
     ["/admin/settings", "settings.manage"],
     ["/admin/audit-logs", "audit.read"],
+    ["/admin/approvals", "orders.manage"],
     ["/admin/employees", "users.manage"],
     ["/admin/roles", "roles.manage"],
     ["/admin/reports", "reports.read"],
     ["/admin/inventory", "inventory.read"],
     ["/admin/qr-menu", "qr.read"],
     ["/admin/loyalty", "loyalty.read"],
-    ["/admin/kitchen", "kitchen.read"],
     ["/admin/printers", "printing.read"],
     ["/admin/products", "catalog.read"],
     ["/admin/categories", "catalog.read"],
@@ -169,6 +172,17 @@ export function AppShell({
   const accessibleBranches = useAccessibleBranches({
     enabled: !platformMode && currentUser.isSuccess && Boolean(session?.tenant),
   });
+  const approvalsPendingCount = useQuery({
+    queryKey: adminKeys.approvalPendingCount(),
+    queryFn: ({ signal }) => adminApi.approvalPendingCount(signal),
+    enabled:
+      !platformMode &&
+      currentUser.isSuccess &&
+      Boolean(session?.tenant) &&
+      hasPermission(session, "orders.manage"),
+    refetchInterval: 15_000,
+    staleTime: 5_000,
+  });
   const resolvedWorkspaceName = session?.tenant?.name ?? workspaceName;
   const resolvedBranchName = session?.branch?.name ?? branchName;
   const resolvedUserName = session?.user.displayName ?? userName;
@@ -186,6 +200,7 @@ export function AppShell({
   const resolvedUserRole = session
     ? roleLabels[session.user.roleCode] ?? session.user.roleCode
     : userRole;
+  const pendingApprovals = approvalsPendingCount.data?.pending ?? 0;
   const visibleNavigation = useMemo(
     () =>
       session
@@ -200,7 +215,14 @@ export function AppShell({
             .filter((group) => group.items.length > 0)
         : navigation,
     [navigation, session],
-  );
+  ).map((group) => ({
+    ...group,
+    items: group.items.map((item) =>
+      item.href === "/admin/approvals" && pendingApprovals > 0
+        ? { ...item, badge: String(pendingApprovals) }
+        : item,
+    ),
+  }));
   const logout = useLogout({
     onSettled: () => {
       // A full navigation drops the authenticated Router Cache as well as the
@@ -388,6 +410,12 @@ export function AppShell({
               >
                 {platformMode ? "İşletme yönetimi" : "Şube yönetimi"}
               </DropdownMenuItem>
+              {!platformMode ? (
+                <DropdownMenuItem render={<Link href="/support" />}>
+                  <LifeBuoy />
+                  Yardım ve destek
+                </DropdownMenuItem>
+              ) : null}
             </DropdownMenuContent>
           </DropdownMenu>
 

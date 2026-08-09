@@ -49,6 +49,43 @@ export async function setBusinessLifecycle(
   return api.patch<PlatformBusiness>(`businesses/${businessId}`, body)
 }
 
+export async function reactivateBusiness(
+  businessId: string,
+  input: { extendDays: number; note?: string },
+): Promise<PlatformBusiness> {
+  return api.post<PlatformBusiness>(`businesses/${businessId}/reactivate`, {
+    extend_days: input.extendDays,
+    note: input.note?.trim() || null,
+  })
+}
+
+export interface BusinessUser {
+  id: string
+  username: string
+  display_name: string
+  email: string | null
+  role: string
+  is_active: boolean
+}
+
+export async function getBusinessUsers(
+  businessId: string,
+  signal?: AbortSignal,
+): Promise<BusinessUser[]> {
+  return api.get<BusinessUser[]>(`businesses/${businessId}/users`, { signal })
+}
+
+export async function resetBusinessUserPassword(
+  businessId: string,
+  userId: string,
+  input: { newPassword: string; reason?: string },
+): Promise<{ user_id: string; username: string; sessions_revoked: number }> {
+  return api.post(`businesses/${businessId}/users/${userId}/password-reset`, {
+    new_password: input.newPassword,
+    reason: input.reason?.trim() || null,
+  })
+}
+
 export async function getSubscriptionPortfolio(
   signal?: AbortSignal,
 ): Promise<SubscriptionPortfolio> {

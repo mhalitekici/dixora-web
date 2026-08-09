@@ -16,8 +16,20 @@ class SubscriptionPlan(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     code: Mapped[str] = mapped_column(String(60), unique=True, nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    # Base price, which already covers `included_branches` locations.
     monthly_price: Mapped[Decimal] = mapped_column(MONEY, default=ZERO_MONEY, nullable=False)
     currency: Mapped[str] = mapped_column(String(3), default="TRY", nullable=False)
+    # Branch-based pricing: base covers this many branches, each further ACTIVE
+    # branch adds `additional_branch_price`. Archived branches never count.
+    # server_default matters as much as the Python default: historical migrations
+    # insert plan rows without naming these columns, and a fresh database must
+    # not reject them. It also keeps the model in step with migration 0017.
+    included_branches: Mapped[int] = mapped_column(
+        Integer, default=1, server_default="1", nullable=False
+    )
+    additional_branch_price: Mapped[Decimal] = mapped_column(
+        MONEY, default=ZERO_MONEY, server_default="0", nullable=False
+    )
     max_branches: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_users: Mapped[int | None] = mapped_column(Integer, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

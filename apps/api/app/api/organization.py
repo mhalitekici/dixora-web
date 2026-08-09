@@ -19,11 +19,14 @@ from app.models import (
     Subscription,
     SubscriptionPlan,
     User,
+    UserBranchMembership,
 )
 from app.rbac import ASSIGNABLE_ROLE_PRESETS, ensure_tenant_role_presets
 from app.schemas import (
+    BranchArchiveRequest,
     BranchCreate,
     BranchOut,
+    BranchPricingOut,
     BranchUpdate,
     BranchUsageOut,
     PasswordChange,
@@ -31,12 +34,15 @@ from app.schemas import (
     RoleCreate,
     RoleDetailOut,
     RoleUpdate,
+    UserBranchAccessOut,
+    UserBranchAccessUpdate,
     UserCreate,
     UserOut,
     UserUpdate,
 )
-from app.security import hash_password
+from app.security import hash_password, utcnow
 from app.services.audit import add_audit_log
+from app.services.pricing import branch_pricing_for_tenant
 
 router = APIRouter(tags=["organization"])
 SettingsManager = Annotated[Identity, Depends(require_permissions("settings.manage"))]
@@ -331,6 +337,226 @@ async def update_branch(
     )
     await db.commit()
     return BranchOut.model_validate(branch)
+
+
+@router.get("/branches/pricing", response_model=BranchPricingOut)
+async def branch_pricing(identity: SettingsManager, db: DbSession) -> BranchPricingOut:
+    """Current monthly amount and what opening one more branch would cost."""
+    pricing = await branch_pricing_for_tenant(db, require_tenant(identity))
+    return BranchPricingOut(
+        currency=pricing.currency,
+        base_monthly_price=pricing.base_monthly_price,
+        included_branches=pricing.included_branches,
+        additional_branch_price=pricing.additional_branch_price,
+        active_branches=pricing.active_branches,
+        billable_extra_branches=pricing.billable_extra_branches,
+        monthly_total=pricing.monthly_total,
+        next_branch_monthly_total=pricing.next_branch_monthly_total,
+    )
+
+
+@router.post("/branches/{branch_id}/archive", response_model=BranchOut)
+async def archive_branch(
+    branch_id: UUID,
+    payload: BranchArchiveRequest,
+    identity: SettingsManager,
+    db: DbSession,
+) -> BranchOut:
+    """Retire a branch without deleting any of its history.
+
+    Archived branches stop accepting new work and drop out of the switcher, but
+    every order, payment and audit row stays queryable for reporting.
+    """
+    tenant_id = require_tenant(identity)
+    branch = await _tenant_branch(db, tenant_id, branch_id)
+    assert branch is not None
+    if not branch.is_active:
+        return BranchOut.model_validate(branch)
+
+    usage = await _branch_usage(db, tenant_id)
+    if usage.active_branches <= 1:
+        raise DomainError(
+            "last_active_branch",
+            "The last active branch cannot be archived",
+            status_code=409,
+        )
+
+    branch.is_active = False
+    branch.archived_at = utcnow()
+    add_audit_log(
+        db,
+        identity=identity,
+        action="branch.archived",
+        resource_type="branch",
+        resource_id=branch.id,
+        branch_id=branch.id,
+        reason=payload.reason,
+        new_value={"name": branch.name, "is_active": False},
+    )
+    await db.commit()
+    return BranchOut.model_validate(branch)
+
+
+@router.post("/branches/{branch_id}/restore", response_model=BranchOut)
+async def restore_branch(
+    branch_id: UUID,
+    identity: SettingsManager,
+    db: DbSession,
+) -> BranchOut:
+    """Bring an archived branch back into service (and back onto the bill)."""
+    tenant_id = require_tenant(identity)
+    branch = await _tenant_branch(db, tenant_id, branch_id)
+    assert branch is not None
+    if branch.is_active:
+        return BranchOut.model_validate(branch)
+
+    usage = await _branch_usage(db, tenant_id)
+    if not usage.can_create:
+        raise DomainError(
+            "branch_limit_reached",
+            "The subscription branch limit has been reached",
+            status_code=409,
+            details={
+                "plan_name": usage.plan_name,
+                "max_branches": usage.max_branches,
+                "active_branches": usage.active_branches,
+            },
+        )
+
+    branch.is_active = True
+    branch.archived_at = None
+    add_audit_log(
+        db,
+        identity=identity,
+        action="branch.restored",
+        resource_type="branch",
+        resource_id=branch.id,
+        branch_id=branch.id,
+        new_value={"name": branch.name, "is_active": True},
+    )
+    await db.commit()
+    return BranchOut.model_validate(branch)
+
+
+@router.get("/users/{user_id}/branches", response_model=UserBranchAccessOut)
+async def get_user_branch_access(
+    user_id: UUID,
+    identity: UserManager,
+    db: DbSession,
+) -> UserBranchAccessOut:
+    tenant_id = require_tenant(identity)
+    user = (
+        await db.execute(select(User).where(User.id == user_id, User.tenant_id == tenant_id))
+    ).scalar_one_or_none()
+    if user is None:
+        raise DomainError("user_not_found", "User not found", status_code=404)
+    memberships = (
+        (
+            await db.execute(
+                select(UserBranchMembership.branch_id).where(
+                    UserBranchMembership.user_id == user.id,
+                    UserBranchMembership.tenant_id == tenant_id,
+                    UserBranchMembership.is_active.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    branch_ids = sorted(
+        {*memberships, *([user.branch_id] if user.branch_id else [])}, key=str
+    )
+    return UserBranchAccessOut(
+        user_id=user.id,
+        primary_branch_id=user.branch_id,
+        branch_ids=list(branch_ids),
+        has_all_branch_access=user.branch_id is None,
+    )
+
+
+@router.put("/users/{user_id}/branches", response_model=UserBranchAccessOut)
+async def set_user_branch_access(
+    user_id: UUID,
+    payload: UserBranchAccessUpdate,
+    identity: UserManager,
+    db: DbSession,
+) -> UserBranchAccessOut:
+    """Replace the set of branches a user may operate in.
+
+    Every id is verified to belong to this business first, so a leaked branch id
+    from another tenant can never be granted here.
+    """
+    tenant_id = require_tenant(identity)
+    user = (
+        await db.execute(select(User).where(User.id == user_id, User.tenant_id == tenant_id))
+    ).scalar_one_or_none()
+    if user is None:
+        raise DomainError("user_not_found", "User not found", status_code=404)
+    if user.branch_id is None:
+        raise DomainError(
+            "user_already_business_wide",
+            "This user already has access to every branch",
+            status_code=409,
+        )
+
+    requested = set(payload.branch_ids)
+    if requested:
+        owned = set(
+            (
+                await db.execute(
+                    select(Branch.id).where(
+                        Branch.tenant_id == tenant_id, Branch.id.in_(requested)
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        if owned != requested:
+            raise DomainError(
+                "branch_not_found",
+                "One or more branches were not found",
+                status_code=404,
+            )
+
+    # The primary branch is implicit and cannot be revoked here.
+    requested.discard(user.branch_id)
+
+    existing = (
+        (
+            await db.execute(
+                select(UserBranchMembership).where(
+                    UserBranchMembership.user_id == user.id,
+                    UserBranchMembership.tenant_id == tenant_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_branch = {row.branch_id: row for row in existing}
+    for branch_id, row in by_branch.items():
+        row.is_active = branch_id in requested or branch_id == user.branch_id
+    for branch_id in requested - set(by_branch):
+        db.add(
+            UserBranchMembership(
+                tenant_id=tenant_id,
+                user_id=user.id,
+                branch_id=branch_id,
+                is_active=True,
+            )
+        )
+
+    add_audit_log(
+        db,
+        identity=identity,
+        action="user.branch_access_updated",
+        resource_type="user",
+        resource_id=user.id,
+        new_value={"branch_ids": sorted(str(value) for value in requested)},
+    )
+    await db.commit()
+    return await get_user_branch_access(user_id, identity, db)
 
 
 @router.get("/users", response_model=list[UserOut])

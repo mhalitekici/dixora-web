@@ -46,6 +46,8 @@ PERMISSION_DESCRIPTIONS: dict[str, str] = {
     "loyalty.read": "Read loyalty programs, customers, and rewards",
     "loyalty.manage": "Configure loyalty programs and reverse accruals",
     "loyalty.redeem": "Attach loyalty memberships and redeem rewards",
+    "hotel_rooms.read": "Read hotel rooms and checkout history",
+    "hotel_rooms.manage": "Manage hotel rooms, check-in and check-out guests",
 }
 
 ROLE_PERMISSIONS: dict[str, set[str]] = {
@@ -86,6 +88,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "loyalty.read",
         "loyalty.manage",
         "loyalty.redeem",
+        "hotel_rooms.read",
+        "hotel_rooms.manage",
     },
     "BUSINESS_MANAGER": {
         "dashboard.read",
@@ -115,6 +119,8 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "audit.read",
         "loyalty.read",
         "loyalty.redeem",
+        "hotel_rooms.read",
+        "hotel_rooms.manage",
     },
     "CASHIER": {
         "dashboard.read",
@@ -132,6 +138,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "qr.approve",
         "loyalty.read",
         "loyalty.redeem",
+        "hotel_rooms.read",
         "printing.read",
         "printing.manage",
     },
@@ -162,7 +169,6 @@ ASSIGNABLE_ROLE_PRESETS: dict[str, str] = {
     "BUSINESS_ADMIN": "Yönetici",
     "BUSINESS_MANAGER": "Müdür",
     "WAITER": "Garson",
-    "KITCHEN": "Aşçı",
 }
 
 

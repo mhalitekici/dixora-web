@@ -258,6 +258,7 @@ async def list_print_jobs(
     db: DbSession,
     branch_id: UUID | None = None,
     job_status: PrintJobStatus | None = Query(default=None, alias="status"),
+    order_id: UUID | None = None,
 ) -> list[PrintJobOut]:
     predicates = [
         PrintJob.tenant_id == require_tenant(identity),
@@ -265,6 +266,8 @@ async def list_print_jobs(
     ]
     if job_status:
         predicates.append(PrintJob.status == job_status)
+    if order_id:
+        predicates.append(PrintJob.order_id == order_id)
     jobs = (
         (
             await db.execute(

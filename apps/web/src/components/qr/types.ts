@@ -70,6 +70,7 @@ export interface QrProductDto {
   selling_price: string
   image_url: string | null
   allergens: string[]
+  calories?: number | null
   modifier_groups?: QrModifierGroupDto[]
 }
 

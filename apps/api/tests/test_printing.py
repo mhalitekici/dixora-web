@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from tests.conftest import ApiContext, auth_headers, login
+from tests.conftest import ApiContext, auth_headers, login, seeded_resources
+from tests.test_orders import _create_burger_order
 
 
 async def test_kitchen_user_can_read_and_manage_printing(api: ApiContext) -> None:
@@ -70,6 +71,100 @@ async def test_print_job_creation_and_bridge_state_are_idempotent_and_scoped(
     )
     assert replay.status_code == 200
     assert replay.json()["attempt_count"] == 1
+
+
+async def test_bill_print_original_is_idempotent_and_reprint_is_distinct(
+    api: ApiContext,
+) -> None:
+    """Mirrors the cashier's "Fiş yazdır" / "Yeniden yazdır" split: the first
+    bill print for an order is ORIGINAL and deduplicates on repeat clicks;
+    an explicit reprint is always a separate REPRINT-kind job."""
+    tokens = await login(api)
+    headers = auth_headers(tokens)
+    resources = await seeded_resources(api, headers)
+    order = await _create_burger_order(
+        api,
+        headers,
+        table_id=resources["tables"][12]["id"],
+        product_id=resources["burger"]["id"],
+        key="print-bill-order-key-0001",
+    )
+
+    original_payload = {
+        "order_id": order["id"],
+        "payload": {"type": "BILL", "order_id": order["id"], "stage": "PRE_PAYMENT"},
+        "kind": "ORIGINAL",
+        "idempotency_key": f"bill-original:{order['id']}",
+    }
+    first = await api.client.post("/api/v1/printing/jobs", json=original_payload, headers=headers)
+    assert first.status_code == 201, first.text
+    assert first.json()["kind"] == "ORIGINAL"
+
+    # A second click before the bridge has processed it must not create a
+    # duplicate ORIGINAL job — same deterministic idempotency key replays.
+    replay = await api.client.post("/api/v1/printing/jobs", json=original_payload, headers=headers)
+    assert replay.status_code == 201
+    assert replay.json()["id"] == first.json()["id"]
+
+    reprint_payload = {
+        "order_id": order["id"],
+        "payload": {"type": "BILL", "order_id": order["id"], "copy": True},
+        "kind": "REPRINT",
+        "idempotency_key": f"bill-reprint:{order['id']}:1",
+    }
+    reprint = await api.client.post("/api/v1/printing/jobs", json=reprint_payload, headers=headers)
+    assert reprint.status_code == 201, reprint.text
+    assert reprint.json()["kind"] == "REPRINT"
+    assert reprint.json()["id"] != first.json()["id"]
+
+    filtered = await api.client.get(
+        "/api/v1/printing/jobs", headers=headers, params={"order_id": order["id"]}
+    )
+    assert filtered.status_code == 200, filtered.text
+    job_ids = {job["id"] for job in filtered.json()}
+    # A kitchen ticket print job for the same order may also exist; the bill
+    # print jobs must be present among them and correctly scoped to this order.
+    assert {first.json()["id"], reprint.json()["id"]}.issubset(job_ids)
+    assert all(job["order_id"] == order["id"] for job in filtered.json())
+
+
+async def test_print_jobs_order_id_filter_is_tenant_scoped(api: ApiContext) -> None:
+    owner = await login(api)
+    owner_headers = auth_headers(owner)
+    resources = await seeded_resources(api, owner_headers)
+    order = await _create_burger_order(
+        api,
+        owner_headers,
+        table_id=resources["tables"][13]["id"],
+        product_id=resources["burger"]["id"],
+        key="print-bill-isolation-key-0001",
+    )
+    created = await api.client.post(
+        "/api/v1/printing/jobs",
+        headers=owner_headers,
+        json={
+            "order_id": order["id"],
+            "payload": {"type": "BILL", "order_id": order["id"]},
+            "kind": "ORIGINAL",
+            "idempotency_key": f"bill-original:{order['id']}",
+        },
+    )
+    assert created.status_code == 201, created.text
+
+    from tests.test_tenant_isolation import _create_tenant_b
+
+    other = await _create_tenant_b(api)
+    _ = other
+    other_headers = auth_headers(
+        await login(
+            api, username="owner@other.test", password="Other!2026", business="other-restaurant"
+        )
+    )
+    cross_tenant = await api.client.get(
+        "/api/v1/printing/jobs", headers=other_headers, params={"order_id": order["id"]}
+    )
+    assert cross_tenant.status_code == 200
+    assert cross_tenant.json() == []
 
 
 async def test_printer_device_management_is_tenant_and_branch_scoped(

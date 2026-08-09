@@ -22,6 +22,26 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "staging", "production"] = "development"
     api_prefix: str = "/api/v1"
     database_url: str = "postgresql+asyncpg://dixora:dixora@localhost:5432/dixora"
+    # Connection ceiling per worker is db_pool_size + db_max_overflow, so the
+    # deployment total is (db_pool_size + db_max_overflow) x API_WORKERS. That
+    # product MUST stay under PostgreSQL's max_connections or requests fail with
+    # "sorry, too many clients already" — a load test at 400 concurrent users hit
+    # exactly this. Defaults are sized for 4 workers against the default limit of
+    # 100: 4 x (5 + 10) = 60, leaving headroom for migrations and psql sessions.
+    db_pool_size: int = Field(default=5, ge=1, le=100)
+    db_max_overflow: int = Field(default=10, ge=0, le=200)
+    db_pool_timeout: float = Field(default=30.0, ge=1.0, le=300.0)
+    # Recycle below typical proxy/database idle timeouts so pooled connections
+    # are never handed out already dead.
+    db_pool_recycle: int = Field(default=1800, ge=60, le=86_400)
+    # Cross-process realtime fan-out. Without it the API is limited to a single
+    # worker, because a WebSocket lives in exactly one process.
+    redis_url: str | None = None
+    # Error reporting. Absent DSN disables Sentry entirely, which is the normal
+    # state for local development and tests.
+    sentry_dsn: SecretStr | None = None
+    sentry_release: str | None = Field(default=None, max_length=120)
+    sentry_traces_sample_rate: float = Field(default=0.0, ge=0.0, le=1.0)
     jwt_secret: SecretStr = Field(
         default=SecretStr("development-only-change-this-secret-key"),
     )

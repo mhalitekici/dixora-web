@@ -54,6 +54,7 @@ import {
   number,
   shortId,
 } from "./admin-utils";
+import { auditActionLabel, auditResourceLabel } from "./audit-labels";
 import type { AuditLog } from "./types";
 
 const PAGE_SIZE = 25;
@@ -203,7 +204,7 @@ export function AuditLogViewer() {
               <SelectItem value="ALL">Tüm aksiyonlar</SelectItem>
               {actions.map((action) => (
                 <SelectItem key={action} value={action}>
-                  {action}
+                  {auditActionLabel(action)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -308,10 +309,14 @@ export function AuditLogViewer() {
                       </p>
                     </TableCell>
                     <TableCell>
-                      <StatusBadge tone={actionTone(log.action)}>{log.action}</StatusBadge>
+                      <StatusBadge tone={actionTone(log.action)}>
+                        {auditActionLabel(log.action)}
+                      </StatusBadge>
                     </TableCell>
                     <TableCell>
-                      <p className="font-medium">{log.resource_type}</p>
+                      <p className="font-medium">
+                        {auditResourceLabel(log.resource_type) ?? "—"}
+                      </p>
                       <p className="text-xs text-muted-foreground">
                         {shortId(log.resource_id)}
                       </p>
@@ -388,7 +393,9 @@ function AuditDetail({ log, onClose }: { log: AuditLog | null; onClose: () => vo
     <Dialog open={Boolean(log)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-3xl">
         <DialogHeader>
-          <DialogTitle>{log?.action ?? "Denetim kaydı"}</DialogTitle>
+          <DialogTitle>
+            {log ? auditActionLabel(log.action) : "Denetim kaydı"}
+          </DialogTitle>
           <DialogDescription>
             {log ? `${dateTime(log.timestamp)} · ${log.actor_role ?? "SYSTEM"}` : ""}
           </DialogDescription>
@@ -396,7 +403,11 @@ function AuditDetail({ log, onClose }: { log: AuditLog | null; onClose: () => vo
         {log ? (
           <div className="space-y-4">
             <div className="grid gap-2 sm:grid-cols-3">
-              <AuditMetric label="Kaynak" value={log.resource_type} />
+              <AuditMetric
+                label="Kaynak"
+                value={auditResourceLabel(log.resource_type) ?? "—"}
+              />
+              <AuditMetric label="Teknik kod" value={log.action} />
               <AuditMetric label="Kaynak kimliği" value={log.resource_id ?? "—"} />
               <AuditMetric label="Aktör kimliği" value={log.actor_user_id ?? "SYSTEM"} />
             </div>

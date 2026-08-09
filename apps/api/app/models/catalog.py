@@ -102,6 +102,7 @@ class Product(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     out_of_stock_behavior: Mapped[str] = mapped_column(String(30), default="BLOCK", nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     allergens: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    calories: Mapped[int | None] = mapped_column(Integer, nullable=True)
     tags: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     translations: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
 

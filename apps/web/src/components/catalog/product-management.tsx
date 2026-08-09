@@ -30,7 +30,6 @@ import { toast } from "sonner";
 import { z } from "zod";
 
 import { DataToolbar } from "@/components/shared/data-toolbar";
-import { ProductCsvActions } from "@/components/catalog/product-csv-actions";
 import { invalidateProductReadModels } from "@/components/catalog/product-cache";
 import {
   ProductImageEditor,
@@ -113,6 +112,7 @@ type Product = {
   stock_quantity?: string | number | null;
   image_url?: string | null;
   allergens?: string[];
+  calories?: number | null;
   tags?: string[];
 };
 
@@ -161,9 +161,7 @@ const productSchema = z.object({
   internal_name: z.string().trim().max(120).optional(),
   description: z.string().trim().max(800).optional(),
   category_id: z.string().min(1, "Kategori seçin."),
-  sku: z.string().trim().max(64).optional(),
   selling_price: z.coerce.number().min(0, "Fiyat negatif olamaz."),
-  cost_price: z.coerce.number().min(0).optional(),
   preparation_minutes: z.coerce.number().int().min(0).max(240),
   preparation_station_id: z.string().optional(),
   is_active: z.boolean(),
@@ -171,6 +169,8 @@ const productSchema = z.object({
   qr_visible: z.boolean(),
   waiter_visible: z.boolean(),
   track_inventory: z.boolean(),
+  allergens: z.string().trim().max(300).optional(),
+  calories: z.string().trim().max(6).optional(),
 });
 
 type ProductFormValues = z.infer<typeof productSchema>;
@@ -189,10 +189,17 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     ...init,
     headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
   });
-  const payload = (await response.json().catch(() => null)) as T | { detail?: string; message?: string } | null;
+  const payload = (await response.json().catch(() => null)) as
+    | T
+    | { detail?: string; message?: string; error?: { message?: string } }
+    | null;
   if (!response.ok) {
-    const error = payload as { detail?: string; message?: string } | null;
-    throw new Error(error?.detail ?? error?.message ?? "İşlem tamamlanamadı.");
+    const error = payload as
+      | { detail?: string; message?: string; error?: { message?: string } }
+      | null;
+    throw new Error(
+      error?.error?.message ?? error?.detail ?? error?.message ?? "İşlem tamamlanamadı.",
+    );
   }
   return payload as T;
 }
@@ -276,9 +283,7 @@ export function ProductManagement() {
       internal_name: "",
       description: "",
       category_id: categories[0]?.id ?? "",
-      sku: "",
       selling_price: 0,
-      cost_price: 0,
       preparation_minutes: 10,
       preparation_station_id: stations[0]?.id ?? "",
       is_active: true,
@@ -286,6 +291,8 @@ export function ProductManagement() {
       qr_visible: true,
       waiter_visible: true,
       track_inventory: false,
+      allergens: "",
+      calories: "",
     },
   });
   const formValues = useWatch({ control: form.control });
@@ -358,7 +365,11 @@ export function ProductManagement() {
           ...values,
           preparation_station_id: values.preparation_station_id || null,
           selling_price: values.selling_price.toFixed(2),
-          cost_price: values.cost_price?.toFixed(2),
+          allergens: (values.allergens ?? "")
+            .split(",")
+            .map((item) => item.trim())
+            .filter(Boolean),
+          calories: values.calories?.trim() ? Number(values.calories) : null,
         }),
       });
 
@@ -452,9 +463,9 @@ export function ProductManagement() {
     () =>
       products.filter((product) => {
         const query = search.toLocaleLowerCase("tr-TR");
-        const searchMatch =
-          product.name.toLocaleLowerCase("tr-TR").includes(query) ||
-          product.sku?.toLocaleLowerCase("tr-TR").includes(query);
+        const searchMatch = product.name
+          .toLocaleLowerCase("tr-TR")
+          .includes(query);
         const categoryMatch = categoryFilter === "all" || product.category_id === categoryFilter;
         const availabilityMatch =
           availabilityFilter === "all" ||
@@ -475,9 +486,7 @@ export function ProductManagement() {
       internal_name: "",
       description: "",
       category_id: categories[0]?.id ?? "",
-      sku: "",
       selling_price: 0,
-      cost_price: 0,
       preparation_minutes: 10,
       preparation_station_id: stations[0]?.id ?? "",
       is_active: true,
@@ -485,6 +494,8 @@ export function ProductManagement() {
       qr_visible: true,
       waiter_visible: true,
       track_inventory: false,
+      allergens: "",
+      calories: "",
     });
     setDialogOpen(true);
   }
@@ -498,9 +509,7 @@ export function ProductManagement() {
       internal_name: product.internal_name ?? "",
       description: product.description ?? "",
       category_id: product.category_id,
-      sku: product.sku ?? "",
       selling_price: Number(product.selling_price),
-      cost_price: Number(product.cost_price ?? 0),
       preparation_minutes: product.preparation_minutes ?? 10,
       preparation_station_id: product.preparation_station_id ?? "",
       is_active: product.is_active,
@@ -508,6 +517,8 @@ export function ProductManagement() {
       qr_visible: product.qr_visible,
       waiter_visible: product.waiter_visible,
       track_inventory: product.track_inventory,
+      allergens: (product.allergens ?? []).join(", "),
+      calories: product.calories != null ? String(product.calories) : "",
     });
     setDialogOpen(true);
   }
@@ -545,7 +556,6 @@ export function ProductManagement() {
       icon={PackageOpen}
       actions={
         <>
-          <ProductCsvActions disabled={catalogLoading || Boolean(catalogError)} />
           <Button
             className="h-10 rounded-xl"
             disabled={
@@ -633,7 +643,7 @@ export function ProductManagement() {
       <DataToolbar
         value={search}
         onValueChange={setSearch}
-        placeholder="Ürün adı, SKU veya barkod ara…"
+        placeholder="Ürün adı ara…"
         filters={
           <>
             <Select
@@ -749,10 +759,14 @@ export function ProductManagement() {
                         <span className="min-w-0">
                           <span className="block truncate text-sm font-semibold">{product.name}</span>
                           <span className="mt-0.5 block truncate text-[0.66rem] text-muted-foreground">
-                            {product.sku || "SKU yok"}
-                            {product.track_inventory && product.stock_quantity !== undefined
-                              ? ` · Stok ${product.stock_quantity}`
-                              : ""}
+                            {[
+                              product.track_inventory && product.stock_quantity !== undefined
+                                ? `Stok ${product.stock_quantity}`
+                                : null,
+                              product.calories != null ? `${product.calories} kcal` : null,
+                            ]
+                              .filter(Boolean)
+                              .join(" · ") || product.category?.name || "—"}
                           </span>
                         </span>
                       </button>
@@ -783,11 +797,6 @@ export function ProductManagement() {
                       <p className="text-sm font-semibold tabular-nums">
                         {currency.format(Number(product.selling_price))}
                       </p>
-                      {product.cost_price ? (
-                        <p className="text-[0.62rem] text-muted-foreground">
-                          Maliyet {currency.format(Number(product.cost_price))}
-                        </p>
-                      ) : null}
                     </TableCell>
                     <TableCell className="hidden xl:table-cell">
                       <div className="flex items-center gap-1.5">
@@ -1047,14 +1056,6 @@ export function ProductManagement() {
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="product-sku">SKU</Label>
-                  <Input
-                    id="product-sku"
-                    className="h-11 rounded-xl"
-                    {...form.register("sku")}
-                  />
-                </div>
               </div>
             </div>
 
@@ -1069,7 +1070,7 @@ export function ProductManagement() {
               />
             </div>
 
-            <div className="grid gap-3 sm:grid-cols-4">
+            <div className="grid gap-3 sm:grid-cols-3">
               <div className="space-y-2 sm:col-span-1">
                 <Label htmlFor="selling-price">Satış fiyatı</Label>
                 <Input
@@ -1079,17 +1080,6 @@ export function ProductManagement() {
                   min="0"
                   className="h-11 rounded-xl"
                   {...form.register("selling_price")}
-                />
-              </div>
-              <div className="space-y-2 sm:col-span-1">
-                <Label htmlFor="cost-price">Maliyet</Label>
-                <Input
-                  id="cost-price"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  className="h-11 rounded-xl"
-                  {...form.register("cost_price")}
                 />
               </div>
               <div className="space-y-2 sm:col-span-1">
@@ -1125,6 +1115,34 @@ export function ProductManagement() {
                   max="240"
                   className="h-11 rounded-xl"
                   {...form.register("preparation_minutes")}
+                />
+              </div>
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-2 sm:col-span-2">
+                <Label htmlFor="product-allergens">Alerjenler</Label>
+                <Input
+                  id="product-allergens"
+                  className="h-11 rounded-xl"
+                  placeholder="Örn. Gluten, Süt, Fındık"
+                  {...form.register("allergens")}
+                />
+                <p className="text-xs text-muted-foreground">
+                  Virgülle ayırarak girin. QR menüde alerjen bilgisi açıksa müşteriye gösterilir.
+                </p>
+              </div>
+              <div className="space-y-2 sm:col-span-1">
+                <Label htmlFor="product-calories">Kalori (kcal)</Label>
+                <Input
+                  id="product-calories"
+                  type="number"
+                  inputMode="numeric"
+                  min="0"
+                  max="20000"
+                  className="h-11 rounded-xl"
+                  placeholder="Örn. 650"
+                  {...form.register("calories")}
                 />
               </div>
             </div>

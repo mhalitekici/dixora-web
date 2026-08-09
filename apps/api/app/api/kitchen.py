@@ -267,7 +267,21 @@ async def update_ticket_status(
         .all()
     )
     order = await db.get(Order, ticket.order_id)
-    if order is not None:
+    # Kitchen prep progress only drives the order/table state while the
+    # order is still in the kitchen's own lifecycle. Once checkout has
+    # started (bill requested, payment pending/completed) or the order was
+    # cancelled/voided, a late-arriving ticket update must not clobber that
+    # more advanced state back to READY/PREPARING.
+    order_status_follows_kitchen = order is not None and order.status in {
+        OrderStatus.SUBMITTED,
+        OrderStatus.AWAITING_APPROVAL,
+        OrderStatus.ACCEPTED,
+        OrderStatus.PREPARING,
+        OrderStatus.PARTIALLY_READY,
+        OrderStatus.READY,
+        OrderStatus.SERVED,
+    }
+    if order is not None and order_status_follows_kitchen:
         statuses = {item.status for item in all_tickets}
         if statuses <= {KitchenTicketStatus.READY, KitchenTicketStatus.COMPLETED}:
             order.status = OrderStatus.READY

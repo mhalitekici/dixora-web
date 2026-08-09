@@ -7,7 +7,7 @@ import {
 } from "./realtime-sync";
 
 describe("shouldEnableOperationalRealtime", () => {
-  it.each(["/admin", "/admin/orders", "/waiter", "/cashier/shift", "/kitchen"])(
+  it.each(["/admin", "/admin/orders", "/waiter", "/cashier/shift"])(
     "enables tenant-scoped operational routes: %s",
     (pathname) => {
       expect(shouldEnableOperationalRealtime(pathname)).toBe(true);
@@ -21,6 +21,7 @@ describe("shouldEnableOperationalRealtime", () => {
     "/super-admin",
     "/super-admin/businesses",
     "/super-admin/login",
+    "/kitchen",
   ])("does not request tenant realtime tickets outside operations: %s", (pathname) => {
     expect(shouldEnableOperationalRealtime(pathname)).toBe(false);
   });

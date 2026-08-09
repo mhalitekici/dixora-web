@@ -4,6 +4,7 @@ import { Check, Minus, Plus, ShoppingBag } from "lucide-react"
 import Image from "next/image"
 import { useMemo, useState } from "react"
 
+import { translate, type QrLocale } from "@/components/qr/qr-i18n"
 import type { QrProductDto } from "@/components/qr/types"
 import {
   decimalToMinor,
@@ -28,6 +29,7 @@ interface ProductDrawerProps {
   currency: string
   orderingEnabled: boolean
   open: boolean
+  locale: QrLocale
   onOpenChange: (open: boolean) => void
   onAdd: (line: NewCartLine) => void
 }
@@ -37,6 +39,7 @@ export function ProductDrawer({
   currency,
   orderingEnabled,
   open,
+  locale,
   onOpenChange,
   onAdd,
 }: ProductDrawerProps) {
@@ -91,7 +94,10 @@ export function ProductDrawer({
       const count = (selected[group.id] ?? []).length
       if (count < group.minimum_selection) {
         setSelectionError(
-          `${group.name} için en az ${group.minimum_selection} seçim yapın.`,
+          translate(locale, "min_selection_error", {
+            group: group.name,
+            n: group.minimum_selection,
+          }),
         )
         return
       }
@@ -120,7 +126,7 @@ export function ProductDrawer({
     >
       <DrawerContent className="mx-auto max-w-2xl">
         {product.image_url ? (
-          <div className="relative mx-5 mt-4 aspect-[16/7] overflow-hidden rounded-xl bg-[#e8dfd2]">
+          <div className="relative mx-5 mt-4 aspect-[16/7] overflow-hidden rounded-xl bg-muted">
             <Image
               src={product.image_url}
               alt={`${product.name} ürün görseli`}
@@ -137,15 +143,22 @@ export function ProductDrawer({
                 {product.name}
               </DrawerTitle>
               <DrawerDescription className="mt-1 leading-6">
-                {product.description || "Ürün detaylarını seçerek sepetinize ekleyin."}
+                {product.description || translate(locale, "default_product_desc")}
               </DrawerDescription>
             </div>
-            <p className="shrink-0 text-base font-bold">
-              {formatMinorMoney(
-                decimalToMinor(product.selling_price),
-                currency,
-              )}
-            </p>
+            <div className="shrink-0 text-right">
+              <p className="text-base font-bold">
+                {formatMinorMoney(
+                  decimalToMinor(product.selling_price),
+                  currency,
+                )}
+              </p>
+              {product.calories != null ? (
+                <p className="mt-0.5 text-xs tabular-nums text-muted-foreground">
+                  {product.calories} kcal
+                </p>
+              ) : null}
+            </div>
           </div>
         </DrawerHeader>
 
@@ -155,9 +168,9 @@ export function ProductDrawer({
               <legend className="flex w-full items-center justify-between gap-3 text-sm font-semibold">
                 <span>{group.name}</span>
                 <span className="text-xs font-normal text-muted-foreground">
-                  {group.is_required ? "Zorunlu" : "İsteğe bağlı"}
+                  {translate(locale, group.is_required ? "required" : "optional")}
                   {group.maximum_selection
-                    ? ` · en fazla ${group.maximum_selection}`
+                    ? ` · ${translate(locale, "max_selection", { n: group.maximum_selection })}`
                     : ""}
                 </span>
               </legend>
@@ -203,13 +216,13 @@ export function ProductDrawer({
           ))}
 
           <div className="space-y-2">
-            <Label htmlFor={`product-note-${product.id}`}>Ürün notu</Label>
+            <Label htmlFor={`product-note-${product.id}`}>{translate(locale, "product_note_label")}</Label>
             <Textarea
               id={`product-note-${product.id}`}
               value={note}
               onChange={(event) => setNote(event.target.value)}
               maxLength={500}
-              placeholder="Örn. sos ayrı gelsin"
+              placeholder={translate(locale, "product_note_placeholder")}
               className="min-h-20 rounded-xl"
             />
           </div>
@@ -225,14 +238,14 @@ export function ProductDrawer({
           <div className="flex items-center gap-3">
             <div
               className="flex h-12 items-center rounded-xl border bg-background"
-              aria-label="Ürün adedi"
+              aria-label={translate(locale, "item_count_label")}
             >
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-lg"
                 onClick={() => setQuantity((value) => Math.max(1, value - 1))}
-                aria-label="Adedi azalt"
+                aria-label={translate(locale, "decrease")}
               >
                 <Minus />
               </Button>
@@ -244,7 +257,7 @@ export function ProductDrawer({
                 variant="ghost"
                 size="icon-lg"
                 onClick={() => setQuantity((value) => Math.min(99, value + 1))}
-                aria-label="Adedi artır"
+                aria-label={translate(locale, "increase")}
               >
                 <Plus />
               </Button>
@@ -257,8 +270,10 @@ export function ProductDrawer({
             >
               {orderingEnabled ? <ShoppingBag /> : <Check />}
               {orderingEnabled
-                ? `Sepete ekle · ${formatMinorMoney(unitTotal * BigInt(quantity), currency)}`
-                : "Menü görüntüleme modu"}
+                ? translate(locale, "add_to_cart", {
+                    amount: formatMinorMoney(unitTotal * BigInt(quantity), currency),
+                  })
+                : translate(locale, "view_mode_title")}
             </Button>
           </div>
         </DrawerFooter>

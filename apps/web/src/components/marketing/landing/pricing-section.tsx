@@ -1,5 +1,10 @@
 import { ArrowRight, Check } from "lucide-react";
 
+import {
+  ADDITIONAL_BRANCH_PRICE_LABEL,
+  BASE_MONTHLY_PRICE_LABEL,
+} from "@/lib/pricing";
+
 import styles from "./landing.module.css";
 
 const planFeatures = [
@@ -10,7 +15,7 @@ const planFeatures = [
   "Stok ve reçete takibi",
   "Raporlama ve işlem geçmişi",
   "Rol ve yetki yönetimi",
-  "1 şube · 50 kullanıcıya kadar",
+  "1 şube dahil · 50 kullanıcıya kadar",
 ] as const;
 
 export function PricingSection() {
@@ -45,7 +50,7 @@ export function PricingSection() {
           <div className={styles.receiptPrice}>
             <span>Deneme sonrasında</span>
             <p>
-              <strong>₺1.499,99</strong>
+              <strong>{BASE_MONTHLY_PRICE_LABEL}</strong>
               <small>/ ay</small>
             </p>
           </div>
@@ -60,12 +65,14 @@ export function PricingSection() {
           </ul>
 
           <div className={styles.receiptTotal}>
-            <span>Aylık toplam</span>
-            <strong>₺1.499,99</strong>
+            <span>Aylık toplam (1 şube)</span>
+            <strong>{BASE_MONTHLY_PRICE_LABEL}</strong>
           </div>
           <p className={styles.receiptNote}>
             Deneme sonunda devam etmek isterseniz Standard paket aylık olarak
-            sunulur.
+            sunulur. Fiyata 1 şube dahildir; açtığınız her ek şube için aylık{" "}
+            {ADDITIONAL_BRANCH_PRICE_LABEL} eklenir. Kapattığınız (arşivlediğiniz)
+            şubeler ücretlendirilmez.
           </p>
           <a className={styles.receiptCta} href="#kayit">
             Ücretsiz kullanmaya başla

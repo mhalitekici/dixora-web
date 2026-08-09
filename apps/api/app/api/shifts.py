@@ -16,13 +16,17 @@ from app.dependencies import (
     require_tenant,
 )
 from app.errors import DomainError
-from app.models import CashierShift, Payment
+from app.models import CashierShift, Payment, User
 from app.models.enums import PaymentStatus
-from app.schemas import ShiftClose, ShiftOpen, ShiftOut
+from app.schemas import ShiftClose, ShiftHandoff, ShiftHandoffOut, ShiftOpen, ShiftOut
 from app.services.audit import add_audit_log
 
 router = APIRouter(prefix="/shifts", tags=["cashier-shifts"])
 ShiftOperator = Annotated[Identity, Depends(require_permissions("payments.manage"))]
+
+
+def _shift_out(shift: CashierShift, display_name: str | None) -> ShiftOut:
+    return ShiftOut.model_validate(shift).model_copy(update={"user_display_name": display_name})
 
 
 @router.get("/current", response_model=ShiftOut | None)
@@ -37,7 +41,7 @@ async def current_shift(identity: ShiftOperator, db: DbSession) -> ShiftOut | No
             )
         )
     ).scalar_one_or_none()
-    return ShiftOut.model_validate(shift) if shift else None
+    return _shift_out(shift, identity.display_name) if shift else None
 
 
 @router.get("/history", response_model=list[ShiftOut])
@@ -67,7 +71,19 @@ async def shift_history(
         .scalars()
         .all()
     )
-    return [ShiftOut.model_validate(shift) for shift in rows]
+    user_ids = {shift.user_id for shift in rows}
+    names_by_id: dict[UUID, str] = {}
+    if user_ids:
+        name_rows = (
+            await db.execute(
+                select(User.id, User.display_name).where(
+                    User.tenant_id == require_tenant(identity),
+                    User.id.in_(user_ids),
+                )
+            )
+        ).all()
+        names_by_id = {row.id: row.display_name for row in name_rows}
+    return [_shift_out(shift, names_by_id.get(shift.user_id)) for shift in rows]
 
 
 @router.post("/open", response_model=ShiftOut, status_code=status.HTTP_201_CREATED)
@@ -94,7 +110,9 @@ async def open_shift(
         tenant_id=tenant_id,
         branch_id=branch_id,
         user_id=identity.user_id,
+        cashier_name=payload.cashier_name.strip(),
         opening_cash=payload.opening_cash,
+        opening_note=payload.note,
         opened_at=datetime.now(UTC),
     )
     db.add(shift)
@@ -105,35 +123,25 @@ async def open_shift(
         action="shift.opened",
         resource_type="cashier_shift",
         resource_id=shift.id,
-        new_value={"opening_cash": str(shift.opening_cash)},
+        new_value={"opening_cash": str(shift.opening_cash), "cashier_name": shift.cashier_name},
     )
     await db.commit()
-    return ShiftOut.model_validate(shift)
+    return _shift_out(shift, identity.display_name)
 
 
-@router.post("/{shift_id}/close", response_model=ShiftOut)
-async def close_shift(
-    shift_id: UUID,
-    payload: ShiftClose,
-    identity: ShiftOperator,
+async def _close_shift(
     db: DbSession,
-) -> ShiftOut:
-    shift = (
-        await db.execute(
-            select(CashierShift)
-            .where(
-                CashierShift.id == shift_id,
-                CashierShift.tenant_id == require_tenant(identity),
-                CashierShift.branch_id == require_branch(identity),
-                CashierShift.user_id == identity.user_id,
-            )
-            .with_for_update()
-        )
-    ).scalar_one_or_none()
-    if shift is None:
-        raise DomainError("shift_not_found", "Shift not found", status_code=404)
-    if shift.status == "CLOSED":
-        return ShiftOut.model_validate(shift)
+    *,
+    shift: CashierShift,
+    closing_cash: Decimal,
+    note: str | None,
+    identity: Identity,
+    action: str = "shift.closed",
+) -> None:
+    """Compute expected cash from completed payments and close the shift in place.
+
+    Caller is responsible for locking the shift row and committing.
+    """
     payments = (
         (
             await db.execute(
@@ -159,17 +167,17 @@ async def close_shift(
     )
     total_sales = sum((payment.amount for payment in payments), Decimal("0"))
     shift.status = "CLOSED"
-    shift.closing_cash = payload.closing_cash
+    shift.closing_cash = closing_cash
     shift.cash_sales = cash_sales
     shift.card_sales = card_sales
     shift.total_sales = total_sales
-    shift.cash_variance = payload.closing_cash - shift.opening_cash - cash_sales
+    shift.cash_variance = closing_cash - shift.opening_cash - cash_sales
     shift.closed_at = datetime.now(UTC)
-    shift.closing_note = payload.note
+    shift.closing_note = note
     add_audit_log(
         db,
         identity=identity,
-        action="shift.closed",
+        action=action,
         resource_type="cashier_shift",
         resource_id=shift.id,
         new_value={
@@ -178,5 +186,135 @@ async def close_shift(
             "cash_variance": str(shift.cash_variance),
         },
     )
+
+
+@router.post("/{shift_id}/close", response_model=ShiftOut)
+async def close_shift(
+    shift_id: UUID,
+    payload: ShiftClose,
+    identity: ShiftOperator,
+    db: DbSession,
+) -> ShiftOut:
+    shift = (
+        await db.execute(
+            select(CashierShift)
+            .where(
+                CashierShift.id == shift_id,
+                CashierShift.tenant_id == require_tenant(identity),
+                CashierShift.branch_id == require_branch(identity),
+                CashierShift.user_id == identity.user_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if shift is None:
+        raise DomainError("shift_not_found", "Shift not found", status_code=404)
+    if shift.status == "CLOSED":
+        return _shift_out(shift, identity.display_name)
+    await _close_shift(
+        db,
+        shift=shift,
+        closing_cash=payload.closing_cash,
+        note=payload.note,
+        identity=identity,
+    )
     await db.commit()
-    return ShiftOut.model_validate(shift)
+    return _shift_out(shift, identity.display_name)
+
+
+@router.post("/{shift_id}/handoff", response_model=ShiftHandoffOut)
+async def handoff_shift(
+    shift_id: UUID,
+    payload: ShiftHandoff,
+    identity: ShiftOperator,
+    db: DbSession,
+) -> ShiftHandoffOut:
+    """Close the caller's active shift and immediately open a new one.
+
+    Many cafes share one terminal login across staff, so a handoff does not
+    require a separate user account for the next person — it stays on the
+    same authenticated login and simply records who is physically holding
+    the till now via ``next_cashier_name``. The new shift's opening cash
+    defaults to the counted cash handed over, unless an explicit
+    ``next_opening_cash`` is provided (e.g. the till is topped up or
+    partially withdrawn during the handoff).
+    """
+    tenant_id = require_tenant(identity)
+    branch_id = require_branch(identity)
+    shift = (
+        await db.execute(
+            select(CashierShift)
+            .where(
+                CashierShift.id == shift_id,
+                CashierShift.tenant_id == tenant_id,
+                CashierShift.branch_id == branch_id,
+                CashierShift.user_id == identity.user_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if shift is None:
+        raise DomainError("shift_not_found", "Shift not found", status_code=404)
+
+    if shift.status == "CLOSED":
+        successor = (
+            await db.execute(
+                select(CashierShift).where(
+                    CashierShift.tenant_id == tenant_id,
+                    CashierShift.branch_id == branch_id,
+                    CashierShift.predecessor_shift_id == shift.id,
+                )
+            )
+        ).scalar_one_or_none()
+        if successor is not None:
+            return ShiftHandoffOut(
+                closed=_shift_out(shift, identity.display_name),
+                opened=_shift_out(successor, identity.display_name),
+            )
+        raise DomainError(
+            "shift_already_closed",
+            "This shift was already closed without a handoff",
+            status_code=409,
+        )
+
+    await _close_shift(
+        db,
+        shift=shift,
+        closing_cash=payload.counted_cash,
+        note=payload.note,
+        identity=identity,
+        action="shift.handoff",
+    )
+    successor = CashierShift(
+        tenant_id=tenant_id,
+        branch_id=branch_id,
+        user_id=identity.user_id,
+        predecessor_shift_id=shift.id,
+        cashier_name=payload.next_cashier_name.strip(),
+        opening_cash=(
+            payload.next_opening_cash
+            if payload.next_opening_cash is not None
+            else payload.counted_cash
+        ),
+        opening_note=payload.note,
+        opened_at=datetime.now(UTC),
+    )
+    db.add(successor)
+    await db.flush()
+    add_audit_log(
+        db,
+        identity=identity,
+        action="shift.handoff_opened",
+        resource_type="cashier_shift",
+        resource_id=successor.id,
+        new_value={
+            "opening_cash": str(successor.opening_cash),
+            "predecessor_shift_id": str(shift.id),
+            "cashier_name": successor.cashier_name,
+        },
+    )
+    await db.commit()
+    return ShiftHandoffOut(
+        closed=_shift_out(shift, identity.display_name),
+        opened=_shift_out(successor, identity.display_name),
+    )

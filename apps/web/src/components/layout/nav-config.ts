@@ -2,11 +2,11 @@ import {
   Activity,
   BadgePercent,
   BarChart3,
+  BedDouble,
   Blocks,
-  BookOpenText,
   Boxes,
   Building2,
-  ChefHat,
+  ClipboardCheck,
   ClipboardList,
   CreditCard,
   FileClock,
@@ -54,7 +54,9 @@ export const adminNavigation: NavGroup[] = [
     items: [
       { label: "Kontrol Merkezi", href: "/admin", icon: LayoutDashboard, exact: true },
       { label: "Canlı Operasyon", href: "/admin/live", icon: Activity, badge: "canlı" },
+      { label: "Onaylar", href: "/admin/approvals", icon: ClipboardCheck },
       { label: "Masalar", href: "/admin/tables", icon: Grid2X2 },
+      { label: "Otel Odaları", href: "/admin/hotel-rooms", icon: BedDouble },
       { label: "Siparişler", href: "/admin/orders", icon: ReceiptText },
     ],
   },
@@ -72,7 +74,6 @@ export const adminNavigation: NavGroup[] = [
   {
     label: "Operasyon Ayarları",
     items: [
-      { label: "Mutfak ve İstasyonlar", href: "/admin/kitchen", icon: ChefHat },
       { label: "Yazıcılar", href: "/admin/printers", icon: Printer },
       { label: "Çalışanlar", href: "/admin/employees", icon: UsersRound },
       { label: "Roller ve Yetkiler", href: "/admin/roles", icon: ShieldCheck },
@@ -123,11 +124,6 @@ export const operationalLinks = {
     { label: "Kasa", href: "/cashier", icon: WalletCards },
     { label: "Kapananlar", href: "/cashier/closed-orders", icon: ReceiptText },
     { label: "Vardiya", href: "/cashier/shift", icon: MonitorDot },
-  ],
-  kitchen: [
-    { label: "Biletler", href: "/kitchen", icon: ChefHat },
-    { label: "Geçmiş", href: "/kitchen/history", icon: BookOpenText },
-    { label: "Yazıcılar", href: "/kitchen/printers", icon: Printer },
   ],
 };
 

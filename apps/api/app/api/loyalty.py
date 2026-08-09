@@ -106,7 +106,12 @@ async def _public_context(
                 Tenant.slug == business_slug.lower(),
                 Tenant.is_active.is_(True),
                 Tenant.state.notin_(
-                    [TenantState.SUSPENDED, TenantState.CANCELLED, TenantState.ARCHIVED]
+                    [
+                        TenantState.PAST_DUE,
+                        TenantState.SUSPENDED,
+                        TenantState.CANCELLED,
+                        TenantState.ARCHIVED,
+                    ]
                 ),
             )
         )

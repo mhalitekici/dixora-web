@@ -4,8 +4,6 @@ import { useQuery } from "@tanstack/react-query";
 import {
   AlertTriangle,
   ArrowRight,
-  BellRing,
-  CheckCircle2,
   CircleDot,
   Clock3,
   Grid2X2,
@@ -42,7 +40,6 @@ const stateMeta: Record<string, { label: string; tone: Parameters<typeof StatusB
   OCCUPIED: { label: "Oturum açık", tone: "info", card: "border-blue-600/20 bg-blue-500/[0.035]", dot: "bg-blue-500" },
   ORDER_PENDING: { label: "Sipariş bekliyor", tone: "warning", card: "border-amber-600/25 bg-amber-500/[0.045]", dot: "bg-amber-500" },
   PREPARING: { label: "Hazırlanıyor", tone: "brand", card: "border-brand/25 bg-brand/[0.035]", dot: "bg-brand" },
-  READY: { label: "Servise hazır", tone: "success", card: "border-emerald-600/30 bg-emerald-500/[0.06]", dot: "bg-emerald-500" },
   BILL_REQUESTED: { label: "Hesap istendi", tone: "purple", card: "border-violet-600/25 bg-violet-500/[0.045]", dot: "bg-violet-500" },
   PAYMENT_PENDING: { label: "Ödeme bekliyor", tone: "purple", card: "border-violet-600/25 bg-violet-500/[0.045]", dot: "bg-violet-500" },
   CLEANING: { label: "Temizleniyor", tone: "info", card: "border-cyan-600/20 bg-cyan-500/[0.035]", dot: "bg-cyan-500" },
@@ -103,7 +100,6 @@ export function WaiterTableList() {
       }),
     [area, search, tables],
   );
-  const readyCount = tables.filter((table) => table.state === "READY").length;
   const billCount = tables.filter((table) => table.state === "BILL_REQUESTED").length;
   const dataLoading = areasQuery.isLoading || tablesQuery.isLoading;
   const dataError = areasQuery.error ?? tablesQuery.error;
@@ -156,19 +152,8 @@ export function WaiterTableList() {
         </StatusBadge>
       </header>
 
-      {(readyCount > 0 || billCount > 0) && (
-        <div className="mb-4 grid grid-cols-2 gap-2">
-          <div className="flex min-h-16 items-center gap-3 rounded-2xl border border-emerald-600/20 bg-emerald-500/8 p-3 text-left">
-            <span className="flex size-9 items-center justify-center rounded-xl bg-emerald-500/15 text-emerald-700 dark:text-emerald-300">
-              <CheckCircle2 className="size-4" />
-            </span>
-            <span>
-              <span className="block text-lg font-bold tabular-nums">{readyCount}</span>
-              <span className="block text-[0.65rem] text-emerald-800/70 dark:text-emerald-200/70">
-                Servise hazır
-              </span>
-            </span>
-          </div>
+      {billCount > 0 && (
+        <div className="mb-4 grid grid-cols-1 gap-2">
           <div className="flex min-h-16 items-center gap-3 rounded-2xl border border-violet-600/20 bg-violet-500/8 p-3 text-left">
             <span className="flex size-9 items-center justify-center rounded-xl bg-violet-500/15 text-violet-700 dark:text-violet-300">
               <ReceiptText className="size-4" />
@@ -254,13 +239,7 @@ export function WaiterTableList() {
                       {table.guest_count ?? 0}/{table.capacity}
                     </span>
                   </div>
-                  {table.state === "READY" ? (
-                    <span className="flex size-8 animate-pulse items-center justify-center rounded-xl bg-emerald-500 text-white">
-                      <BellRing className="size-4" />
-                    </span>
-                  ) : (
-                    <CircleDot className={cn("size-4", meta.dot.replace("bg-", "text-"))} />
-                  )}
+                  <CircleDot className={cn("size-4", meta.dot.replace("bg-", "text-"))} />
                 </div>
                 <div className="mt-5">
                   <StatusBadge tone={meta.tone} dot={false} className="max-w-full text-[0.58rem]">

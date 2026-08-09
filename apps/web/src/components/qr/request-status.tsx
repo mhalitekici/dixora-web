@@ -8,16 +8,19 @@ import {
   XCircle,
 } from "lucide-react"
 
+import { translate, type QrLocale } from "@/components/qr/qr-i18n"
 import type { PublicQrRequestDto } from "@/components/qr/types"
 import { Button } from "@/components/ui/button"
 
 export function QrRequestStatus({
   request,
   business,
+  locale,
   onBack,
 }: {
   request: PublicQrRequestDto
   business: string
+  locale: QrLocale
   onBack: () => void
 }) {
   const approved = request.status === "APPROVED"
@@ -44,24 +47,24 @@ export function QrRequestStatus({
         </p>
         <h1 className="mt-2 text-2xl font-semibold tracking-[-0.035em]">
           {approved
-            ? "Siparişiniz alındı"
+            ? translate(locale, "request_status_approved_title")
             : rejected
-              ? "Talebiniz kabul edilmedi"
-              : "Talebiniz personele ulaştı"}
+              ? translate(locale, "request_status_rejected_title")
+              : translate(locale, "request_status_pending_title")}
         </h1>
         <p className="mt-3 text-sm leading-6 text-muted-foreground">
           {approved
-            ? "Siparişiniz otomatik olarak onaylandı ve hazırlık akışına aktarıldı."
+            ? translate(locale, "request_status_approved_desc")
             : rejected
-              ? "Detaylı bilgi için servis personelinden destek isteyebilirsiniz."
-              : "Servis ekibi siparişinizi kontrol ediyor. Onaylandığında hazırlık başlayacak."}
+              ? translate(locale, "request_status_rejected_desc")
+              : translate(locale, "request_status_pending_desc")}
         </p>
 
         <div className="mt-7 rounded-2xl bg-muted/60 p-4 text-left">
           <div className="flex items-center gap-3">
             <ChefHat className="size-5 text-brand" />
             <div>
-              <p className="text-xs text-muted-foreground">Talep numarası</p>
+              <p className="text-xs text-muted-foreground">{translate(locale, "request_number_label")}</p>
               <p className="font-mono text-sm font-semibold">
                 {request.reference.slice(2, 10).toUpperCase()}
               </p>
@@ -70,8 +73,7 @@ export function QrRequestStatus({
         </div>
 
         <p className="mt-4 text-xs leading-5 text-muted-foreground">
-          Bu ekran sunucunun son onaylı durumunu gösterir. Güncel bilgi için
-          servis personeline başvurabilirsiniz.
+          {translate(locale, "request_status_footer")}
         </p>
 
         <Button
@@ -81,7 +83,7 @@ export function QrRequestStatus({
           onClick={onBack}
         >
           <RotateCcw />
-          Menüye dön
+          {translate(locale, "back_to_menu")}
         </Button>
       </section>
     </main>

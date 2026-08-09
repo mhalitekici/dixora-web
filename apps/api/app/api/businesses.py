@@ -1,17 +1,36 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
+from sqlalchemy.orm import selectinload
 
 from app.dependencies import CurrentIdentity, DbSession, Identity, require_permissions
 from app.errors import DomainError
-from app.models import Branch, Subscription, SubscriptionPlan, Tenant, User
+from app.models import (
+    AuthSession,
+    Branch,
+    Subscription,
+    SubscriptionPlan,
+    Tenant,
+    TrustedDevice,
+    User,
+)
 from app.models.enums import TenantState
 from app.rbac import ensure_role, ensure_tenant_role_presets
-from app.schemas import BusinessCreate, BusinessUpdate, Page, TenantOut
+from app.schemas import (
+    AdminPasswordResetOut,
+    AdminPasswordResetRequest,
+    BusinessCreate,
+    BusinessReactivateRequest,
+    BusinessUpdate,
+    BusinessUserOut,
+    Page,
+    TenantOut,
+)
 from app.security import hash_password, utcnow
 from app.services.audit import add_audit_log
 
@@ -187,6 +206,166 @@ async def update_business(
             "default_currency": tenant.default_currency,
             "prevent_negative_stock": tenant.prevent_negative_stock,
         },
+    )
+    await db.commit()
+    await db.refresh(tenant)
+    return TenantOut.model_validate(tenant)
+
+
+@router.get("/{business_id}/users", response_model=list[BusinessUserOut])
+async def list_business_users(
+    business_id: UUID,
+    identity: PlatformAdmin,
+    db: DbSession,
+) -> list[BusinessUserOut]:
+    """Support lookup: the staff accounts belonging to one business."""
+    tenant = await db.get(Tenant, business_id)
+    if tenant is None:
+        raise DomainError("business_not_found", "Business not found", status_code=404)
+    rows = (
+        (
+            await db.execute(
+                select(User)
+                .where(User.tenant_id == business_id)
+                .options(selectinload(User.role))
+                .order_by(User.display_name)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return [
+        BusinessUserOut(
+            id=user.id,
+            username=user.username,
+            display_name=user.display_name,
+            email=user.email,
+            role=user.role.code if user.role else "",
+            is_active=user.is_active,
+        )
+        for user in rows
+    ]
+
+
+@router.post(
+    "/{business_id}/users/{user_id}/password-reset",
+    response_model=AdminPasswordResetOut,
+)
+async def reset_business_user_password(
+    business_id: UUID,
+    user_id: UUID,
+    payload: AdminPasswordResetRequest,
+    identity: PlatformAdmin,
+    db: DbSession,
+) -> AdminPasswordResetOut:
+    """Set a temporary password for a business user, for support recovery.
+
+    The user must belong to the named business — a mismatched pair 404s rather
+    than leaking whether the id exists elsewhere. Every live session for that
+    account is revoked so an attacker holding a stolen refresh token loses it
+    at the same moment. The password itself is never logged or returned.
+    """
+    tenant = await db.get(Tenant, business_id)
+    if tenant is None:
+        raise DomainError("business_not_found", "Business not found", status_code=404)
+
+    user = (
+        await db.execute(
+            select(User).where(User.id == user_id, User.tenant_id == business_id)
+        )
+    ).scalar_one_or_none()
+    if user is None:
+        raise DomainError("user_not_found", "User not found", status_code=404)
+    if user.is_super_admin:
+        raise DomainError(
+            "platform_account_protected",
+            "Platform accounts cannot be reset through business support",
+            status_code=403,
+        )
+
+    live_sessions = (
+        await db.execute(
+            select(func.count(AuthSession.id)).where(
+                AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None)
+            )
+        )
+    ).scalar_one()
+
+    user.password_hash = hash_password(payload.new_password)
+    await db.execute(
+        update(AuthSession)
+        .where(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None))
+        .values(revoked_at=utcnow())
+    )
+    await db.execute(
+        update(TrustedDevice)
+        .where(TrustedDevice.created_by_user_id == user.id, TrustedDevice.revoked_at.is_(None))
+        .values(revoked_at=utcnow())
+    )
+    add_audit_log(
+        db,
+        identity=identity,
+        tenant_id=tenant.id,
+        action="user.password_reset",
+        resource_type="user",
+        resource_id=user.id,
+        # Deliberately records only *that* a reset happened and why — never
+        # the password, and never the old or new hash.
+        new_value={"sessions_revoked": live_sessions, "by": "platform_support"},
+        reason=payload.reason,
+    )
+    await db.commit()
+    return AdminPasswordResetOut(
+        user_id=user.id,
+        username=user.username,
+        sessions_revoked=live_sessions,
+    )
+
+
+@router.post("/{business_id}/reactivate", response_model=TenantOut)
+async def reactivate_business(
+    business_id: UUID,
+    payload: BusinessReactivateRequest,
+    identity: PlatformAdmin,
+    db: DbSession,
+) -> TenantOut:
+    """Manually reactivate (or extend) a business's membership.
+
+    This is the only path back to ACTIVE once a trial expires or a business
+    is suspended for non-payment — a deliberate platform-admin action taken
+    after payment is confirmed by some other means (bank transfer, etc.)
+    until an online payment gateway is wired up.
+    """
+    tenant = await db.get(Tenant, business_id)
+    if tenant is None:
+        raise DomainError("business_not_found", "Business not found", status_code=404)
+    subscription = (
+        await db.execute(select(Subscription).where(Subscription.tenant_id == tenant.id))
+    ).scalar_one_or_none()
+
+    previous_state = tenant.state.value
+    now = utcnow()
+    tenant.state = TenantState.ACTIVE
+    tenant.is_active = True
+    if subscription is not None:
+        subscription.status = TenantState.ACTIVE
+        subscription.starts_at = now
+        subscription.ends_at = now + timedelta(days=payload.extend_days)
+
+    add_audit_log(
+        db,
+        identity=identity,
+        tenant_id=tenant.id,
+        action="business.reactivated",
+        resource_type="tenant",
+        resource_id=tenant.id,
+        previous_value={"state": previous_state},
+        new_value={
+            "state": tenant.state.value,
+            "extended_days": payload.extend_days,
+            "valid_until": (now + timedelta(days=payload.extend_days)).isoformat(),
+        },
+        reason=payload.note,
     )
     await db.commit()
     await db.refresh(tenant)

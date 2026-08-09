@@ -70,46 +70,23 @@ export function OperationalShell({
   }, []);
 
   const links = operationalLinks[mode];
-  const modeLabel = mode === "waiter" ? "Garson" : mode === "cashier" ? "Kasa" : "Mutfak";
+  const modeLabel = mode === "waiter" ? "Garson" : "Kasa";
 
   return (
-    <div className={cn("min-h-dvh bg-background", mode === "kitchen" && "bg-[#191717]")}>
-      <header
-        className={cn(
-          "sticky top-0 z-40 flex h-16 items-center gap-3 border-b bg-background/94 px-3 backdrop-blur-xl sm:px-5",
-          mode === "kitchen" && "border-white/8 bg-[#201d1d]/95 text-white",
-        )}
-      >
+    <div className="min-h-dvh bg-background">
+      <header className="sticky top-0 z-40 flex h-16 items-center gap-3 border-b bg-background/94 px-3 backdrop-blur-xl sm:px-5">
         <Link href={`/${mode}`} className="flex shrink-0 items-center">
-          <BrandLogo
-            theme={mode === "kitchen" ? "dark" : "light"}
-            withWordmark={false}
-            className="size-10"
-            priority
-          />
+          <BrandLogo theme="light" withWordmark={false} className="size-10" priority />
         </Link>
         <div className="h-7 w-px bg-border dark:bg-white/10" />
         <div className="min-w-0">
           <div className="flex items-center gap-2">
             <p className="truncate text-sm font-semibold">{resolvedStationName}</p>
-            <Badge
-              variant="outline"
-              className={cn(
-                "hidden h-5 rounded-full text-[0.58rem] sm:inline-flex",
-                mode === "kitchen" && "border-white/10 text-white/60",
-              )}
-            >
+            <Badge variant="outline" className="hidden h-5 rounded-full text-[0.58rem] sm:inline-flex">
               {modeLabel}
             </Badge>
           </div>
-          <p
-            className={cn(
-              "truncate text-[0.65rem] text-muted-foreground",
-              mode === "kitchen" && "text-white/40",
-            )}
-          >
-            {resolvedUserName}
-          </p>
+          <p className="truncate text-[0.65rem] text-muted-foreground">{resolvedUserName}</p>
         </div>
 
         <nav className="ml-5 hidden items-center gap-1 lg:flex">
@@ -122,9 +99,6 @@ export function OperationalShell({
                 className={cn(
                   "flex h-9 items-center gap-2 rounded-xl px-3 text-xs font-semibold text-muted-foreground transition-colors hover:bg-muted hover:text-foreground",
                   active && "bg-primary text-primary-foreground hover:bg-primary hover:text-primary-foreground",
-                  mode === "kitchen" &&
-                    "text-white/50 hover:bg-white/8 hover:text-white",
-                  mode === "kitchen" && active && "bg-white text-[#242121] hover:bg-white hover:text-[#242121]",
                 )}
               >
                 <link.icon className="size-4" />
@@ -146,7 +120,7 @@ export function OperationalShell({
             {online ? <Wifi className="size-3.5" /> : <WifiOff className="size-3.5" />}
             {online ? "Bağlı" : "Çevrimdışı"}
           </span>
-          {mode !== "kitchen" ? <ThemeToggle /> : null}
+          <ThemeToggle />
           {mode === "waiter" ? (
             <Button
               render={<Link href="/waiter/notifications" />}
@@ -164,10 +138,7 @@ export function OperationalShell({
               render={
                 <Button
                   variant="ghost"
-                  className={cn(
-                    "h-10 gap-1 rounded-xl px-1.5",
-                    mode === "kitchen" && "text-white hover:bg-white/8 hover:text-white",
-                  )}
+                  className="h-10 gap-1 rounded-xl px-1.5"
                 />
               }
             >
@@ -211,18 +182,12 @@ export function OperationalShell({
         className={cn(
           "pb-20 lg:pb-0",
           fullBleed ? "min-h-[calc(100dvh-4rem)]" : "mx-auto w-full max-w-[1680px] p-3 sm:p-5",
-          mode === "kitchen" && "text-white",
         )}
       >
         {children}
       </main>
 
-      <nav
-        className={cn(
-          "fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 border-t bg-background/96 px-2 pb-[max(0.4rem,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur-xl lg:hidden",
-          mode === "kitchen" && "border-white/8 bg-[#201d1d]/96",
-        )}
-      >
+      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 border-t bg-background/96 px-2 pb-[max(0.4rem,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur-xl lg:hidden">
         {links.map((link) => {
           const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
           return (
@@ -232,8 +197,6 @@ export function OperationalShell({
               className={cn(
                 "flex min-h-12 flex-col items-center justify-center gap-1 rounded-xl text-[0.62rem] font-semibold text-muted-foreground",
                 active && "bg-brand-soft text-brand",
-                mode === "kitchen" && "text-white/45",
-                mode === "kitchen" && active && "bg-white/8 text-brand",
               )}
             >
               <link.icon className="size-[1.15rem]" />

@@ -10,6 +10,7 @@ import {
 } from "lucide-react"
 import { useState } from "react"
 
+import { translate, type QrLocale } from "@/components/qr/qr-i18n"
 import {
   cartLineTotalMinor,
   cartTotalMinor,
@@ -49,6 +50,7 @@ interface CartDrawerProps {
   customerNotesEnabled: boolean
   submitting: boolean
   onSubmit: (customerNote: string) => void
+  locale: QrLocale
 }
 
 export function CartDrawer({
@@ -60,6 +62,7 @@ export function CartDrawer({
   customerNotesEnabled,
   submitting,
   onSubmit,
+  locale,
 }: CartDrawerProps) {
   const lines = useCartStore((state) => state.lines)
   const setQuantity = useCartStore((state) => state.setQuantity)
@@ -77,12 +80,12 @@ export function CartDrawer({
         <DrawerHeader className="border-b px-5 pb-4 text-left">
           <DrawerTitle className="flex items-center gap-2 text-xl font-semibold">
             <ShoppingBag className="size-5" />
-            Sepetiniz
+            {translate(locale, "cart_title")}
           </DrawerTitle>
           <DrawerDescription>
             {tableName
-              ? `${tableName} için sipariş talebi`
-              : "Sipariş vermek için masanızdaki QR kodunu okutun."}
+              ? translate(locale, "cart_desc_table", { table: tableName })
+              : translate(locale, "cart_desc_no_table")}
           </DrawerDescription>
         </DrawerHeader>
 
@@ -91,9 +94,9 @@ export function CartDrawer({
             <div className="grid min-h-52 place-items-center rounded-2xl border border-dashed bg-muted/30 p-6 text-center">
               <div>
                 <ShoppingBag className="mx-auto size-8 text-muted-foreground/60" />
-                <p className="mt-3 font-semibold">Sepetiniz boş</p>
+                <p className="mt-3 font-semibold">{translate(locale, "cart_empty")}</p>
                 <p className="mt-1 text-sm text-muted-foreground">
-                  Menüden bir ürün seçerek başlayın.
+                  {translate(locale, "cart_empty_desc")}
                 </p>
               </div>
             </div>
@@ -168,13 +171,13 @@ export function CartDrawer({
 
           {customerNotesEnabled && lines.length > 0 ? (
             <div className="space-y-2 pt-2">
-              <Label htmlFor="qr-customer-note">Sipariş notu</Label>
+              <Label htmlFor="qr-customer-note">{translate(locale, "order_note_label")}</Label>
               <Textarea
                 id="qr-customer-note"
                 value={customerNote}
                 onChange={(event) => setCustomerNote(event.target.value)}
                 maxLength={1000}
-                placeholder="Tüm sipariş için eklemek istediğiniz not"
+                placeholder={translate(locale, "order_note_placeholder")}
                 className="min-h-20 rounded-xl"
               />
             </div>
@@ -183,7 +186,7 @@ export function CartDrawer({
 
         <DrawerFooter className="border-t bg-card px-5 py-4">
           <div className="mb-1 flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">Tahmini toplam</span>
+            <span className="text-sm text-muted-foreground">{translate(locale, "estimated_total")}</span>
             <strong className="text-xl">
               {formatMinorMoney(total, currency)}
             </strong>
@@ -201,36 +204,36 @@ export function CartDrawer({
               }
             >
               <Send />
-              {submitting ? "Gönderiliyor…" : "Sipariş talebini gönder"}
+              {submitting ? translate(locale, "sending") : translate(locale, "send_order_request")}
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogMedia className="bg-emerald-500/10 text-emerald-700">
                   <CheckCircle2 />
                 </AlertDialogMedia>
-                <AlertDialogTitle>Sipariş talebini onaylıyor musunuz?</AlertDialogTitle>
+                <AlertDialogTitle>{translate(locale, "confirm_order_title")}</AlertDialogTitle>
                 <AlertDialogDescription>
-                  {lines.length} kalem ürün {tableName || "seçili masa"} için
-                  personele gönderilecek. Gönderimden sonra değişiklik
-                  yapılamaz.
+                  {translate(locale, "confirm_order_desc", {
+                    count: lines.length,
+                    table: tableName || translate(locale, "selected_table_fallback"),
+                  })}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel>Sepete dön</AlertDialogCancel>
+                <AlertDialogCancel>{translate(locale, "back_to_cart")}</AlertDialogCancel>
                 <AlertDialogAction
                   onClick={() => onSubmit(customerNote)}
                   disabled={submitting}
                 >
                   <Send />
-                  Onayla ve gönder
+                  {translate(locale, "confirm_and_send")}
                 </AlertDialogAction>
               </AlertDialogFooter>
             </AlertDialogContent>
           </AlertDialog>
           {!orderingEnabled ? (
             <p className="text-center text-xs leading-5 text-muted-foreground">
-              Sipariş yalnız masa QR koduyla ve işletme sipariş alımını açtığında
-              gönderilebilir.
+              {translate(locale, "order_disabled_note")}
             </p>
           ) : null}
         </DrawerFooter>

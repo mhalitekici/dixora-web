@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 
 from app.config import Settings
 from app.errors import DomainError
-from app.models import AuthSession, Branch, Role, Tenant, User
+from app.models import AuthSession, Branch, Role, Tenant, User, UserBranchMembership
 from app.models.enums import TenantState
 from app.schemas import TokenPair
 
@@ -205,17 +205,35 @@ async def switch_refresh_token_branch(
             status_code=400,
         )
     if user.branch_id is not None:
-        raise DomainError(
-            "branch_switch_forbidden",
-            "This account is restricted to its assigned branch",
-            status_code=403,
+        # A branch-pinned user may still move between branches they have been
+        # granted membership in — that is how one regional manager covers
+        # several locations without gaining business-wide access.
+        granted = (
+            (
+                await db.execute(
+                    select(UserBranchMembership.branch_id).where(
+                        UserBranchMembership.user_id == user.id,
+                        UserBranchMembership.tenant_id == user.tenant_id,
+                        UserBranchMembership.is_active.is_(True),
+                    )
+                )
+            )
+            .scalars()
+            .all()
         )
+        if branch_id not in {user.branch_id, *granted}:
+            raise DomainError(
+                "branch_switch_forbidden",
+                "This account is restricted to its assigned branches",
+                status_code=403,
+            )
 
     selected_branch_id = await _resolve_refresh_branch(
         db,
         user,
         branch_id,
         allow_fallback=False,
+        prefer_requested=True,
     )
     assert selected_branch_id is not None
     remember_me = payload.get("remember_me") is True
@@ -294,7 +312,12 @@ async def _load_refresh_session(
             tenant is None
             or not tenant.is_active
             or tenant.state
-            in {TenantState.SUSPENDED, TenantState.CANCELLED, TenantState.ARCHIVED}
+            in {
+                TenantState.PAST_DUE,
+                TenantState.SUSPENDED,
+                TenantState.CANCELLED,
+                TenantState.ARCHIVED,
+            }
         ):
             raise DomainError("tenant_inactive", "Business is not active", status_code=403)
 
@@ -307,7 +330,15 @@ async def _resolve_refresh_branch(
     requested_branch_id: UUID | None,
     *,
     allow_fallback: bool = True,
+    prefer_requested: bool = False,
 ) -> UUID | None:
+    """Pick the branch a refreshed session should carry.
+
+    On login a pinned user always lands on their own branch, so a stale request
+    cannot move them. `prefer_requested` is for the explicit switch flow, where
+    the caller has already checked the target against the user's granted
+    branches; only then does the request win over the primary branch.
+    """
     if user.tenant_id is None:
         if requested_branch_id is not None:
             raise DomainError(
@@ -315,7 +346,10 @@ async def _resolve_refresh_branch(
             )
         return None
 
-    selected_branch_id = user.branch_id or requested_branch_id
+    if prefer_requested and requested_branch_id is not None:
+        selected_branch_id: UUID | None = requested_branch_id
+    else:
+        selected_branch_id = user.branch_id or requested_branch_id
     if selected_branch_id is not None:
         selected_branch_id = (
             await db.execute(

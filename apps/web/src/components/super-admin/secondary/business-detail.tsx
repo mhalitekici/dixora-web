@@ -13,7 +13,9 @@ import {
   KeyRound,
   Loader2,
   LockKeyhole,
+  RefreshCw,
   ShieldCheck,
+  UserCog,
   Store,
   Tag,
 } from "lucide-react"
@@ -44,6 +46,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Separator } from "@/components/ui/separator"
 import { Textarea } from "@/components/ui/textarea"
@@ -53,6 +56,9 @@ import { cn } from "@/lib/utils"
 import { AdapterNotice } from "./adapter-notice"
 import {
   getBusiness,
+  getBusinessUsers,
+  reactivateBusiness,
+  resetBusinessUserPassword,
   secondaryAdminQueryKeys,
   setBusinessLifecycle,
   supportModeCapability,
@@ -112,6 +118,13 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
   )
   const [supportOpen, setSupportOpen] = useState(false)
   const [supportReason, setSupportReason] = useState("")
+  const [passwordResetOpen, setPasswordResetOpen] = useState(false)
+  const [resetUserId, setResetUserId] = useState("")
+  const [resetPassword, setResetPassword] = useState("")
+  const [resetReason, setResetReason] = useState("")
+  const [reactivateOpen, setReactivateOpen] = useState(false)
+  const [extendDays, setExtendDays] = useState("30")
+  const [reactivateNote, setReactivateNote] = useState("")
 
   const query = useQuery({
     queryKey: secondaryAdminQueryKeys.business(businessId),
@@ -140,6 +153,62 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
         error instanceof Error
           ? error.message
           : "İşletme durumu güncellenemedi.",
+      )
+    },
+  })
+
+  const usersQuery = useQuery({
+    queryKey: ["secondary-admin", "business-users", businessId],
+    queryFn: ({ signal }) => getBusinessUsers(businessId, signal),
+    enabled: passwordResetOpen,
+  })
+
+  const passwordResetMutation = useMutation({
+    mutationFn: () =>
+      resetBusinessUserPassword(businessId, resetUserId, {
+        newPassword: resetPassword,
+        reason: resetReason,
+      }),
+    onSuccess: (result) => {
+      setPasswordResetOpen(false)
+      setResetUserId("")
+      setResetPassword("")
+      setResetReason("")
+      toast.success(`${result.username} için geçici şifre tanımlandı`, {
+        description: `${result.sessions_revoked} açık oturum kapatıldı. Şifreyi kullanıcıya güvenli bir kanaldan iletin.`,
+      })
+    },
+    onError: (error) => {
+      toast.error(
+        error instanceof Error ? error.message : "Şifre sıfırlanamadı.",
+      )
+    },
+  })
+
+  const reactivateMutation = useMutation({
+    mutationFn: () =>
+      reactivateBusiness(businessId, {
+        extendDays: Number(extendDays) || 30,
+        note: reactivateNote,
+      }),
+    onSuccess: async (business) => {
+      queryClient.setQueryData(
+        secondaryAdminQueryKeys.business(businessId),
+        business,
+      )
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["platform", "businesses"] }),
+        queryClient.invalidateQueries({
+          queryKey: secondaryAdminQueryKeys.subscriptions,
+        }),
+      ])
+      setReactivateOpen(false)
+      setReactivateNote("")
+      toast.success("Üyelik etkinleştirildi ve süre uzatıldı.")
+    },
+    onError: (error) => {
+      toast.error(
+        error instanceof Error ? error.message : "Üyelik uzatılamadı.",
       )
     },
   })
@@ -207,6 +276,10 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
               <KeyRound />
               Destek modu
             </Button>
+            <Button variant="outline" onClick={() => setPasswordResetOpen(true)}>
+              <UserCog />
+              Şifre sıfırla
+            </Button>
             {isSuspended ? (
               <Button
                 disabled={
@@ -231,6 +304,12 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
                 Askıya al
               </Button>
             )}
+            {!activeNow && business.state !== "ARCHIVED" ? (
+              <Button variant="outline" onClick={() => setReactivateOpen(true)}>
+                <RefreshCw />
+                Üyeliği uzat / aktifleştir
+              </Button>
+            ) : null}
           </>
         }
       />
@@ -428,6 +507,175 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+
+      <Dialog
+        open={passwordResetOpen}
+        onOpenChange={(open) => {
+          setPasswordResetOpen(open)
+          if (!open) {
+            setResetUserId("")
+            setResetPassword("")
+            setResetReason("")
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Kullanıcı şifresi sıfırla</DialogTitle>
+            <DialogDescription>
+              {business.name} çalışanı için geçici bir şifre tanımlayın. Mevcut
+              şifre görüntülenemez; yalnızca yenisi atanır ve kullanıcının açık
+              oturumları kapatılır.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <Label htmlFor="reset-user">Kullanıcı</Label>
+            {usersQuery.isPending ? (
+              <p className="text-sm text-muted-foreground">Kullanıcılar yükleniyor…</p>
+            ) : usersQuery.isError ? (
+              <p className="text-sm text-destructive">Kullanıcılar alınamadı.</p>
+            ) : (
+              <select
+                id="reset-user"
+                value={resetUserId}
+                onChange={(event) => setResetUserId(event.target.value)}
+                className="h-11 w-full rounded-xl border border-input bg-background px-3 text-sm outline-none focus-visible:ring-3 focus-visible:ring-ring/50"
+              >
+                <option value="">Kullanıcı seçin…</option>
+                {(usersQuery.data ?? []).map((user) => (
+                  <option key={user.id} value={user.id}>
+                    {user.display_name} · {user.username}
+                    {user.is_active ? "" : " (pasif)"}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="reset-password">Geçici şifre</Label>
+            <div className="flex gap-2">
+              <Input
+                id="reset-password"
+                value={resetPassword}
+                onChange={(event) => setResetPassword(event.target.value)}
+                placeholder="En az 10 karakter"
+                className="h-11 rounded-xl font-mono"
+                autoComplete="off"
+              />
+              <Button
+                type="button"
+                variant="outline"
+                className="h-11 shrink-0"
+                onClick={() => setResetPassword(generateTemporaryPassword())}
+              >
+                Üret
+              </Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              Şifreyi kullanıcıya güvenli bir kanaldan iletin; bu ekrandan
+              sonra tekrar görüntülenemez.
+            </p>
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="reset-reason">Gerekçe (opsiyonel)</Label>
+            <Textarea
+              id="reset-reason"
+              value={resetReason}
+              onChange={(event) => setResetReason(event.target.value)}
+              placeholder="Örn. Destek talebi DX-1042 · telefonla kimlik doğrulandı"
+              maxLength={500}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPasswordResetOpen(false)}>
+              Vazgeç
+            </Button>
+            <Button
+              disabled={
+                !resetUserId ||
+                resetPassword.trim().length < 10 ||
+                passwordResetMutation.isPending
+              }
+              onClick={() => passwordResetMutation.mutate()}
+            >
+              {passwordResetMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <UserCog />
+              )}
+              Şifreyi sıfırla
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={reactivateOpen}
+        onOpenChange={(open) => {
+          setReactivateOpen(open)
+          if (!open) setReactivateNote("")
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Üyeliği uzat / aktifleştir</DialogTitle>
+            <DialogDescription>
+              {business.name} için ödeme alındıktan sonra bu işlemi kullanın.
+              Tenant durumu ACTIVE olarak ayarlanır ve abonelik bitiş tarihi
+              bugünden itibaren uzatılır.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-2">
+            <Label htmlFor="reactivate-days">Kaç gün uzatılsın?</Label>
+            <Input
+              id="reactivate-days"
+              type="number"
+              min={1}
+              max={365}
+              value={extendDays}
+              onChange={(event) => setExtendDays(event.target.value)}
+              className="h-11 rounded-xl"
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="reactivate-note">Not (opsiyonel)</Label>
+            <Textarea
+              id="reactivate-note"
+              value={reactivateNote}
+              onChange={(event) => setReactivateNote(event.target.value)}
+              placeholder="Örn. IBAN ile 1.200,00 TL ödeme alındı, dekont referansı..."
+              maxLength={500}
+            />
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setReactivateOpen(false)}>
+              Vazgeç
+            </Button>
+            <Button
+              disabled={
+                reactivateMutation.isPending ||
+                !Number(extendDays) ||
+                Number(extendDays) < 1
+              }
+              onClick={() => reactivateMutation.mutate()}
+            >
+              {reactivateMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <RefreshCw />
+              )}
+              Onayla
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
   )
 }
@@ -590,4 +838,12 @@ function formatBusinessType(value: string): string {
       .replaceAll("_", " ")
       .replace(/^\p{L}/u, (letter) => letter.toLocaleUpperCase("tr-TR"))
   )
+}
+
+/** Browser-side temporary password suggestion (server still validates length). */
+function generateTemporaryPassword(): string {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
+  const values = new Uint32Array(14)
+  crypto.getRandomValues(values)
+  return Array.from(values, (value) => alphabet[value % alphabet.length]).join("")
 }

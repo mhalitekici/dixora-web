@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 
-import { CashierWorkspace } from "@/components/cashier/cashier-workspace";
+import { CashierShiftGate } from "@/components/cashier/cashier-shift-gate";
 
 export const metadata: Metadata = { title: "Kasa" };
 
 export default function CashierPage() {
-  return <CashierWorkspace />;
+  return <CashierShiftGate />;
 }

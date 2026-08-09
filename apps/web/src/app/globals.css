@@ -186,3 +186,141 @@
     color: black;
   }
 }
+
+/* ---------------------------------------------------------------------------
+   80mm thermal receipt
+   Fixed narrow column, monochrome, no backgrounds — thermal heads print black
+   on white only, and shaded blocks waste paper. Used by every receipt surface
+   (adisyon, payment, reprint, hotel checkout) so they stay visually identical.
+   --------------------------------------------------------------------------- */
+.dixora-receipt {
+  width: 80mm;
+  max-width: 100%;
+  margin: 0 auto;
+  padding: 4mm;
+  background: #fff;
+  color: #000;
+  font-family: ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
+.dixora-receipt .receipt-head {
+  text-align: center;
+}
+
+.dixora-receipt .receipt-head h1 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.dixora-receipt .receipt-head p {
+  margin: 1px 0 0;
+}
+
+.dixora-receipt .receipt-title {
+  margin-top: 6px !important;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.dixora-receipt .receipt-kind {
+  margin-top: 2px !important;
+  font-weight: 700;
+}
+
+.dixora-receipt .receipt-rule {
+  border-top: 1px dashed #000;
+  margin: 6px 0;
+}
+
+.dixora-receipt .receipt-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dixora-receipt .receipt-row dt,
+.dixora-receipt .receipt-row dd {
+  margin: 0;
+}
+
+.dixora-receipt .receipt-row dd {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.dixora-receipt .receipt-row-strong {
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.dixora-receipt .receipt-meta,
+.dixora-receipt .receipt-totals {
+  margin: 0;
+}
+
+.dixora-receipt .receipt-lines {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.dixora-receipt .receipt-lines > li + li {
+  margin-top: 3px;
+}
+
+.dixora-receipt .receipt-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.dixora-receipt .receipt-line-name {
+  flex: 1;
+  word-break: break-word;
+}
+
+.dixora-receipt .receipt-line-total {
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.dixora-receipt .receipt-line-sub {
+  margin: 0 0 0 10px;
+  font-size: 10px;
+}
+
+.dixora-receipt .receipt-footer {
+  margin: 0;
+  text-align: center;
+}
+
+/* Only the receipt reaches the paper; everything else is hidden. */
+@media print {
+  body:has(.dixora-receipt[data-print-target="true"]) * {
+    visibility: hidden;
+  }
+
+  body:has(.dixora-receipt[data-print-target="true"])
+    .dixora-receipt[data-print-target="true"],
+  body:has(.dixora-receipt[data-print-target="true"])
+    .dixora-receipt[data-print-target="true"] * {
+    visibility: visible;
+  }
+
+  .dixora-receipt[data-print-target="true"] {
+    position: fixed;
+    inset: 0 auto auto 0;
+    margin: 0;
+    padding: 3mm;
+    box-shadow: none;
+  }
+
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+}

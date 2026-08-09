@@ -1,18 +1,22 @@
-import { MapPin, UtensilsCrossed } from "lucide-react"
+import { MapPin } from "lucide-react"
 import Image from "next/image"
 
 import { BrandLogo } from "@/components/brand/brand-logo"
+import { QR_LOCALES, translate, type QrLocale } from "@/components/qr/qr-i18n"
 import type { PublicQrMenuDto } from "@/components/qr/types"
+import { cn } from "@/lib/utils"
 
 interface PublicMenuHeaderProps {
   menu: PublicQrMenuDto
+  locale: QrLocale
+  onLocaleChange: (locale: QrLocale) => void
 }
 
-export function PublicMenuHeader({ menu }: PublicMenuHeaderProps) {
+export function PublicMenuHeader({ menu, locale, onLocaleChange }: PublicMenuHeaderProps) {
   const menuName = menu.config.menu_name || menu.business
 
   return (
-    <header className="relative isolate overflow-hidden bg-[#24201e] text-[#fffaf2]">
+    <header className="relative isolate overflow-hidden text-white">
       {menu.config.cover_image_url ? (
         <>
           <Image
@@ -23,59 +27,79 @@ export function PublicMenuHeader({ menu }: PublicMenuHeaderProps) {
             sizes="100vw"
             className="-z-20 object-cover"
           />
-          <div className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,rgba(25,21,19,.94)_0%,rgba(25,21,19,.72)_52%,rgba(25,21,19,.38)_100%)]" />
+          <div className="absolute inset-0 -z-10 bg-gradient-to-t from-black/85 via-black/45 to-black/10" />
         </>
       ) : (
-        <div className="absolute inset-0 -z-10 opacity-20 [background-image:repeating-linear-gradient(135deg,transparent_0,transparent_18px,rgba(255,250,242,.08)_18px,rgba(255,250,242,.08)_19px)]" />
+        <div
+          className="absolute inset-0 -z-10"
+          style={{
+            background:
+              "linear-gradient(135deg, var(--qr-primary), color-mix(in srgb, var(--qr-primary) 55%, black))",
+          }}
+        />
       )}
 
-      <div className="mx-auto flex min-h-64 max-w-4xl flex-col px-5 pb-9 pt-5 sm:min-h-72 sm:px-8 sm:pb-11 sm:pt-7">
-        <div className="flex items-start justify-between gap-4">
+      <div className="mx-auto flex min-h-56 max-w-4xl flex-col px-5 pb-7 pt-5 sm:min-h-64 sm:px-8 sm:pb-9 sm:pt-7">
+        <div className="flex items-center justify-between gap-4">
           {menu.config.logo_url ? (
-            <div className="relative size-14 overflow-hidden rounded-xl border border-white/15 bg-[#fffaf2] p-2 sm:size-16">
+            <div className="relative size-12 overflow-hidden rounded-2xl border border-white/20 bg-white p-2 sm:size-14">
               <Image
                 src={menu.config.logo_url}
                 alt={`${menu.business} logosu`}
                 fill
-                sizes="64px"
-                className="object-contain p-2"
+                sizes="56px"
+                className="object-contain p-1.5"
               />
             </div>
           ) : (
             <BrandLogo
               theme="dark"
               withWordmark={false}
-              className="size-12 rounded-xl border border-white/15 bg-white/8 p-2"
+              className="size-11 rounded-2xl border border-white/20 bg-white/10 p-2 sm:size-13"
             />
           )}
 
-          <div className="flex items-center gap-2 border-b border-white/20 pb-2 font-mono text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-white/70">
-            <UtensilsCrossed className="size-3.5 text-[var(--qr-primary)]" />
-            Günlük menü
+          <div className="flex shrink-0 items-center gap-2">
+            <span className="flex items-center gap-1.5 rounded-full bg-white/15 px-3 py-1.5 text-xs font-semibold backdrop-blur-sm">
+              <MapPin className="size-3.5" />
+              {menu.table_name || menu.branch}
+            </span>
+            <div
+              role="group"
+              aria-label="Language / Dil / Язык"
+              className="flex items-center gap-0.5 rounded-full bg-white/15 p-1 backdrop-blur-sm"
+            >
+              {QR_LOCALES.map((option) => (
+                <button
+                  key={option.code}
+                  type="button"
+                  onClick={() => onLocaleChange(option.code)}
+                  aria-pressed={locale === option.code}
+                  className={cn(
+                    "min-h-6 rounded-full px-2 text-[0.65rem] font-bold transition-colors",
+                    locale === option.code
+                      ? "bg-white text-black"
+                      : "text-white/85 hover:bg-white/10",
+                  )}
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
 
-        <div className="mt-auto max-w-2xl pt-12">
-          <p className="font-mono text-[0.68rem] font-semibold uppercase tracking-[0.18em] text-[var(--qr-primary)]">
-            {menu.branch} · Servise hazır
+        <div className="mt-auto max-w-2xl pt-10">
+          <p className="text-xs font-semibold uppercase tracking-[0.14em] text-white/70">
+            {menu.branch}
           </p>
-          <h1 className="mt-2 max-w-xl font-serif text-4xl font-semibold leading-[0.98] tracking-[-0.04em] text-balance sm:text-5xl">
+          <h1 className="mt-1.5 max-w-xl text-3xl font-bold tracking-[-0.03em] text-balance sm:text-4xl">
             {menuName}
           </h1>
-          <p className="mt-3 max-w-lg text-sm leading-6 text-white/65">
-            {menu.business} mutfağından güncel lezzetler ve masa servisi.
+          <p className="mt-2.5 max-w-lg text-sm leading-6 text-white/70">
+            {translate(locale, "tagline", { business: menu.business })}
           </p>
         </div>
-      </div>
-
-      <div className="absolute bottom-0 right-4 min-w-40 bg-[#fffaf2] px-5 py-3 text-[#24201e] [clip-path:polygon(9px_0,100%_0,100%_100%,9px_100%,0_calc(100%_-_9px),0_9px)] sm:right-8">
-        <p className="font-mono text-[0.6rem] font-bold uppercase tracking-[0.16em] text-[#7b716b]">
-          {menu.table_name ? "Masa servisi" : "Şube menüsü"}
-        </p>
-        <p className="mt-0.5 flex items-center gap-1.5 text-sm font-bold">
-          <MapPin className="size-3.5 text-[var(--qr-primary)]" />
-          {menu.table_name || menu.branch}
-        </p>
       </div>
     </header>
   )

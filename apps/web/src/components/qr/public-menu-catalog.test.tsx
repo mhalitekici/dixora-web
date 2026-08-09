@@ -41,6 +41,7 @@ describe("PublicMenuCatalog", () => {
         currency="TRY"
         allergensVisible
         onSelectProduct={onSelectProduct}
+        locale="tr"
       />,
     )
 
@@ -63,6 +64,7 @@ describe("PublicMenuCatalog", () => {
         currency="TRY"
         allergensVisible
         onSelectProduct={vi.fn()}
+        locale="tr"
       />,
     )
 

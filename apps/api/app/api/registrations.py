@@ -175,6 +175,8 @@ async def register_business(
             "business_type": tenant.business_type,
             "plan": STANDARD_PLAN_CODE,
             "trial_days": TRIAL_DAYS,
+            "terms_accepted": payload.terms_accepted,
+            "contract_version": payload.contract_version,
         },
         reason="public_self_service",
         ip_address=ip_address,
