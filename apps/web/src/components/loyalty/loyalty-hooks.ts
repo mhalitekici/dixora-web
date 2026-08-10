@@ -71,27 +71,4 @@ export function useOrderLoyaltyContext(orderId: string | null) {
   })
 }
 
-export function usePublicLoyaltyOffer(business: string, branch: string) {
-  return useQuery({
-    queryKey: loyaltyKeys.offer(business, branch),
-    queryFn: ({ signal }) => loyaltyApi.offer(business, branch, signal),
-    staleTime: 30_000,
-    retry: false,
-  })
-}
 
-export function usePublicLoyaltyStatus(
-  business: string,
-  branch: string,
-  enabled: boolean,
-) {
-  return useQuery({
-    queryKey: loyaltyKeys.status(business, branch),
-    queryFn: ({ signal }) => loyaltyApi.status(business, branch, signal),
-    enabled,
-    retry: false,
-    staleTime: 15_000,
-    refetchInterval: enabled ? 30_000 : false,
-    refetchIntervalInBackground: false,
-  })
-}

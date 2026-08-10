@@ -3,12 +3,10 @@ import { api } from "@/lib/api"
 import type {
   LoyaltyAdminReward,
   LoyaltyCustomer,
-  LoyaltyEnrollment,
   LoyaltyOrderContext,
   LoyaltyProgram,
   LoyaltyProgramInput,
   LoyaltyPublicOffer,
-  LoyaltyPublicStatus,
   LoyaltyRedemption,
   LoyaltySetupOptions,
   LoyaltyVerification,
@@ -35,6 +33,28 @@ export const loyaltyApi = {
       categories: categories.items,
     }
   },
+  startEnrollment: (input: {
+    first_name: string
+    last_name: string
+    email: string
+    birth_date: string | null
+  }) =>
+    api.post<{
+      verification_id: string
+      email: string
+      expires_in_seconds: number
+      development_code: string | null
+    }>("loyalty/enrollments/start", input),
+  confirmEnrollment: (input: { verification_id: string; code: string }) =>
+    api.post<{
+      member_code: string
+      display_name: string
+      email: string
+      program_name: string
+      progress: string
+      progress_target: number
+      card_email_sent: boolean
+    }>("loyalty/enrollments/confirm", input),
   program: (signal?: AbortSignal) =>
     api.get<LoyaltyProgram | null>("loyalty/program", { signal }),
   updateProgram: (input: LoyaltyProgramInput) =>
@@ -74,64 +94,6 @@ export const loyaltyApi = {
       `loyalty/public/${segment(businessSlug)}/${segment(branchSlug)}/verification/start`,
       input,
     ),
-  async status(
-    businessSlug: string,
-    branchSlug: string,
-    signal?: AbortSignal,
-  ): Promise<LoyaltyPublicStatus | null> {
-    const response = await fetch(
-      `/api/public-loyalty/${segment(businessSlug)}/${segment(branchSlug)}/status`,
-      {
-        credentials: "same-origin",
-        cache: "no-store",
-        headers: { accept: "application/json" },
-        signal,
-      },
-    )
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as
-        | { error?: { message?: string } }
-        | null
-      throw new Error(body?.error?.message ?? "Sadakat durumu alÄ±namadÄ±.")
-    }
-    return (await response.json()) as LoyaltyPublicStatus | null
-  },
-  async enroll(
-    businessSlug: string,
-    branchSlug: string,
-    input: {
-      phone: string
-      verification_token: string
-      verification_code: string
-      consent_accepted: true
-      consent_text_version: string
-      referral_code: string | null
-    },
-  ): Promise<LoyaltyEnrollment> {
-    const response = await fetch(
-      `/api/public-loyalty/${segment(businessSlug)}/${segment(branchSlug)}/enroll`,
-      {
-        method: "POST",
-        credentials: "same-origin",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(input),
-      },
-    )
-    if (!response.ok) {
-      const body = (await response.json().catch(() => null)) as
-        | { error?: { message?: string } }
-        | null
-      throw new Error(body?.error?.message ?? "Sadakat kaydı tamamlanamadı.")
-    }
-    return (await response.json()) as LoyaltyEnrollment
-  },
-  async forget(businessSlug: string): Promise<void> {
-    const response = await fetch(`/api/public-loyalty/${encodeURIComponent(businessSlug)}/forget`, {
-      method: "POST",
-      credentials: "same-origin",
-    })
-    if (!response.ok) throw new Error("Sadakat oturumu kapatılamadı.")
-  },
 }
 
 function segment(value: string): string {

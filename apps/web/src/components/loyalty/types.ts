@@ -49,7 +49,8 @@ export type LoyaltyProgramInput = {
 
 export type LoyaltyCustomer = {
   membership_code: string
-  phone_masked: string
+  display_name: string
+  contact_masked: string
   branch_id: string
   program_name: string
   progress: string

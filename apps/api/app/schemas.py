@@ -65,9 +65,97 @@ class BusinessRegistrationRequest(BaseModel):
         pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
         max_length=255,
     )
+    phone: str = Field(pattern=r"^[0-9+()\s.-]{7,32}$", max_length=32)
     password: str = Field(min_length=10, max_length=256)
     terms_accepted: Literal[True]
     contract_version: str = Field(default="unknown", max_length=40)
+
+
+class BusinessRegistrationStartOut(BaseModel):
+    verification_id: UUID
+    email: str
+    expires_in_seconds: int
+    development_code: str | None = None
+
+
+class BusinessRegistrationConfirm(BaseModel):
+    verification_id: UUID
+    code: str = Field(min_length=4, max_length=12)
+
+
+DELIVERY_PLATFORMS = (
+    "GETIR",
+    "YEMEKSEPETI",
+    "TRENDYOL_YEMEK",
+    "MIGROS_YEMEK",
+    "FUUDY",
+    "OTHER",
+)
+
+# Meal-card schemes common in Turkey. Answers drive which POS integrations we
+# build next, so they are stored as codes rather than free text.
+MEAL_CARD_PROVIDERS = (
+    "MULTINET",
+    "SODEXO",
+    "SETCARD",
+    "TICKET",
+    "METROPOL",
+    "PLUXEE",
+    "EDENRED",
+    "OTHER",
+)
+
+PAYMENT_METHODS = ("CASH", "CARD", "MEAL_CARD", "ONLINE", "TRANSFER")
+
+
+class OnboardingUpdate(BaseModel):
+    """Answers from the post-signup questionnaire; every field is optional."""
+
+    offers_delivery: bool | None = None
+    delivery_platforms: list[str] = Field(default_factory=list)
+    payment_methods: list[str] = Field(default_factory=list)
+    accepts_meal_cards: bool | None = None
+    meal_card_providers: list[str] = Field(default_factory=list)
+    monthly_order_volume: str | None = Field(default=None, max_length=40)
+    table_count: int | None = Field(default=None, ge=0, le=10_000)
+    heard_from: str | None = Field(default=None, max_length=60)
+    completed: bool = False
+
+    @field_validator("delivery_platforms")
+    @classmethod
+    def known_platforms(cls, value: list[str]) -> list[str]:
+        unknown = [item for item in value if item not in DELIVERY_PLATFORMS]
+        if unknown:
+            raise ValueError(f"Unsupported delivery platforms: {', '.join(unknown)}")
+        return value
+
+    @field_validator("meal_card_providers")
+    @classmethod
+    def known_meal_cards(cls, value: list[str]) -> list[str]:
+        unknown = [item for item in value if item not in MEAL_CARD_PROVIDERS]
+        if unknown:
+            raise ValueError(f"Unsupported meal card providers: {', '.join(unknown)}")
+        return value
+
+    @field_validator("payment_methods")
+    @classmethod
+    def known_payment_methods(cls, value: list[str]) -> list[str]:
+        unknown = [item for item in value if item not in PAYMENT_METHODS]
+        if unknown:
+            raise ValueError(f"Unsupported payment methods: {', '.join(unknown)}")
+        return value
+
+
+class OnboardingOut(BaseModel):
+    offers_delivery: bool | None
+    delivery_platforms: list[str]
+    payment_methods: list[str]
+    accepts_meal_cards: bool | None
+    meal_card_providers: list[str]
+    monthly_order_volume: str | None
+    table_count: int | None
+    heard_from: str | None
+    completed: bool
 
 
 class BusinessRegistrationOut(BaseModel):
@@ -415,6 +503,37 @@ class TenantOut(ORMModel):
     created_at: datetime
 
 
+class BusinessOverviewOut(BaseModel):
+    """Everything platform support needs about one business on a single screen."""
+
+    id: UUID
+    name: str
+    slug: str
+    business_type: str
+    state: TenantState
+    is_active: bool
+    created_at: datetime
+
+    owner_name: str | None
+    owner_email: str | None
+    owner_phone: str | None
+
+    active_branches: int
+    total_branches: int
+    user_count: int
+
+    plan_name: str | None
+    currency: str
+    monthly_total: Decimal
+    base_monthly_price: Decimal
+    included_branches: int
+    additional_branch_price: Decimal
+    billable_extra_branches: int
+    # Trial end or next renewal, whichever applies to the current state.
+    next_payment_at: datetime | None
+    trial_ends_at: datetime | None
+
+
 class SubscriptionPlanCreate(BaseModel):
     code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{2,59}$")
     name: str = Field(min_length=1, max_length=120)
@@ -732,6 +851,8 @@ class TableCreate(BaseModel):
 
 class TableUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=60)
+    # Empty string clears the label; None leaves it untouched.
+    guest_label: str | None = Field(default=None, max_length=60)
     area_id: UUID | None = None
     capacity: int | None = Field(default=None, gt=0, le=100)
     sort_order: int | None = None
@@ -746,12 +867,19 @@ class TableOut(ORMModel):
     branch_id: UUID
     area_id: UUID
     name: str
+    guest_label: str | None = None
     capacity: int
     sort_order: int
     is_active: bool
     qr_token: str
     state: TableState
     version: int
+
+
+class TableGuestLabelUpdate(BaseModel):
+    """Blank or null clears the label."""
+
+    guest_label: str | None = Field(default=None, max_length=60)
 
 
 class TableSessionCloseRequest(BaseModel):

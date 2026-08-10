@@ -68,6 +68,38 @@ export interface BusinessUser {
   is_active: boolean
 }
 
+export type BusinessOverview = {
+  id: string
+  name: string
+  slug: string
+  business_type: string
+  state: string
+  is_active: boolean
+  created_at: string
+  owner_name: string | null
+  owner_email: string | null
+  owner_phone: string | null
+  active_branches: number
+  total_branches: number
+  user_count: number
+  plan_name: string | null
+  currency: string
+  monthly_total: string
+  base_monthly_price: string
+  included_branches: number
+  additional_branch_price: string
+  billable_extra_branches: number
+  next_payment_at: string | null
+  trial_ends_at: string | null
+}
+
+export async function getBusinessOverview(
+  businessId: string,
+  signal?: AbortSignal,
+): Promise<BusinessOverview> {
+  return api.get<BusinessOverview>(`businesses/${businessId}/overview`, { signal })
+}
+
 export async function getBusinessUsers(
   businessId: string,
   signal?: AbortSignal,

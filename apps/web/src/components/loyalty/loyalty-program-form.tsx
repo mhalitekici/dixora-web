@@ -13,10 +13,12 @@ import {
 } from "lucide-react"
 import type { LucideIcon } from "lucide-react"
 import type { ReactNode } from "react"
+import { useState } from "react"
 import { Controller, useForm, useWatch, type Control } from "react-hook-form"
 import { z } from "zod"
 
 import { FieldError } from "@/components/admin/admin-utils"
+import { LoyaltyPresetPicker } from "@/components/loyalty/loyalty-presets"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
@@ -91,6 +93,7 @@ export function LoyaltyProgramForm({
     resolver: zodResolver(schema),
     defaultValues: defaults(program, options),
   })
+  const [presetId, setPresetId] = useState<string | null>(null)
   const campaignType = useWatch({ control: form.control, name: "campaign_type" })
   const qualifyingType = useWatch({ control: form.control, name: "qualifying_type" })
   const rewardType = useWatch({ control: form.control, name: "reward_type" })
@@ -139,6 +142,30 @@ export function LoyaltyProgramForm({
       aria-label="Sadakat programı ayarları"
     >
       <div className="min-w-0">
+        <div className="mb-4">
+          <LoyaltyPresetPicker
+            activePresetId={presetId}
+            onSelect={(preset) => {
+              setPresetId(preset.id)
+              // Fill the mechanics; the owner still picks the actual product and
+              // reward, which is the only part a template cannot know.
+              form.setValue("campaign_type", preset.values.campaign_type, {
+                shouldDirty: true,
+              })
+              form.setValue("threshold", preset.values.threshold, { shouldDirty: true })
+              form.setValue(
+                "minimum_order_amount",
+                preset.values.minimum_order_amount,
+                { shouldDirty: true },
+              )
+              form.setValue(
+                "allow_multiple_same_day",
+                preset.values.allow_multiple_same_day,
+                { shouldDirty: true },
+              )
+            }}
+          />
+        </div>
         <div className="overflow-hidden rounded-3xl border bg-card shadow-sm">
           <StepSection
             number="01"

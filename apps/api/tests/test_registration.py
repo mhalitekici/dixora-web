@@ -3,17 +3,30 @@ from datetime import datetime
 from tests.conftest import ApiContext
 
 
+async def _register_business(api, payload: dict):
+    """Sign up through the two-step, email-verified flow."""
+    started = await api.client.post("/api/v1/registrations/start", json=payload)
+    if started.status_code != 201:
+        return started
+    body = started.json()
+    return await api.client.post(
+        "/api/v1/registrations/confirm",
+        json={"verification_id": body["verification_id"], "code": body["development_code"]},
+    )
+
+
 async def test_public_registration_creates_trial_business_and_owner(api: ApiContext) -> None:
     payload = {
         "business_name": "Kırmızı Masa Restoran",
         "business_type": "RESTAURANT",
         "owner_name": "Ayşe Yılmaz",
         "email": "ayse@kirmizimasa.test",
+        "phone": "+90 555 000 11 22",
         "password": "Guvenli!Parola2026",
         "terms_accepted": True,
     }
 
-    response = await api.client.post("/api/v1/registrations", json=payload)
+    response = await _register_business(api, payload)
     assert response.status_code == 201, response.text
     registration = response.json()
     assert registration["business_slug"] == "kirmizi-masa-restoran"
@@ -42,13 +55,14 @@ async def test_public_registration_generates_unique_business_slug(api: ApiContex
         "business_type": "CAFE",
         "owner_name": "İlk Sahip",
         "email": "ilk@yenimekan.test",
+        "phone": "+90 555 000 11 22",
         "password": "Guvenli!Parola2026",
         "terms_accepted": True,
     }
-    first = await api.client.post("/api/v1/registrations", json=payload)
-    second = await api.client.post(
-        "/api/v1/registrations",
-        json={**payload, "owner_name": "İkinci Sahip", "email": "ikinci@yenimekan.test"},
+    first = await _register_business(api, payload)
+    second = await _register_business(
+        api,
+        {**payload, "owner_name": "İkinci Sahip", "email": "ikinci@yenimekan.test"},
     )
 
     assert first.status_code == 201
@@ -59,12 +73,13 @@ async def test_public_registration_generates_unique_business_slug(api: ApiContex
 
 async def test_public_registration_requires_terms_acceptance(api: ApiContext) -> None:
     response = await api.client.post(
-        "/api/v1/registrations",
+        "/api/v1/registrations/start",
         json={
             "business_name": "Eksik Onay",
             "business_type": "RESTAURANT",
             "owner_name": "Test Kullanıcı",
             "email": "test@eksikonay.test",
+            "phone": "+90 555 000 11 22",
             "password": "Guvenli!Parola2026",
             "terms_accepted": False,
         },

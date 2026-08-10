@@ -34,6 +34,7 @@ from app.models import (
     Order,
     Product,
     TableSession,
+    Tenant,
 )
 from app.models.enums import (
     DiscountKind,
@@ -112,10 +113,28 @@ def normalize_phone(value: str) -> str:
     return f"+{digits}"
 
 
-def mask_phone(value: str) -> str:
+def mask_phone(value: str | None) -> str:
+    if not value:
+        return "—"
     if len(value) <= 7:
         return "***"
     return f"{value[:4]}***{value[-4:]}"
+
+
+def mask_email(value: str | None) -> str:
+    """a***t@example.com — enough to recognise, not enough to harvest."""
+    if not value or "@" not in value:
+        return "—"
+    local, _, domain = value.partition("@")
+    if len(local) <= 2:
+        return f"{local[:1]}***@{domain}"
+    return f"{local[0]}***{local[-1]}@{domain}"
+
+
+def mask_contact(*, email: str | None, phone: str | None) -> str:
+    if email:
+        return mask_email(email)
+    return mask_phone(phone)
 
 
 def membership_token_hash(value: str) -> str:
@@ -309,6 +328,30 @@ async def enroll_membership(
     elif not customer.is_active:
         customer.is_active = True
 
+    return await ensure_membership(
+        db,
+        program=program,
+        branch_id=branch_id,
+        customer=customer,
+        referral_code=referral_code,
+        consent_text_version=consent_text_version,
+    )
+
+
+async def ensure_membership(
+    db: AsyncSession,
+    *,
+    program: LoyaltyProgram,
+    branch_id: UUID,
+    customer: LoyaltyCustomer,
+    referral_code: str | None,
+    consent_text_version: str,
+) -> tuple[LoyaltyMembership, str]:
+    """Create or re-activate this customer's membership in one program.
+
+    Split out of `enroll_membership` so till-side email enrolment can reuse it
+    with an already-verified customer instead of a phone number.
+    """
     membership = (
         await db.execute(
             select(LoyaltyMembership).where(
@@ -380,9 +423,18 @@ async def _new_referral_code(db: AsyncSession, tenant_id: UUID) -> str:
 
 
 async def _new_membership_code(db: AsyncSession, tenant_id: UUID) -> str:
-    for _ in range(8):
-        random_part = secrets.token_urlsafe(12).replace("-", "").replace("_", "").upper()
-        code = f"MB-{random_part[:16]}"
+    """A short, branded card code the customer shows on their next visit.
+
+    Shaped like DXRK7M2 — a three-letter business prefix plus four characters
+    from an alphabet with no look-alike glyphs, because staff read these off a
+    phone screen and type them into the till.
+    """
+    from app.services.loyalty_enrollment import business_code_prefix, generate_card_code
+
+    tenant = await db.get(Tenant, tenant_id)
+    prefix = business_code_prefix(tenant.name if tenant else "DXR")
+    for _ in range(12):
+        code = generate_card_code(prefix)
         exists = (
             await db.execute(
                 select(LoyaltyMembership.id).where(

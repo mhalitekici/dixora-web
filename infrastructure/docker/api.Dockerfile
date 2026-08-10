@@ -12,6 +12,12 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /app
 
+# DejaVu covers the Turkish alphabet (ı, İ, ş, ğ, ö, ü, ç). Pillow's bundled
+# face does not, so membership cards render those as empty boxes without it.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends fonts-dejavu-core \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN addgroup --system dixora \
     && adduser --system --ingroup dixora dixora
 

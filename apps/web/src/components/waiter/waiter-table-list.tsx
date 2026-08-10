@@ -21,12 +21,14 @@ import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
+import { useGuestLabel } from "@/components/tables/use-guest-label";
 
 type Area = { id: string; name: string };
 type Table = {
   id: string;
   area_id: string;
   name: string;
+  guest_label?: string | null;
   capacity: number;
   state: string;
   current_total?: string | number | null;
@@ -67,6 +69,7 @@ const currency = new Intl.NumberFormat("tr-TR", {
 });
 
 export function WaiterTableList() {
+  const { labelProps, dialog: guestLabelDialog } = useGuestLabel([["waiter", "tables"]]);
   const [area, setArea] = useState("all");
   const [search, setSearch] = useState("");
   const [now, setNow] = useState(() => Date.now());
@@ -139,6 +142,7 @@ export function WaiterTableList() {
 
   return (
     <div className="pb-3">
+      {guestLabelDialog}
       <header className="mb-4 flex items-start justify-between gap-3">
         <div>
           <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-brand">Servis ekranı</p>
@@ -225,6 +229,8 @@ export function WaiterTableList() {
               <Link
                 key={table.id}
                 href={`/waiter/tables/${table.id}`}
+                {...labelProps(table)}
+                title="Sağ tık (veya uzun bas): misafir adı ekle"
                 className={cn(
                   "group relative min-h-40 overflow-hidden rounded-2xl border p-3.5 transition-transform active:scale-[0.98]",
                   meta.card,
@@ -234,6 +240,11 @@ export function WaiterTableList() {
                 <div className="flex items-start justify-between gap-2">
                   <div>
                     <h2 className="text-xl font-bold">{table.name}</h2>
+                    {table.guest_label ? (
+                      <p className="mt-0.5 truncate text-xs font-semibold text-foreground">
+                        {table.guest_label}
+                      </p>
+                    ) : null}
                     <span className="mt-1 flex items-center gap-1 text-[0.65rem] text-muted-foreground">
                       <Users className="size-3" />
                       {table.guest_count ?? 0}/{table.capacity}

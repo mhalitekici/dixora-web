@@ -224,3 +224,54 @@ class RealtimeTicket(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     nonce_hash: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
     expires_at: Mapped[datetime] = mapped_column(nullable=False, index=True)
     used_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class BusinessRegistrationVerification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A signup awaiting the owner's email confirmation.
+
+    Nothing is provisioned until the code is confirmed, so an abandoned or
+    mistyped signup never leaves a half-created business behind. The password is
+    stored already hashed.
+    """
+
+    __tablename__ = "business_registration_verifications"
+    __table_args__ = (
+        Index("ix_business_registration_email", "email", "consumed_at"),
+    )
+
+    business_name: Mapped[str] = mapped_column(String(140), nullable=False)
+    business_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    owner_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
+    phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
+    contract_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempts: Mapped[int] = mapped_column(default=0, nullable=False)
+    ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    expires_at: Mapped[datetime] = mapped_column(nullable=False, index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+
+class TenantOnboarding(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """What the owner told us about their business right after signing up.
+
+    Delivery-marketplace answers drive which integrations we build next, so they
+    are kept as first-class columns rather than buried in an analytics event.
+    """
+
+    __tablename__ = "tenant_onboarding"
+    __table_args__ = (UniqueConstraint("tenant_id", name="uq_tenant_onboarding_tenant"),)
+
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    offers_delivery: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    delivery_platforms: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    payment_methods: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    accepts_meal_cards: Mapped[bool | None] = mapped_column(Boolean, nullable=True)
+    meal_card_providers: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+    monthly_order_volume: Mapped[str | None] = mapped_column(String(40), nullable=True)
+    table_count: Mapped[int | None] = mapped_column(nullable=True)
+    heard_from: Mapped[str | None] = mapped_column(String(60), nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)

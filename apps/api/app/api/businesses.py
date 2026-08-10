@@ -13,6 +13,7 @@ from app.errors import DomainError
 from app.models import (
     AuthSession,
     Branch,
+    Role,
     Subscription,
     SubscriptionPlan,
     Tenant,
@@ -25,6 +26,7 @@ from app.schemas import (
     AdminPasswordResetOut,
     AdminPasswordResetRequest,
     BusinessCreate,
+    BusinessOverviewOut,
     BusinessReactivateRequest,
     BusinessUpdate,
     BusinessUserOut,
@@ -33,6 +35,7 @@ from app.schemas import (
 )
 from app.security import hash_password, utcnow
 from app.services.audit import add_audit_log
+from app.services.pricing import branch_pricing_for_tenant
 
 router = APIRouter(prefix="/businesses", tags=["businesses"])
 PlatformAdmin = Annotated[Identity, Depends(require_permissions("platform.businesses.manage"))]
@@ -370,3 +373,87 @@ async def reactivate_business(
     await db.commit()
     await db.refresh(tenant)
     return TenantOut.model_validate(tenant)
+
+
+@router.get("/{business_id}/overview", response_model=BusinessOverviewOut)
+async def business_overview(
+    business_id: UUID,
+    identity: PlatformAdmin,
+    db: DbSession,
+) -> BusinessOverviewOut:
+    """Contact details, branch count and what this business owes, in one call.
+
+    Platform support answers "who do I ring and what are they paying?" far more
+    often than anything else, so it is one request rather than four.
+    """
+    tenant = await db.get(Tenant, business_id)
+    if tenant is None:
+        raise DomainError("business_not_found", "Business not found", status_code=404)
+
+    owner = (
+        await db.execute(
+            select(User)
+            .join(Role, Role.id == User.role_id)
+            .where(User.tenant_id == tenant.id, Role.code == "BUSINESS_OWNER")
+            .order_by(User.created_at)
+            .limit(1)
+        )
+    ).scalars().first()
+
+    total_branches = int(
+        (
+            await db.execute(
+                select(func.count(Branch.id)).where(Branch.tenant_id == tenant.id)
+            )
+        ).scalar_one()
+    )
+    user_count = int(
+        (
+            await db.execute(select(func.count(User.id)).where(User.tenant_id == tenant.id))
+        ).scalar_one()
+    )
+
+    pricing = await branch_pricing_for_tenant(db, tenant.id)
+    subscription = (
+        await db.execute(select(Subscription).where(Subscription.tenant_id == tenant.id))
+    ).scalars().first()
+    plan_name = None
+    if subscription is not None:
+        plan_name = (
+            await db.execute(
+                select(SubscriptionPlan.name).where(
+                    SubscriptionPlan.id == subscription.plan_id
+                )
+            )
+        ).scalar_one_or_none()
+
+    trial_ends_at = (
+        subscription.ends_at
+        if subscription is not None and tenant.state == TenantState.TRIAL
+        else None
+    )
+
+    return BusinessOverviewOut(
+        id=tenant.id,
+        name=tenant.name,
+        slug=tenant.slug,
+        business_type=tenant.business_type,
+        state=tenant.state,
+        is_active=tenant.is_active,
+        created_at=tenant.created_at,
+        owner_name=owner.display_name if owner else None,
+        owner_email=owner.email if owner else None,
+        owner_phone=owner.phone if owner else None,
+        active_branches=pricing.active_branches,
+        total_branches=total_branches,
+        user_count=user_count,
+        plan_name=plan_name,
+        currency=pricing.currency,
+        monthly_total=pricing.monthly_total,
+        base_monthly_price=pricing.base_monthly_price,
+        included_branches=pricing.included_branches,
+        additional_branch_price=pricing.additional_branch_price,
+        billable_extra_branches=pricing.billable_extra_branches,
+        next_payment_at=subscription.ends_at if subscription else None,
+        trial_ends_at=trial_ends_at,
+    )

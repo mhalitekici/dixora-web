@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal, Self
 from uuid import UUID
@@ -104,7 +104,9 @@ class LoyaltyProgramOut(BaseModel):
 
 class LoyaltyCustomerOut(BaseModel):
     membership_code: str
-    phone_masked: str
+    display_name: str
+    # Masked email for email-enrolled members, masked phone for legacy ones.
+    contact_masked: str
     branch_id: UUID
     program_name: str
     progress: Decimal
@@ -184,7 +186,9 @@ class LoyaltyPublicStatusOut(BaseModel):
 
 
 class LoyaltyMembershipAttach(BaseModel):
-    membership_code: str = Field(min_length=8, max_length=32)
+    # Card codes are short by design (e.g. DXR1923) so they can be read aloud
+    # at the counter; the old MB-prefixed format was 19 characters.
+    membership_code: str = Field(min_length=6, max_length=32)
 
 
 class LoyaltyMembershipAttachOut(BaseModel):
@@ -233,3 +237,46 @@ class LoyaltyReversalOut(BaseModel):
     order_id: UUID
     reversed_programs: int
     reversed_progress: Decimal
+
+
+class LoyaltyEnrollmentStart(BaseModel):
+    """What the cashier types in while the customer is at the counter."""
+
+    first_name: str = Field(min_length=1, max_length=80)
+    last_name: str = Field(min_length=1, max_length=80)
+    email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=255)
+    birth_date: date | None = None
+
+
+class LoyaltyEnrollmentStartOut(BaseModel):
+    verification_id: UUID
+    email: str
+    expires_in_seconds: int
+    # Only set by the development email sender so local testing can proceed
+    # without a mailbox; always null once a real provider is configured.
+    development_code: str | None = None
+
+
+class LoyaltyEnrollmentConfirm(BaseModel):
+    verification_id: UUID
+    code: str = Field(min_length=4, max_length=12)
+
+
+class LoyaltyEnrollmentConfirmOut(BaseModel):
+    member_code: str
+    display_name: str
+    email: str
+    program_name: str
+    progress: Decimal
+    progress_target: int
+    card_email_sent: bool
+
+
+class LoyaltyMemberLookupOut(BaseModel):
+    member_code: str
+    display_name: str
+    program_name: str
+    progress: Decimal
+    progress_target: int
+    available_rewards: int
+    is_active: bool

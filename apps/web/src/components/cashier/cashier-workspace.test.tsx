@@ -44,6 +44,75 @@ const cancellationApproval = {
   order_total: "120.00",
 }
 
+const tableWithOrder = {
+  id: "table-1",
+  area_id: "area-1",
+  name: "B1",
+  guest_label: "Ahmet",
+  capacity: 4,
+  state: "PREPARING",
+  version: 1,
+}
+
+const orderWithDetails = {
+  id: "order-1",
+  status: "ACCEPTED",
+  table_id: "table-1",
+  table_name: "B1",
+  subtotal: "260.00",
+  discount_total: "0.00",
+  tax_total: "0.00",
+  total: "260.00",
+  version: 1,
+  created_at: new Date().toISOString(),
+  payments: [],
+  items: [
+    {
+      id: "item-1",
+      product_name_snapshot: "Hamburger",
+      unit_price: "220.00",
+      quantity: "1",
+      line_total: "260.00",
+      status: "ACCEPTED",
+      note: "Soğansız olsun, ekstra kızarmış",
+      modifiers: [
+        {
+          id: "mod-1",
+          name_snapshot: "Ekstra peynir",
+          price_delta_snapshot: "25.00",
+          quantity: 1,
+        },
+        {
+          id: "mod-2",
+          name_snapshot: "Acı sos",
+          price_delta_snapshot: "15.00",
+          quantity: 1,
+        },
+      ],
+    },
+  ],
+}
+
+function routeFetchWithOrder(input: RequestInfo | URL) {
+  const url = String(input)
+  if (url.includes("/tables/areas")) {
+    return Promise.resolve(jsonResponse([{ id: "area-1", name: "Salon" }]))
+  }
+  if (url.includes("/catalog/products")) return Promise.resolve(jsonResponse([]))
+  if (url.includes("/shifts/current")) {
+    return Promise.resolve(
+      jsonResponse({ id: "shift-1", status: "OPEN", opening_cash: "1500.00" }),
+    )
+  }
+  if (url.includes("/orders/approval-requests")) return Promise.resolve(jsonResponse([]))
+  if (url.includes("/orders")) return Promise.resolve(jsonResponse([orderWithDetails]))
+  if (url.includes("/qr/requests")) return Promise.resolve(jsonResponse([]))
+  if (url.endsWith("/tables") || url.includes("/tables?")) {
+    return Promise.resolve(jsonResponse([tableWithOrder]))
+  }
+  return Promise.resolve(jsonResponse([]))
+}
+
 function routeFetch(input: RequestInfo | URL) {
   const url = String(input)
   if (url.includes("/tables/areas")) return Promise.resolve(jsonResponse([]))
@@ -91,6 +160,50 @@ describe("CashierWorkspace", () => {
     expect(billButton).toHaveTextContent("0")
 
     expect(screen.getByText("Vardiya Açık")).toBeInTheDocument()
+  })
+
+  it("shows what the customer actually asked for: modifiers and their note", async () => {
+    vi.stubGlobal("fetch", vi.fn(routeFetchWithOrder))
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+
+    const { default: userEvent } = await import("@testing-library/user-event")
+    const user = userEvent.setup()
+    render(<CashierWorkspace />, { wrapper })
+
+    await user.click(await screen.findByRole("button", { name: /B1/ }))
+
+    expect(await screen.findByText("Hamburger")).toBeInTheDocument()
+    // Modifiers were previously not rendered at all.
+    expect(screen.getByText("Ekstra peynir")).toBeInTheDocument()
+    expect(screen.getByText("Acı sos")).toBeInTheDocument()
+    // The note must appear in full, not truncated to invisibility.
+    expect(
+      screen.getByText("Soğansız olsun, ekstra kızarmış"),
+    ).toBeInTheDocument()
+  })
+
+  it("finds a table by the guest name staff attached to it", async () => {
+    vi.stubGlobal("fetch", vi.fn(routeFetchWithOrder))
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    )
+
+    const { default: userEvent } = await import("@testing-library/user-event")
+    const user = userEvent.setup()
+    render(<CashierWorkspace />, { wrapper })
+
+    await user.type(await screen.findByPlaceholderText(/Masa ara/), "Ahmet")
+    expect(await screen.findByRole("button", { name: /B1/ })).toBeInTheDocument()
   })
 
   it("lists the pending cancellation request with cafe-friendly labels in the approvals queue", async () => {

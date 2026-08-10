@@ -17,6 +17,7 @@ import {
   Loader2,
   Merge,
   MonitorDot,
+  MessageSquare,
   MoreHorizontal,
   Plus,
   Printer,
@@ -69,6 +70,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { useGuestLabel } from "@/components/tables/use-guest-label";
 import { formatDateTime, formatRelativeTime } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
 
@@ -84,6 +86,7 @@ type DiningTable = {
   id: string;
   area_id: string;
   name: string;
+  guest_label?: string | null;
   capacity: number;
   state: string;
   version: number;
@@ -95,6 +98,12 @@ type Product = {
   selling_price: string | number;
   is_available: boolean;
 };
+type OrderItemModifier = {
+  id: string;
+  name_snapshot: string;
+  price_delta_snapshot: string | number;
+  quantity: number;
+};
 type OrderItem = {
   id: string;
   product_name_snapshot: string;
@@ -103,6 +112,7 @@ type OrderItem = {
   line_total: string | number;
   status: string;
   note?: string | null;
+  modifiers?: OrderItemModifier[];
 };
 type Payment = {
   id: string;
@@ -323,13 +333,6 @@ const tableState: Record<string, TableStateMeta> = {
     dot: "bg-muted-foreground/40",
   },
 };
-const TABLE_LEGEND: Array<{ label: string; dot: string }> = [
-  { label: "Boş", dot: "bg-emerald-500" },
-  { label: "Dolu", dot: "bg-blue-500" },
-  { label: "Hesap İstendi", dot: "bg-violet-500" },
-  { label: "Ödeme Bekliyor", dot: "bg-amber-500" },
-];
-
 // Cafe-friendly order status: hides the kitchen (PREPARING/READY/SERVED)
 // timeline and shows only the operational state the cashier acts on.
 const orderStatusLabel: Record<string, string> = {
@@ -389,6 +392,9 @@ function buildMergeCandidates(
 
 export function CashierWorkspace() {
   const queryClient = useQueryClient();
+  const { labelProps, dialog: guestLabelDialog } = useGuestLabel([["cashier", "tables"]]);
+  const [statusFilter, setStatusFilter] =
+    useState<"all" | "free" | "busy" | "bill">("all");
   const [selectedArea, setSelectedArea] = useState("all");
   const [selectedTableId, setSelectedTableId] = useState("");
   const [tableSearch, setTableSearch] = useState("");
@@ -507,20 +513,48 @@ export function CashierWorkspace() {
   const billRequestedCount = orders.filter((order) => order.status === "BILL_REQUESTED").length;
   const pendingApprovals = approvalsQuery.data ?? [];
 
+  // Counts drive the status chips, so the till can jump straight to the tables
+  // that need something rather than scrolling a 29-table list.
+  const statusCounts = useMemo(() => {
+    const inArea = tables.filter(
+      (table) => selectedArea === "all" || table.area_id === selectedArea,
+    );
+    return {
+      all: inArea.length,
+      free: inArea.filter((table) => table.state === "AVAILABLE").length,
+      busy: inArea.filter(
+        (table) => !["AVAILABLE", "DISABLED", "BILL_REQUESTED"].includes(table.state),
+      ).length,
+      bill: inArea.filter((table) => table.state === "BILL_REQUESTED").length,
+    };
+  }, [tables, selectedArea]);
+
   const filteredTables = useMemo(
     () =>
       tables
         .filter((table) => {
           const areaMatch = selectedArea === "all" || table.area_id === selectedArea;
-          const searchMatch = table.name.toLocaleLowerCase("tr-TR").includes(tableSearch.toLocaleLowerCase("tr-TR"));
-          return areaMatch && searchMatch;
+          const needle = tableSearch.toLocaleLowerCase("tr-TR");
+          // Searching the guest label lets staff find a party by name.
+          const searchMatch =
+            table.name.toLocaleLowerCase("tr-TR").includes(needle) ||
+            (table.guest_label ?? "").toLocaleLowerCase("tr-TR").includes(needle);
+          const statusMatch =
+            statusFilter === "all"
+              ? true
+              : statusFilter === "free"
+                ? table.state === "AVAILABLE"
+                : statusFilter === "bill"
+                  ? table.state === "BILL_REQUESTED"
+                  : !["AVAILABLE", "DISABLED", "BILL_REQUESTED"].includes(table.state);
+          return areaMatch && searchMatch && statusMatch;
         })
         .sort((a, b) => {
           const priority = (table: DiningTable) =>
             table.state === "BILL_REQUESTED" ? 0 : qrPendingTableIds.has(table.id) ? 1 : 2;
           return priority(a) - priority(b);
         }),
-    [selectedArea, tableSearch, tables, qrPendingTableIds],
+    [selectedArea, tableSearch, tables, qrPendingTableIds, statusFilter],
   );
   const filteredProducts = products.filter((product) =>
     product.name.toLocaleLowerCase("tr-TR").includes(productSearch.toLocaleLowerCase("tr-TR")),
@@ -946,6 +980,7 @@ export function CashierWorkspace() {
 
   return (
     <div className="flex min-h-[calc(100dvh-4rem)] flex-col bg-muted/25">
+      {guestLabelDialog}
       <div className="flex flex-wrap items-center gap-2 border-b bg-card px-4 py-2.5">
         {shiftQuery.data ? (
           <Link
@@ -1106,12 +1141,30 @@ export function CashierWorkspace() {
             </button>
           ))}
         </div>
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-b px-3 py-2">
-          {TABLE_LEGEND.map((item) => (
-            <span key={item.label} className="flex items-center gap-1.5 text-[0.62rem] font-medium text-muted-foreground">
-              <span className={cn("size-2 rounded-full", item.dot)} />
-              {item.label}
-            </span>
+        <div className="flex flex-wrap gap-1.5 border-b px-2 py-2">
+          {(
+            [
+              ["all", "Tümü", statusCounts.all, "bg-foreground"],
+              ["free", "Boş", statusCounts.free, "bg-emerald-500"],
+              ["busy", "Dolu", statusCounts.busy, "bg-blue-500"],
+              ["bill", "Hesap", statusCounts.bill, "bg-violet-500"],
+            ] as const
+          ).map(([value, label, count, dot]) => (
+            <button
+              key={value}
+              type="button"
+              onClick={() => setStatusFilter(value)}
+              className={cn(
+                "flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-[0.66rem] font-semibold transition-colors",
+                statusFilter === value
+                  ? "border-primary bg-primary/10 text-foreground"
+                  : "border-transparent bg-muted/70 text-muted-foreground hover:bg-muted",
+              )}
+            >
+              <span className={cn("size-1.5 rounded-full", dot)} />
+              {label}
+              <span className="tabular-nums opacity-70">{count}</span>
+            </button>
           ))}
         </div>
         <ScrollArea className="h-[320px] xl:h-[calc(100dvh-15.4rem)]">
@@ -1125,8 +1178,10 @@ export function CashierWorkspace() {
                   type="button"
                   key={table.id}
                   onClick={() => setSelectedTableId(table.id)}
+                  {...labelProps(table)}
+                  title="Sağ tık: misafir adı ekle"
                   className={cn(
-                    "relative flex min-h-19 items-center gap-3 rounded-xl border-2 p-2.5 text-left transition-colors",
+                    "relative flex min-h-15 items-center gap-2.5 rounded-xl border-2 p-2 text-left transition-colors",
                     meta.card,
                     selectedTableId === table.id && "border-primary ring-2 ring-primary/20",
                   )}
@@ -1141,7 +1196,7 @@ export function CashierWorkspace() {
                   ) : null}
                   <span
                     className={cn(
-                      "flex size-10 shrink-0 items-center justify-center rounded-xl text-sm font-bold",
+                      "flex size-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold",
                       meta.badge,
                     )}
                   >
@@ -1156,6 +1211,11 @@ export function CashierWorkspace() {
                       </span>
                       <span className="text-xs font-bold uppercase tracking-wide">{meta.label}</span>
                     </span>
+                    {table.guest_label ? (
+                      <span className="mt-0.5 block truncate text-[0.7rem] font-semibold text-foreground">
+                        {table.guest_label}
+                      </span>
+                    ) : null}
                     <span className="mt-0.5 block truncate text-[0.68rem] font-medium text-muted-foreground">
                       {order ? currency.format(Number(order.total)) : `${table.capacity} kişilik`}
                     </span>
@@ -1207,20 +1267,47 @@ export function CashierWorkspace() {
             {selectedOrder?.items?.length ? (
               <div className="space-y-2">
                 {selectedOrder.items.map((item) => (
-                  <article key={item.id} className="flex items-center gap-3 rounded-xl border bg-card p-3">
+                  <article key={item.id} className="flex items-start gap-3 rounded-xl border bg-card p-3">
                     <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted text-xs font-bold">
                       {Number(item.quantity)}×
                     </span>
                     <div className="min-w-0 flex-1">
-                      <p className="truncate text-sm font-semibold">{item.product_name_snapshot}</p>
-                      <div className="mt-1 flex items-center gap-2">
-                        {terminalItemStatuses.has(item.status) ? (
-                          <StatusBadge tone="danger" dot={false} className="h-5 px-1.5 text-[0.56rem]">
-                            İptal
-                          </StatusBadge>
-                        ) : null}
-                        {item.note ? <span className="truncate text-[0.62rem] text-amber-700">{item.note}</span> : null}
-                      </div>
+                      <p className="text-sm font-semibold">{item.product_name_snapshot}</p>
+                      {terminalItemStatuses.has(item.status) ? (
+                        <StatusBadge tone="danger" dot={false} className="mt-1 h-5 px-1.5 text-[0.56rem]">
+                          İptal
+                        </StatusBadge>
+                      ) : null}
+                      {item.modifiers?.length ? (
+                        <ul className="mt-1.5 space-y-0.5">
+                          {item.modifiers.map((modifier) => (
+                            <li
+                              key={modifier.id}
+                              className="flex items-baseline gap-1.5 text-[0.7rem] leading-4 text-muted-foreground"
+                            >
+                              <Plus className="size-3 shrink-0 text-brand" aria-hidden="true" />
+                              <span className="min-w-0 flex-1">
+                                {modifier.quantity > 1 ? `${modifier.quantity}× ` : ""}
+                                {modifier.name_snapshot}
+                              </span>
+                              {Number(modifier.price_delta_snapshot) !== 0 ? (
+                                <span className="shrink-0 tabular-nums">
+                                  {Number(modifier.price_delta_snapshot) > 0 ? "+" : ""}
+                                  {currency.format(Number(modifier.price_delta_snapshot))}
+                                </span>
+                              ) : null}
+                            </li>
+                          ))}
+                        </ul>
+                      ) : null}
+                      {item.note ? (
+                        // The customer's own words: shown in full, because a
+                        // truncated "az acılı" is worse than no note at all.
+                        <p className="mt-1.5 flex items-start gap-1.5 rounded-lg bg-amber-500/10 px-2 py-1 text-[0.7rem] leading-4 text-amber-800 dark:text-amber-200">
+                          <MessageSquare className="mt-px size-3 shrink-0" aria-hidden="true" />
+                          <span className="min-w-0 whitespace-pre-wrap break-words">{item.note}</span>
+                        </p>
+                      ) : null}
                     </div>
                     <div className="text-right">
                       <p className="text-sm font-semibold tabular-nums">{currency.format(Number(item.line_total))}</p>
@@ -1388,22 +1475,32 @@ export function CashierWorkspace() {
           </p>
         </div>
         <div className="space-y-4 p-4">
-          <div className="space-y-2 rounded-2xl bg-muted/45 p-4 text-sm">
-            <div className="flex justify-between text-muted-foreground">
-              <span>Ara toplam</span>
-              <span className="tabular-nums">{currency.format(Number(selectedOrder?.subtotal ?? 0))}</span>
+          <div className="rounded-2xl bg-muted/45 p-4 text-sm">
+            <div className="flex items-baseline justify-between">
+              <span className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                Toplam
+              </span>
+              <span className="text-3xl font-bold tabular-nums tracking-tight">
+                {currency.format(Number(selectedOrder?.total ?? 0))}
+              </span>
             </div>
-            <div className="flex justify-between text-emerald-700 dark:text-emerald-300">
-              <span>İndirimler</span>
-              <span className="tabular-nums">−{currency.format(Number(selectedOrder?.discount_total ?? 0))}</span>
-            </div>
-            <div className="flex justify-between text-muted-foreground">
-              <span>Vergi</span>
-              <span className="tabular-nums">{currency.format(Number(selectedOrder?.tax_total ?? 0))}</span>
-            </div>
-            <div className="flex justify-between border-t pt-3 text-xl font-semibold">
-              <span>Toplam</span>
-              <span className="tabular-nums">{currency.format(Number(selectedOrder?.total ?? 0))}</span>
+            <div className="mt-3 space-y-1 border-t pt-3 text-[0.72rem]">
+              <div className="flex justify-between text-muted-foreground">
+                <span>Ara toplam</span>
+                <span className="tabular-nums">{currency.format(Number(selectedOrder?.subtotal ?? 0))}</span>
+              </div>
+              {Number(selectedOrder?.discount_total ?? 0) > 0 ? (
+                <div className="flex justify-between text-emerald-700 dark:text-emerald-300">
+                  <span>İndirimler</span>
+                  <span className="tabular-nums">−{currency.format(Number(selectedOrder?.discount_total ?? 0))}</span>
+                </div>
+              ) : null}
+              {Number(selectedOrder?.tax_total ?? 0) > 0 ? (
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Vergi</span>
+                  <span className="tabular-nums">{currency.format(Number(selectedOrder?.tax_total ?? 0))}</span>
+                </div>
+              ) : null}
             </div>
             {paid > 0 ? (
               <>

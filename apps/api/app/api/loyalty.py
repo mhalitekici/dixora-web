@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hmac
+import logging
 from datetime import timedelta
 from typing import Annotated
 from uuid import UUID
@@ -14,6 +15,7 @@ from app.dependencies import (
     DbSession,
     Identity,
     get_app_settings,
+    require_branch,
     require_permissions,
     require_tenant,
 )
@@ -22,7 +24,11 @@ from app.loyalty_schemas import (
     LoyaltyAdminRewardOut,
     LoyaltyCustomerOut,
     LoyaltyEnroll,
+    LoyaltyEnrollmentConfirm,
+    LoyaltyEnrollmentConfirmOut,
     LoyaltyEnrollmentOut,
+    LoyaltyEnrollmentStart,
+    LoyaltyEnrollmentStartOut,
     LoyaltyMembershipAttach,
     LoyaltyMembershipAttachOut,
     LoyaltyOrderContextOut,
@@ -64,7 +70,8 @@ from app.services.loyalty import (
     active_program_for_branch,
     attach_membership_to_order,
     enroll_membership,
-    mask_phone,
+    ensure_membership,
+    mask_contact,
     membership_from_code,
     membership_from_token,
     membership_progress,
@@ -76,6 +83,11 @@ from app.services.loyalty import (
     reward_target_description,
     verification_rate_limit_key,
 )
+from app.services.loyalty_enrollment import (
+    confirm_email_enrollment,
+    send_membership_card,
+    start_email_enrollment,
+)
 from app.services.loyalty_verification_security import (
     consume_verification_rate_limit,
     verification_private_hash,
@@ -85,6 +97,8 @@ from app.services.orders import load_order
 from app.services.phone_verification import phone_verification_provider
 
 router = APIRouter(prefix="/loyalty", tags=["loyalty"])
+logger = logging.getLogger(__name__)
+
 LoyaltyReader = Annotated[Identity, Depends(require_permissions("loyalty.read"))]
 LoyaltyManager = Annotated[Identity, Depends(require_permissions("loyalty.manage"))]
 LoyaltyRedeemer = Annotated[Identity, Depends(require_permissions("loyalty.redeem"))]
@@ -509,7 +523,11 @@ async def list_customers(
         result.append(
             LoyaltyCustomerOut(
                 membership_code=membership.lookup_code,
-                phone_masked=mask_phone(customer.phone_normalized),
+                display_name=customer.display_name,
+                contact_masked=mask_contact(
+                    email=customer.email_normalized,
+                    phone=customer.phone_normalized,
+                ),
                 branch_id=membership.branch_id,
                 program_name=program.name,
                 progress=progress,
@@ -1200,4 +1218,157 @@ async def reverse_order_progress(
         order_id=order.id,
         reversed_programs=count,
         reversed_progress=progress,
+    )
+
+
+@router.post(
+    "/enrollments/start",
+    response_model=LoyaltyEnrollmentStartOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def start_enrollment(
+    payload: LoyaltyEnrollmentStart,
+    identity: LoyaltyRedeemer,
+    db: DbSession,
+    settings: Settings = Depends(get_app_settings),
+) -> LoyaltyEnrollmentStartOut:
+    """Step 1 of till-side enrolment: email the customer a verification code.
+
+    The cashier collects the details face to face; the code proves the customer
+    actually owns the address before any membership exists.
+    """
+    tenant_id = require_tenant(identity)
+    branch_id = require_branch(identity)
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise DomainError("tenant_not_found", "İşletme bulunamadı.", status_code=404)
+
+    program = await active_program_for_branch(db, tenant_id=tenant_id, branch_id=branch_id)
+    if program is None:
+        raise DomainError(
+            "loyalty_program_unavailable",
+            "Bu şubede yayında bir sadakat programı yok.",
+            status_code=409,
+        )
+
+    started = await start_email_enrollment(
+        db,
+        settings,
+        tenant=tenant,
+        branch_id=branch_id,
+        program=program,
+        email=payload.email,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        birth_date=payload.birth_date,
+        started_by_user_id=identity.user_id,
+    )
+    add_audit_log(
+        db,
+        identity=identity,
+        action="loyalty.enrollment_started",
+        resource_type="loyalty_membership",
+        resource_id=started.verification_id,
+        branch_id=branch_id,
+    )
+    await db.commit()
+    return LoyaltyEnrollmentStartOut(
+        verification_id=started.verification_id,
+        email=started.email,
+        expires_in_seconds=started.expires_in_seconds,
+        development_code=started.development_code,
+    )
+
+
+@router.post("/enrollments/confirm", response_model=LoyaltyEnrollmentConfirmOut)
+async def confirm_enrollment(
+    payload: LoyaltyEnrollmentConfirm,
+    identity: LoyaltyRedeemer,
+    db: DbSession,
+    settings: Settings = Depends(get_app_settings),
+) -> LoyaltyEnrollmentConfirmOut:
+    """Step 2: the customer reads out the emailed code and the card is issued."""
+    tenant_id = require_tenant(identity)
+    tenant = await db.get(Tenant, tenant_id)
+    if tenant is None:
+        raise DomainError("tenant_not_found", "İşletme bulunamadı.", status_code=404)
+
+    customer, verification = await confirm_email_enrollment(
+        db,
+        settings,
+        tenant=tenant,
+        verification_id=payload.verification_id,
+        code=payload.code,
+    )
+    # An enrolment must be completed where it was started: otherwise a till in
+    # one branch could finish a stranger's pending enrolment from another.
+    if not identity.can_access_branch(verification.branch_id):
+        raise DomainError(
+            "branch_forbidden",
+            "Bu kayıt başka bir şubede başlatılmış",
+            status_code=403,
+        )
+    program = (
+        await db.execute(
+            select(LoyaltyProgram)
+            .where(
+                LoyaltyProgram.id == verification.program_id,
+                LoyaltyProgram.tenant_id == tenant_id,
+            )
+            .options(selectinload(LoyaltyProgram.rule))
+        )
+    ).scalar_one_or_none()
+    if program is None:
+        raise DomainError("loyalty_program_unavailable", "Program bulunamadı.", status_code=409)
+
+    membership, _token = await ensure_membership(
+        db,
+        program=program,
+        branch_id=verification.branch_id,
+        customer=customer,
+        consent_text_version=CONSENT_VERSION,
+        referral_code=None,
+    )
+    progress = await membership_progress(
+        db,
+        tenant_id=tenant_id,
+        membership_id=membership.id,
+        program_id=program.id,
+    )
+    target = program.rule.threshold if program.rule else 0
+
+    card_sent = True
+    try:
+        await send_membership_card(
+            settings,
+            tenant=tenant,
+            program=program,
+            customer=customer,
+            member_code=membership.lookup_code,
+            progress_target=target,
+        )
+    except Exception:
+        # The membership is real either way; a mail failure must not undo it.
+        # Staff can read the code off the screen and re-send later.
+        logger.warning("loyalty.card_email_failed", exc_info=True)
+        card_sent = False
+
+    add_audit_log(
+        db,
+        identity=identity,
+        action="loyalty.enrollment_completed",
+        resource_type="loyalty_membership",
+        resource_id=membership.id,
+        branch_id=verification.branch_id,
+        new_value={"member_code": membership.lookup_code},
+    )
+    await db.commit()
+    return LoyaltyEnrollmentConfirmOut(
+        member_code=membership.lookup_code,
+        display_name=customer.display_name,
+        email=customer.email_normalized or "",
+        program_name=program.name,
+        progress=progress,
+        progress_target=target,
+        card_email_sent=card_sent,
     )

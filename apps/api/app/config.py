@@ -66,6 +66,21 @@ class Settings(BaseSettings):
     netgsm_password: SecretStr | None = None
     netgsm_msgheader: str | None = Field(default=None, min_length=3, max_length=11)
     netgsm_timeout_seconds: float = Field(default=8.0, ge=1.0, le=30.0)
+    # Transactional email (loyalty enrolment codes, membership cards, business
+    # registration verification). "development" only logs, and is rejected in
+    # production so a customer is never left waiting for a code that was never
+    # actually sent.
+    email_provider: Literal["development", "resend", "smtp", "disabled"] = "development"
+    email_from: str = Field(default="Dixora <no-reply@dixoratech.com>", max_length=255)
+    smtp_host: str = Field(default="localhost", min_length=1, max_length=255)
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str | None = Field(default=None, max_length=255)
+    smtp_password: SecretStr | None = None
+    smtp_use_starttls: bool = True
+    smtp_use_ssl: bool = False
+    smtp_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
+    resend_api_key: SecretStr | None = None
+    email_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
     cors_origins: list[str] = ["http://localhost:3000"]
     print_bridge_key: SecretStr = Field(default=SecretStr("development-print-bridge"))
     s3_endpoint: str = "http://localhost:9000"
@@ -136,10 +151,25 @@ class Settings(BaseSettings):
                 )
             if not self.netgsm_msgheader.isascii() or not self.netgsm_msgheader.isalnum():
                 raise ValueError("DIXORA_NETGSM_MSGHEADER must be 3-11 ASCII letters or digits")
+        if self.email_provider == "resend":
+            key = (
+                self.resend_api_key.get_secret_value().strip()
+                if self.resend_api_key is not None
+                else ""
+            )
+            if not key:
+                raise ValueError("Resend email requires DIXORA_RESEND_API_KEY")
         if self.environment != "production":
             return self
         if self.loyalty_verification_provider == "development":
             raise ValueError("Development phone verification is not allowed in production")
+        if self.email_provider == "development":
+            raise ValueError(
+                "Development email is not allowed in production; set "
+                "DIXORA_EMAIL_PROVIDER to 'smtp' or 'disabled'"
+            )
+        if self.email_provider == "smtp" and not self.smtp_host.strip():
+            raise ValueError("SMTP email requires DIXORA_SMTP_HOST")
         try:
             database_url = make_url(self.database_url)
         except ArgumentError as exc:

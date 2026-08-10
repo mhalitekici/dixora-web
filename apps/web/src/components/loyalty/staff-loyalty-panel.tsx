@@ -1,7 +1,7 @@
 "use client"
 
 import { useMutation, useQueryClient } from "@tanstack/react-query"
-import { Check, Gift, HeartHandshake, Loader2 } from "lucide-react"
+import { Check, Gift, HeartHandshake, Loader2, UserPlus } from "lucide-react"
 import { useMemo, useState } from "react"
 import { toast } from "sonner"
 
@@ -17,6 +17,8 @@ import {
 } from "@/components/ui/select"
 
 import { loyaltyApi } from "./loyalty-api"
+import { LoyaltyEnrollmentDialog } from "./loyalty-enrollment-dialog"
+import { MIN_MEMBER_CODE_LENGTH } from "./loyalty-presets"
 import { loyaltyKeys, useOrderLoyaltyContext } from "./loyalty-hooks"
 
 type OrderItem = {
@@ -43,6 +45,7 @@ export function StaffLoyaltyPanel({
   const queryClient = useQueryClient()
   const contextQuery = useOrderLoyaltyContext(orderId)
   const [membershipCode, setMembershipCode] = useState("")
+  const [enrollOpen, setEnrollOpen] = useState(false)
   const [rewardCode, setRewardCode] = useState("")
   const [orderItemId, setOrderItemId] = useState("")
 
@@ -73,7 +76,8 @@ export function StaffLoyaltyPanel({
     mutationFn: async () => {
       if (!orderId) throw new Error("Önce açık bir sipariş seçin.")
       const code = membershipCode.trim().toUpperCase()
-      if (code.length < 8) throw new Error("Geçerli üyelik kodunu girin.")
+      if (code.length < MIN_MEMBER_CODE_LENGTH)
+        throw new Error("Geçerli üyelik kodunu girin.")
       return loyaltyApi.attachMembership(orderId, code)
     },
     onSuccess: async (result) => {
@@ -133,9 +137,24 @@ export function StaffLoyaltyPanel({
       </div>
 
       {!orderId ? (
-        <p className="mt-3 rounded-xl bg-muted/40 p-3 text-xs text-muted-foreground">
-          Sadakat işlemleri için açık bir sipariş seçin.
-        </p>
+        // Signing a customer up does not need an open order — they often ask at
+        // the counter before ordering — so the action stays reachable here.
+        <div className="mt-3 space-y-2">
+          <p className="rounded-xl bg-muted/40 p-3 text-xs text-muted-foreground">
+            Üyeliği bir siparişe bağlamak için açık bir sipariş seçin.
+          </p>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-9 w-full rounded-xl"
+            disabled={disabled}
+            onClick={() => setEnrollOpen(true)}
+          >
+            <UserPlus className="size-4" />
+            Yeni müşteri kaydet
+          </Button>
+        </div>
       ) : contextQuery.isError ? (
         <div className="mt-3 rounded-xl border border-destructive/20 bg-destructive/5 p-3 text-xs text-destructive">
           Sadakat bilgisi alınamadı. Yetkinizi ve program durumunu kontrol edin.
@@ -167,10 +186,24 @@ export function StaffLoyaltyPanel({
             type="submit"
             size="sm"
             className="rounded-xl"
-            disabled={disabled || busy || membershipCode.trim().length < 8}
+            disabled={
+              disabled || busy || membershipCode.trim().length < MIN_MEMBER_CODE_LENGTH
+            }
           >
             {attachMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
             Bağla
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="rounded-xl"
+            disabled={disabled || busy}
+            onClick={() => setEnrollOpen(true)}
+            title="Yeni müşteriyi sadakat programına kaydet"
+          >
+            <UserPlus className="size-4" />
+            Yeni üye
           </Button>
         </form>
       ) : context.available_rewards.length === 0 ? (
@@ -243,6 +276,15 @@ export function StaffLoyaltyPanel({
           </Button>
         </div>
       )}
+      <LoyaltyEnrollmentDialog
+        open={enrollOpen}
+        onOpenChange={setEnrollOpen}
+        onEnrolled={(code) => {
+          // Pre-fill the attach field so the cashier can bind the brand-new
+          // member to the open order without retyping the code.
+          setMembershipCode(code)
+        }}
+      />
     </section>
   )
 }

@@ -56,6 +56,7 @@ import { cn } from "@/lib/utils"
 import { AdapterNotice } from "./adapter-notice"
 import {
   getBusiness,
+  getBusinessOverview,
   getBusinessUsers,
   reactivateBusiness,
   resetBusinessUserPassword,
@@ -129,6 +130,10 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
   const query = useQuery({
     queryKey: secondaryAdminQueryKeys.business(businessId),
     queryFn: ({ signal }) => getBusiness(businessId, signal),
+  })
+  const overviewQuery = useQuery({
+    queryKey: [...secondaryAdminQueryKeys.business(businessId), "overview"],
+    queryFn: ({ signal }) => getBusinessOverview(businessId, signal),
   })
 
   const lifecycleMutation = useMutation({
@@ -256,6 +261,18 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
   const activeNow =
     business.state === "ACTIVE" && business.is_active === true
 
+  const overview = overviewQuery.data
+  const money = (value: string | number | undefined) =>
+    value === undefined
+      ? "—"
+      : new Intl.NumberFormat("tr-TR", {
+          style: "currency",
+          currency: overview?.currency ?? "TRY",
+          minimumFractionDigits: 2,
+        }).format(Number(value))
+  const day = (value: string | null | undefined) =>
+    value ? new Intl.DateTimeFormat("tr-TR", { dateStyle: "medium" }).format(new Date(value)) : "—"
+
   return (
     <>
       <PageHeader
@@ -313,6 +330,73 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
           </>
         }
       />
+
+      {overview ? (
+        <div className="mb-5 grid gap-3 lg:grid-cols-3">
+          <div className="rounded-2xl border bg-card p-4">
+            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              İletişim
+            </p>
+            <p className="mt-2 text-sm font-semibold">{overview.owner_name ?? "—"}</p>
+            {overview.owner_email ? (
+              <a
+                href={`mailto:${overview.owner_email}`}
+                className="mt-1 block truncate text-sm text-brand underline underline-offset-4"
+              >
+                {overview.owner_email}
+              </a>
+            ) : (
+              <p className="mt-1 text-sm text-muted-foreground">E-posta yok</p>
+            )}
+            {overview.owner_phone ? (
+              <a
+                href={`tel:${overview.owner_phone}`}
+                className="mt-1 block text-sm text-brand underline underline-offset-4"
+              >
+                {overview.owner_phone}
+              </a>
+            ) : (
+              <p className="mt-1 text-sm text-muted-foreground">Telefon yok</p>
+            )}
+          </div>
+
+          <div className="rounded-2xl border bg-card p-4">
+            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Şubeler ve kullanıcılar
+            </p>
+            <p className="mt-2 text-2xl font-bold tabular-nums">
+              {overview.active_branches}
+              <span className="ml-1 text-sm font-medium text-muted-foreground">
+                aktif şube
+              </span>
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Toplam {overview.total_branches} şube kaydı · {overview.user_count} kullanıcı
+            </p>
+          </div>
+
+          <div className="rounded-2xl border bg-card p-4">
+            <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+              Bu ayki tutar
+            </p>
+            <p className="mt-2 text-2xl font-bold tabular-nums">
+              {money(overview.monthly_total)}
+            </p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              {overview.plan_name ?? "Plan yok"} · {money(overview.base_monthly_price)} baz
+              {overview.billable_extra_branches > 0
+                ? ` + ${overview.billable_extra_branches} ek şube × ${money(overview.additional_branch_price)}`
+                : ""}
+            </p>
+            <p className="mt-2 border-t pt-2 text-xs">
+              <span className="text-muted-foreground">
+                {overview.trial_ends_at ? "Deneme bitişi" : "Sonraki ödeme"}:{" "}
+              </span>
+              <strong>{day(overview.trial_ends_at ?? overview.next_payment_at)}</strong>
+            </p>
+          </div>
+        </div>
+      ) : null}
 
       <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <DetailMetric

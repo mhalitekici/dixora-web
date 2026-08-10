@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -8,6 +8,7 @@ from sqlalchemy import (
     JSON,
     Boolean,
     CheckConstraint,
+    Date,
     ForeignKey,
     Index,
     Integer,
@@ -120,16 +121,34 @@ class LoyaltyRule(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 
 class LoyaltyCustomer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A loyalty customer, identified by email within one business.
+
+    Enrolment is done at the till by a cashier: email is the identity because it
+    is what the verification code and the membership card are sent to. Phone is
+    retained only so pre-existing phone-enrolled customers keep working; it is no
+    longer collected.
+    """
+
     __tablename__ = "loyalty_customers"
     __table_args__ = (
         UniqueConstraint("tenant_id", "phone_normalized", name="uq_loyalty_customer_phone"),
+        UniqueConstraint("tenant_id", "email_normalized", name="uq_loyalty_customer_email"),
     )
 
     tenant_id: Mapped[UUID] = mapped_column(
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
     )
-    phone_normalized: Mapped[str] = mapped_column(String(32), nullable=False)
+    phone_normalized: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    email_normalized: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    first_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    last_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+    @property
+    def display_name(self) -> str:
+        full = " ".join(part for part in (self.first_name, self.last_name) if part)
+        return full or (self.email_normalized or self.phone_normalized or "Misafir")
 
 
 class LoyaltyMembership(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -377,3 +396,43 @@ class LoyaltyVerificationRateLimit(Base):
     bucket_start: Mapped[datetime] = mapped_column(primary_key=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(nullable=False, index=True)
+
+
+class LoyaltyEmailVerification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    """A pending, cashier-initiated enrolment awaiting the customer's code.
+
+    The customer's details are held here rather than on `LoyaltyCustomer` until
+    the code is confirmed, so an abandoned or mistyped enrolment never leaves a
+    half-real member behind. Only the hash of the code is stored.
+    """
+
+    __tablename__ = "loyalty_email_verifications"
+    __table_args__ = (
+        Index(
+            "ix_loyalty_email_verification_lookup",
+            "tenant_id",
+            "email_normalized",
+            "consumed_at",
+        ),
+    )
+
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    branch_id: Mapped[UUID] = mapped_column(
+        ForeignKey("branches.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    program_id: Mapped[UUID] = mapped_column(
+        ForeignKey("loyalty_programs.id", ondelete="CASCADE"), nullable=False, index=True
+    )
+    started_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    email_normalized: Mapped[str] = mapped_column(String(255), nullable=False)
+    first_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    last_name: Mapped[str] = mapped_column(String(80), nullable=False)
+    birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(nullable=False, index=True)
+    consumed_at: Mapped[datetime | None] = mapped_column(nullable=True)

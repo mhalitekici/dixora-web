@@ -1,7 +1,13 @@
 "use client";
 
 import { zodResolver } from "@hookform/resolvers/zod";
-import { ArrowRight, CheckCircle2, Loader2, LockKeyhole } from "lucide-react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Loader2,
+  LockKeyhole,
+  MailCheck,
+} from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import {
@@ -34,6 +40,10 @@ const registrationSchema = z.object({
     .trim()
     .email("Geçerli bir e-posta adresi girin.")
     .max(255),
+  phone: z
+    .string()
+    .trim()
+    .regex(/^[0-9+()\s.-]{7,32}$/, "Geçerli bir telefon numarası girin."),
   password: z.string().min(10, "Parola en az 10 karakter olmalı.").max(256),
   terms_accepted: z
     .boolean()
@@ -41,6 +51,13 @@ const registrationSchema = z.object({
 });
 
 type RegistrationValues = z.infer<typeof registrationSchema>;
+
+type PendingVerification = {
+  verification_id: string;
+  email: string;
+  expires_in_seconds: number;
+  development_code: string | null;
+};
 
 type RegistrationResult = {
   business_name: string;
@@ -61,13 +78,50 @@ const fieldIds = {
   business_type: "trial-business-type",
   owner_name: "trial-owner-name",
   email: "trial-email",
+  phone: "trial-phone",
   password: "trial-password",
   terms_accepted: "trial-terms",
 } as const;
 
 export function TrialRegistrationForm() {
   const [result, setResult] = useState<RegistrationResult | null>(null);
+  const [pending, setPending] = useState<PendingVerification | null>(null);
+  const [code, setCode] = useState("");
+  const [confirming, setConfirming] = useState(false);
   const [serverError, setServerError] = useState<string | null>(null);
+
+  async function confirmCode() {
+    if (!pending) return;
+    setConfirming(true);
+    setServerError(null);
+    try {
+      const response = await fetch("/api/register/confirm", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          verification_id: pending.verification_id,
+          code: code.trim(),
+        }),
+      });
+      const body = (await response.json().catch(() => null)) as
+        | RegistrationResult
+        | { error?: { message?: string } }
+        | null;
+      if (!response.ok) {
+        throw new Error(
+          (body && "error" in body ? body.error?.message : undefined) ??
+            "Kod doğrulanamadı.",
+        );
+      }
+      setResult(body as RegistrationResult);
+    } catch (error) {
+      setServerError(
+        error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
+      );
+    } finally {
+      setConfirming(false);
+    }
+  }
   const form = useForm<RegistrationValues>({
     resolver: zodResolver(registrationSchema),
     defaultValues: {
@@ -75,6 +129,7 @@ export function TrialRegistrationForm() {
       business_type: "RESTAURANT",
       owner_name: "",
       email: "",
+      phone: "",
       password: "",
       terms_accepted: false,
     },
@@ -102,7 +157,7 @@ export function TrialRegistrationForm() {
             "İşletme kaydı oluşturulamadı.",
         );
       }
-      setResult(body as RegistrationResult);
+      setPending(body as PendingVerification);
     } catch (error) {
       setServerError(
         error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
@@ -151,9 +206,81 @@ export function TrialRegistrationForm() {
           href={loginHref}
           className="mt-6 inline-flex h-12 w-full items-center justify-center gap-2 bg-primary px-5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90"
         >
-          İşletme paneline giriş yap
+          Giriş yap ve kuruluma başla
           <ArrowRight className="size-4" aria-hidden="true" />
         </Link>
+      </div>
+    );
+  }
+
+  if (pending) {
+    return (
+      <div className="border bg-white p-6 sm:p-8" role="group" aria-live="polite">
+        <span className="flex size-12 items-center justify-center bg-primary text-primary-foreground">
+          <MailCheck className="size-6" aria-hidden="true" />
+        </span>
+        <h3 className="mt-5 text-2xl font-semibold tracking-[-0.035em]">
+          E-postanızı doğrulayın
+        </h3>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          <span className="font-medium text-foreground">{pending.email}</span>{" "}
+          adresine 6 haneli bir kod gönderdik. İşletmeniz kod doğrulandıktan
+          sonra oluşturulur.
+        </p>
+
+        <label className="mt-5 block text-sm font-medium" htmlFor="register-code">
+          Doğrulama kodu
+        </label>
+        <input
+          id="register-code"
+          inputMode="numeric"
+          maxLength={6}
+          value={code}
+          onChange={(event) => setCode(event.target.value.replace(/\D/g, ""))}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && code.length >= 4) void confirmCode();
+          }}
+          placeholder="000000"
+          className="mt-2 h-14 w-full border bg-white text-center text-2xl font-bold tracking-[0.4em] outline-none [color-scheme:light] focus-visible:ring-3 focus-visible:ring-ring/50"
+          autoFocus
+        />
+
+        {pending.development_code ? (
+          <p className="mt-3 bg-amber-500/10 px-3 py-2 text-xs text-amber-800">
+            Geliştirme modu · kod: <strong>{pending.development_code}</strong>
+          </p>
+        ) : null}
+
+        {serverError ? (
+          <p className="mt-3 text-sm text-destructive" role="alert">
+            {serverError}
+          </p>
+        ) : null}
+
+        <button
+          type="button"
+          disabled={code.length < 4 || confirming}
+          onClick={() => void confirmCode()}
+          className="mt-5 inline-flex h-12 w-full items-center justify-center gap-2 bg-primary px-5 text-sm font-semibold text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-60"
+        >
+          {confirming ? (
+            <Loader2 className="size-4 animate-spin" aria-hidden="true" />
+          ) : (
+            <CheckCircle2 className="size-4" aria-hidden="true" />
+          )}
+          Doğrula ve işletmemi oluştur
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setPending(null);
+            setCode("");
+            setServerError(null);
+          }}
+          className="mt-3 w-full text-xs text-muted-foreground underline underline-offset-4"
+        >
+          Bilgileri düzenle
+        </button>
       </div>
     );
   }
@@ -238,6 +365,24 @@ export function TrialRegistrationForm() {
           className="h-12 rounded-none bg-white"
           placeholder="siz@isletmeniz.com"
           {...form.register("email")}
+        />
+      </Field>
+
+      <Field
+        id={fieldIds.phone}
+        label="Telefon numarası"
+        error={errors.phone?.message}
+      >
+        <Input
+          id={fieldIds.phone}
+          type="tel"
+          inputMode="tel"
+          autoComplete="tel"
+          aria-invalid={Boolean(errors.phone)}
+          aria-describedby={errorId(fieldIds.phone, errors.phone?.message)}
+          className="h-12 rounded-none bg-white"
+          placeholder="Örn. 0555 111 22 33"
+          {...form.register("phone")}
         />
       </Field>
 

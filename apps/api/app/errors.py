@@ -8,6 +8,30 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
 
+def _serializable_validation_errors(exc: RequestValidationError) -> list[dict[str, Any]]:
+    """Flatten pydantic errors into something JSON can actually encode.
+
+    A validator that raises `ValueError` puts the exception object itself into
+    the error's `ctx`, and `input` may be any arbitrary payload. Serialising
+    those directly turns a 422 into a 500, so anything that is not a plain JSON
+    value is rendered as text.
+    """
+
+    def plain(value: Any) -> Any:
+        if value is None or isinstance(value, str | int | float | bool):
+            return value
+        if isinstance(value, dict):
+            return {str(key): plain(item) for key, item in value.items()}
+        if isinstance(value, list | tuple):
+            return [plain(item) for item in value]
+        return str(value)
+
+    return [
+        {key: plain(value) for key, value in error.items() if key != "url"}
+        for error in exc.errors()
+    ]
+
+
 class DomainError(Exception):
     def __init__(
         self,
@@ -49,7 +73,7 @@ def register_error_handlers(app: FastAPI) -> None:
                 request,
                 "validation_error",
                 "Request validation failed",
-                exc.errors(),
+                _serializable_validation_errors(exc),
             ),
         )
 

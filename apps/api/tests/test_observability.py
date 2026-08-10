@@ -80,3 +80,30 @@ def test_scrubbing_survives_unexpected_shapes() -> None:
     """A malformed event must not crash the reporter."""
     event = cast(Any, {"request": "not-a-dict", "extra": [1, 2, 3]})
     assert _before_send(event, cast(Any, {})) is not None
+
+
+def test_resend_requires_an_api_key_in_every_environment() -> None:
+    """Selecting a provider without its credential can never work."""
+    import pytest
+
+    with pytest.raises(Exception, match="RESEND_API_KEY"):
+        _settings(email_provider="resend")
+
+
+def test_resend_is_selected_when_configured() -> None:
+    from app.services.email import ResendEmailSender, get_email_sender
+
+    sender = get_email_sender(
+        _settings(email_provider="resend", resend_api_key="re_test_key")
+    )
+    assert isinstance(sender, ResendEmailSender)
+    assert sender.mode == "RESEND"
+
+
+def test_masked_contact_survives_a_customer_without_a_phone() -> None:
+    """Email-enrolled members have no phone; the admin list must not crash."""
+    from app.services.loyalty import mask_contact
+
+    assert mask_contact(email="ahmet@example.com", phone=None) == "a***t@example.com"
+    assert mask_contact(email=None, phone="+905551112233") == "+905***2233"
+    assert mask_contact(email=None, phone=None) == "—"

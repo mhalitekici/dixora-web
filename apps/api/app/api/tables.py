@@ -25,6 +25,7 @@ from app.schemas import (
     AreaUpdate,
     OrderOut,
     TableCreate,
+    TableGuestLabelUpdate,
     TableOut,
     TableSessionCloseOut,
     TableSessionCloseRequest,
@@ -694,3 +695,47 @@ async def delete_table(
         resource_id=table.id,
     )
     await db.commit()
+
+
+@router.patch("/{table_id}/guest-label", response_model=TableOut)
+async def set_table_guest_label(
+    table_id: UUID,
+    payload: TableGuestLabelUpdate,
+    identity: TableOperator,
+    db: DbSession,
+) -> TableOut:
+    """Attach or clear the short guest note shown next to the table name.
+
+    Scoped to `tables.operate` rather than `tables.manage`: whoever is allowed to
+    serve a table is allowed to label it, which is the point of the feature.
+    """
+    tenant_id = require_tenant(identity)
+    table = (
+        await db.execute(
+            select(DiningTable).where(
+                DiningTable.id == table_id, DiningTable.tenant_id == tenant_id
+            )
+        )
+    ).scalar_one_or_none()
+    if table is None:
+        raise DomainError("table_not_found", "Table not found", status_code=404)
+    if not identity.can_access_branch(table.branch_id):
+        raise DomainError(
+            "branch_forbidden", "You do not have access to this branch", status_code=403
+        )
+
+    label = (payload.guest_label or "").strip()
+    previous = table.guest_label
+    table.guest_label = label or None
+    add_audit_log(
+        db,
+        identity=identity,
+        action="table.guest_label_set" if label else "table.guest_label_cleared",
+        resource_type="dining_table",
+        resource_id=table.id,
+        branch_id=table.branch_id,
+        previous_value={"guest_label": previous},
+        new_value={"guest_label": table.guest_label},
+    )
+    await db.commit()
+    return TableOut.model_validate(table)

@@ -5,15 +5,18 @@ import {
   HeartHandshake,
   ScanLine,
   Sparkles,
+  UserPlus,
   UsersRound,
 } from "lucide-react"
 import type { ReactNode } from "react"
+import { useState } from "react"
 import { toast } from "sonner"
 
 import { ErrorState, LoadingState, number } from "@/components/admin/admin-utils"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
 import { StatusBadge } from "@/components/shared/status-badge"
+import { Button } from "@/components/ui/button"
 import {
   Table,
   TableBody,
@@ -24,6 +27,8 @@ import {
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toErrorMessage } from "@/lib/api/errors"
+
+import { LoyaltyEnrollmentDialog } from "./loyalty-enrollment-dialog"
 
 import {
   useLoyaltyCustomers,
@@ -39,6 +44,7 @@ export function LoyaltyDashboard() {
   const programQuery = useLoyaltyProgram()
   const setupQuery = useLoyaltySetupOptions()
   const customersQuery = useLoyaltyCustomers()
+  const [enrollOpen, setEnrollOpen] = useState(false)
   const rewardsQuery = useLoyaltyRewards()
   const mutation = useUpdateLoyaltyProgram()
 
@@ -94,6 +100,16 @@ export function LoyaltyDashboard() {
           />
         </TabsContent>
         <TabsContent value="customers">
+          <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border bg-card p-3">
+            <p className="text-xs text-muted-foreground">
+              Müşteriler kasada kaydedilir: bilgileri girin, e-postasına gelen kodu
+              doğrulayın, üyelik kartı kendisine gönderilsin.
+            </p>
+            <Button size="sm" onClick={() => setEnrollOpen(true)}>
+              <UserPlus className="size-4" />
+              Yeni müşteri kaydet
+            </Button>
+          </div>
           <CustomerTable
             loading={customersQuery.isLoading}
             error={customersQuery.error}
@@ -110,6 +126,11 @@ export function LoyaltyDashboard() {
           />
         </TabsContent>
       </Tabs>
+      <LoyaltyEnrollmentDialog
+        open={enrollOpen}
+        onOpenChange={setEnrollOpen}
+        onEnrolled={() => void customersQuery.refetch()}
+      />
     </>
   )
 }
@@ -227,7 +248,7 @@ function CustomerTable({
     <LedgerShell
       eyebrow="Üye defteri"
       title={`${number(customers.length)} kayıtlı müşteri`}
-      description="Telefonlar gizlenmiş olarak gösterilir; ilerleme yalnızca uygun ve ödenmiş siparişlerden oluşur."
+      description="İletişim bilgileri gizlenmiş olarak gösterilir; ilerleme yalnızca uygun ve ödenmiş siparişlerden oluşur."
     >
       <div className="space-y-0 divide-y md:hidden">
         {customers.map((customer) => (
@@ -235,7 +256,8 @@ function CustomerTable({
             <div className="flex items-start justify-between gap-3">
               <div>
                 <p className="font-mono text-xs font-semibold">{customer.membership_code}</p>
-                <p className="mt-1 text-sm text-muted-foreground">{customer.phone_masked}</p>
+                <p className="mt-1 text-sm font-medium">{customer.display_name}</p>
+                <p className="text-xs text-muted-foreground">{customer.contact_masked}</p>
               </div>
               <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                 {customer.progress} ilerleme
@@ -253,7 +275,7 @@ function CustomerTable({
           <TableHeader>
             <TableRow>
               <TableHead>Üye kodu</TableHead>
-              <TableHead>Telefon</TableHead>
+              <TableHead>Müşteri</TableHead>
               <TableHead>İlerleme</TableHead>
               <TableHead>Hazır ödül</TableHead>
               <TableHead>Katılım</TableHead>
@@ -263,7 +285,10 @@ function CustomerTable({
             {customers.map((customer) => (
               <TableRow key={customer.membership_code}>
                 <TableCell className="font-mono text-xs font-semibold">{customer.membership_code}</TableCell>
-                <TableCell>{customer.phone_masked}</TableCell>
+                <TableCell>
+                  <span className="font-medium">{customer.display_name}</span>
+                  <span className="block text-xs text-muted-foreground">{customer.contact_masked}</span>
+                </TableCell>
                 <TableCell className="font-medium tabular-nums">{customer.progress}</TableCell>
                 <TableCell className="tabular-nums">{customer.available_rewards}</TableCell>
                 <TableCell><time dateTime={customer.joined_at}>{formatDate(customer.joined_at)}</time></TableCell>

@@ -26,6 +26,7 @@ import {
   ShieldCheck,
   ShoppingBasket,
   SlidersHorizontal,
+  Sparkles,
   Store,
   TableProperties,
   Tags,
@@ -86,6 +87,8 @@ export const adminNavigation: NavGroup[] = [
     items: [
       { label: "İşletme Ayarları", href: "/admin/settings", icon: Settings2 },
       { label: "Şube Ayarları", href: "/admin/branch-settings", icon: Store },
+      { label: "Üyelik ve Ödeme", href: "/admin/subscription", icon: CreditCard },
+      { label: "Kurulum Sihirbazı", href: "/admin/onboarding", icon: Sparkles },
     ],
   },
 ];

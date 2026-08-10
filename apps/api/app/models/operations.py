@@ -48,6 +48,10 @@ class DiningTable(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("areas.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(60), nullable=False)
+    # A short free-text note staff attach to the table for the current guests,
+    # e.g. "Ahmet" so the floor shows "B1 · Ahmet". Cleared when the table is
+    # released; it is a service aid, never an identity record.
+    guest_label: Mapped[str | None] = mapped_column(String(60), nullable=True)
     capacity: Mapped[int] = mapped_column(Integer, default=4, nullable=False)
     sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)

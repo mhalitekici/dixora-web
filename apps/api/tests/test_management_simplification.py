@@ -9,6 +9,18 @@ from app.rbac import ensure_role
 from tests.conftest import ApiContext, auth_headers, login, seeded_resources
 
 
+async def _register_business(api, payload: dict):
+    """Sign up through the two-step, email-verified flow."""
+    started = await api.client.post("/api/v1/registrations/start", json=payload)
+    if started.status_code != 201:
+        return started
+    body = started.json()
+    return await api.client.post(
+        "/api/v1/registrations/confirm",
+        json={"verification_id": body["verification_id"], "code": body["development_code"]},
+    )
+
+
 async def test_super_admin_subscription_portfolio_uses_real_assignments(api: ApiContext) -> None:
     super_admin = await login(
         api,
@@ -109,13 +121,14 @@ async def test_role_presets_and_employee_scope_are_server_enforced(api: ApiConte
 
 
 async def test_employee_station_is_tenant_and_branch_scoped(api: ApiContext) -> None:
-    registration = await api.client.post(
-        "/api/v1/registrations",
-        json={
+    registration = await _register_business(
+        api,
+        {
             "business_name": "Scope Test Cafe",
             "business_type": "CAFE",
             "owner_name": "Scope Owner",
             "email": "scope-owner@example.test",
+            "phone": "+90 555 000 11 22",
             "password": "ScopeOwner!2026",
             "terms_accepted": True,
         },

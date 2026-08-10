@@ -15,17 +15,8 @@ export const dynamic = "force-dynamic";
 const MAX_REGISTRATION_BODY_BYTES = 32 * 1024;
 
 const registrationSchema = z.object({
-  business_name: z.string().trim().min(2).max(140),
-  business_type: z.enum(["RESTAURANT", "CAFE", "BAR", "HOTEL"]),
-  owner_name: z.string().trim().min(2).max(160),
-  email: z.string().trim().email().max(255),
-  phone: z
-    .string()
-    .trim()
-    .regex(/^[0-9+()\s.-]{7,32}$/, "Geçerli bir telefon numarası girin."),
-  password: z.string().min(10).max(256),
-  terms_accepted: z.literal(true),
-  contract_version: z.string().trim().min(1).max(40).default("unknown"),
+  verification_id: z.string().uuid(),
+  code: z.string().trim().min(4).max(12),
 });
 
 export async function POST(request: NextRequest): Promise<Response> {
@@ -74,13 +65,13 @@ export async function POST(request: NextRequest): Promise<Response> {
     return apiErrorResponse(
       422,
       "validation_error",
-      "Kayıt bilgilerini kontrol edin.",
+      "Doğrulama kodunu kontrol edin.",
       parsed.error.flatten(),
     );
   }
 
   try {
-    const response = await backendFetch("registrations/start", {
+    const response = await backendFetch("registrations/confirm", {
       body: JSON.stringify(parsed.data),
       headers: {
         accept: "application/json",
