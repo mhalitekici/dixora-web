@@ -10,6 +10,17 @@ from app.models.catalog import (
     ProductModifierGroup,
     ProductVariant,
 )
+from app.models.campaigns import (
+    Campaign,
+    CampaignApplication,
+    CampaignBranch,
+)
+from app.models.payments import PaymentAttempt, SavedCard
+from app.models.delivery import (
+    DeliveryOrder,
+    MarketplaceIntegration,
+    MarketplaceProductMapping,
+)
 from app.models.hospitality import HotelRoom, HotelRoomCheckout
 from app.models.identity import (
     AuthSession,
@@ -87,6 +98,12 @@ __all__ = [
     "CashierShift",
     "Category",
     "ContentTranslation",
+    "Campaign",
+    "CampaignApplication",
+    "CampaignBranch",
+    "DeliveryOrder",
+    "PaymentAttempt",
+    "SavedCard",
     "DiningTable",
     "Discount",
     "HotelRoom",
@@ -107,6 +124,8 @@ __all__ = [
     "LoyaltyRule",
     "LoyaltyVerificationChallenge",
     "LoyaltyVerificationRateLimit",
+    "MarketplaceIntegration",
+    "MarketplaceProductMapping",
     "Modifier",
     "ModifierGroup",
     "Order",

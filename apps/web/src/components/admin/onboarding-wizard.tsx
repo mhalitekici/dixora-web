@@ -21,6 +21,12 @@ type Onboarding = {
   table_count: number | null;
   heard_from: string | null;
   completed: boolean;
+  applied?: {
+    tables_created: number;
+    area_created: boolean;
+    delivery_enabled: boolean;
+    payment_methods: string[];
+  } | null;
 };
 
 /** Platform codes must match DELIVERY_PLATFORMS on the API. */
@@ -102,6 +108,7 @@ function OnboardingSteps({ initial }: { initial: Onboarding }) {
     initial.table_count ? String(initial.table_count) : "",
   );
   const [heardFrom, setHeardFrom] = useState<string | null>(initial.heard_from);
+  const [summary, setSummary] = useState<Onboarding["applied"] | null>(null);
   const [paymentMethods, setPaymentMethods] = useState<string[]>(initial.payment_methods);
   const [acceptsMealCards, setAcceptsMealCards] = useState<boolean | null>(
     initial.accepts_meal_cards,
@@ -127,9 +134,9 @@ function OnboardingSteps({ initial }: { initial: Onboarding }) {
         heard_from: heardFrom,
         completed,
       }),
-    onSuccess: async (_data, completed) => {
+    onSuccess: async (data, completed) => {
       await queryClient.invalidateQueries({ queryKey: ["onboarding"] });
-      if (completed) router.push("/admin");
+      if (completed) setSummary(data.applied ?? null);
     },
   });
 
@@ -333,6 +340,54 @@ function OnboardingSteps({ initial }: { initial: Onboarding }) {
       ),
     },
   ].filter((item) => !("skip" in item && item.skip));
+
+  if (summary !== undefined && summary !== null) {
+    return (
+      <div className="mx-auto w-full max-w-2xl p-4 sm:p-8">
+        <div className="rounded-2xl border bg-card p-6">
+          <span className="flex size-11 items-center justify-center rounded-2xl bg-emerald-500/15 text-emerald-600">
+            <Check className="size-5" />
+          </span>
+          <h1 className="mt-4 text-xl font-semibold tracking-tight">Kurulum tamam</h1>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Verdiğiniz yanıtlara göre işletmeniz hazırlandı.
+          </p>
+          <ul className="mt-4 space-y-2 text-sm">
+            {summary.tables_created > 0 ? (
+              <li className="flex items-start gap-2">
+                <Check className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                <span>
+                  <strong>{summary.tables_created} masa</strong> oluşturuldu
+                  {summary.area_created ? " (Salon bölümü ile birlikte)" : ""}.
+                </span>
+              </li>
+            ) : null}
+            {summary.delivery_enabled ? (
+              <li className="flex items-start gap-2">
+                <Check className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                <span>
+                  Paket servis açıldı — <strong>Siparişler</strong> ekranından
+                  telefon ve gel-al siparişi alabilirsiniz.
+                </span>
+              </li>
+            ) : null}
+            {summary.payment_methods.length > 0 ? (
+              <li className="flex items-start gap-2">
+                <Check className="mt-0.5 size-4 shrink-0 text-emerald-600" />
+                <span>
+                  {summary.payment_methods.length} ödeme yöntemi kaydedildi.
+                </span>
+              </li>
+            ) : null}
+          </ul>
+          <Button className="mt-6 w-full" onClick={() => router.push("/admin")}>
+            Panele git
+            <ArrowRight className="size-4" />
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   const current = steps[Math.min(step, steps.length - 1)];
   const isLast = step >= steps.length - 1;

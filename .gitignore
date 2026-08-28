@@ -47,3 +47,7 @@ Thumbs.db
 .turbo/
 .cache/
 
+
+# Database dumps contain customer data — never commit them.
+backups/
+*.dump

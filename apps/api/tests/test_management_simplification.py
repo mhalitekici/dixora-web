@@ -50,6 +50,7 @@ async def test_role_presets_and_employee_scope_are_server_enforced(api: ApiConte
     assert {role["code"]: role["name"] for role in roles_response.json()} == {
         "BUSINESS_ADMIN": "Yönetici",
         "BUSINESS_MANAGER": "Müdür",
+        "CASHIER": "Kasiyer",
         "WAITER": "Garson",
     }
     branch = branches_response.json()[0]

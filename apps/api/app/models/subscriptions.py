@@ -1,10 +1,19 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Date,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import MONEY, ZERO_MONEY, Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -80,6 +89,12 @@ class TenantFeatureOverride(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
 class Invoice(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "invoices"
+    __table_args__ = (
+        UniqueConstraint(
+            "subscription_id", "period_start", name="uq_invoice_subscription_period"
+        ),
+        Index("ix_invoices_tenant_status", "tenant_id", "status"),
+    )
 
     tenant_id: Mapped[UUID] = mapped_column(
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
@@ -93,3 +108,19 @@ class Invoice(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     status: Mapped[str] = mapped_column(String(30), default="DRAFT", nullable=False)
     issued_at: Mapped[datetime | None] = mapped_column(nullable=True)
     due_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    # The month being billed. Together with the subscription this is the
+    # idempotency key: re-running the billing job must not invoice twice.
+    period_start: Mapped[date] = mapped_column(Date, nullable=False)
+    period_end: Mapped[date] = mapped_column(Date, nullable=False)
+
+    # What the amount was computed from, frozen at issue time. A branch opened
+    # later must not silently change last month's bill.
+    branch_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    base_amount: Mapped[Decimal] = mapped_column(MONEY, default=ZERO_MONEY, nullable=False)
+    extra_branch_amount: Mapped[Decimal] = mapped_column(
+        MONEY, default=ZERO_MONEY, nullable=False
+    )
+    failure_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

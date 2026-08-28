@@ -38,7 +38,7 @@ describe("LoyaltyEnrollmentDialog", () => {
   });
 
   it("will not send a code until the cashier has a usable email", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     // Stubbed even though nothing should be sent, so the test never depends on
     // whatever fetch another suite happened to leave behind.
     vi.stubGlobal(
@@ -63,7 +63,7 @@ describe("LoyaltyEnrollmentDialog", () => {
   });
 
   it("walks details -> code -> card and hands the code back to the caller", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     const onEnrolled = vi.fn();
     vi.stubGlobal(
       "fetch",
@@ -111,7 +111,7 @@ describe("LoyaltyEnrollmentDialog", () => {
   });
 
   it("says so when the card email could not be delivered", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     vi.stubGlobal(
       "fetch",
       vi.fn((input: RequestInfo | URL) => {
@@ -152,7 +152,7 @@ describe("LoyaltyEnrollmentDialog", () => {
   });
 
   it("only reveals a development code when the server returns one", async () => {
-    const user = userEvent.setup();
+    const user = userEvent.setup({ delay: null });
     vi.stubGlobal(
       "fetch",
       vi.fn(() =>

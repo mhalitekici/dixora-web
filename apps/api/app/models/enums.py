@@ -183,3 +183,90 @@ class LoyaltyRewardStatus(StrEnum):
 class LoyaltyRedemptionStatus(StrEnum):
     APPLIED = "APPLIED"
     REVERSED = "REVERSED"
+
+
+class DeliveryChannel(StrEnum):
+    """Where a delivery/takeaway order came from.
+
+    Separate from `OrderSource`, which records the internal entry point
+    (waiter, cashier, QR). A phone order is entered by a CASHIER *and* belongs
+    to the PHONE channel; conflating the two would lose one of them.
+    """
+
+    PHONE = "PHONE"
+    TAKEAWAY = "TAKEAWAY"
+    OWN_DELIVERY = "OWN_DELIVERY"
+    MARKETPLACE = "MARKETPLACE"
+
+
+class MarketplaceProvider(StrEnum):
+    GETIR = "GETIR"
+    YEMEKSEPETI = "YEMEKSEPETI"
+    TRENDYOL = "TRENDYOL"
+    MIGROS = "MIGROS"
+    OTHER = "OTHER"
+
+
+class DeliveryStatus(StrEnum):
+    """Fulfilment state of a delivery order, alongside the order's own status.
+
+    Kept distinct from OrderStatus because "kitchen finished cooking" and
+    "courier handed it over" are different facts that staff act on separately.
+    """
+
+    NEW = "NEW"
+    ACCEPTED = "ACCEPTED"
+    PREPARING = "PREPARING"
+    READY = "READY"
+    DISPATCHED = "DISPATCHED"
+    DELIVERED = "DELIVERED"
+    CANCELLED = "CANCELLED"
+    REJECTED = "REJECTED"
+
+
+class DeliveryPaymentMethod(StrEnum):
+    ONLINE = "ONLINE"
+    CASH_ON_DELIVERY = "CASH_ON_DELIVERY"
+    CARD_ON_DELIVERY = "CARD_ON_DELIVERY"
+    MEAL_CARD = "MEAL_CARD"
+    OTHER = "OTHER"
+
+
+class DeliveryPaymentStatus(StrEnum):
+    UNPAID = "UNPAID"
+    PAID = "PAID"
+    PROVIDER_COLLECTED = "PROVIDER_COLLECTED"
+    REFUNDED = "REFUNDED"
+    PARTIALLY_REFUNDED = "PARTIALLY_REFUNDED"
+
+
+class ProviderSyncStatus(StrEnum):
+    """Whether the external provider knows about our local decision.
+
+    Never conflated with the local status: an order can be accepted in Dixora
+    while the provider call failed, and staff must be able to see that.
+    """
+
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    PENDING = "PENDING"
+    SYNCED = "SYNCED"
+    FAILED = "FAILED"
+
+
+class CampaignRewardKind(StrEnum):
+    """What a campaign gives away once its condition is met."""
+
+    FREE_ITEM = "FREE_ITEM"
+    PERCENT = "PERCENT"
+    AMOUNT = "AMOUNT"
+
+
+class CampaignAudience(StrEnum):
+    """Who a campaign is for.
+
+    Kept separate from the loyalty programme: a campaign can be a plain public
+    offer that needs no membership at all.
+    """
+
+    EVERYONE = "EVERYONE"
+    MEMBERS_ONLY = "MEMBERS_ONLY"

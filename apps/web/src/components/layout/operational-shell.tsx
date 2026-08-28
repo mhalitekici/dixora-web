@@ -14,6 +14,8 @@ import { usePathname } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 
 import { BrandLogo } from "@/components/brand/brand-logo";
+import { ShiftLogoutGuard } from "@/components/cashier/shift-logout-guard";
+import { NewDeliveryBadge } from "@/components/delivery/new-delivery-badge";
 import { operationalLinks } from "@/components/layout/nav-config";
 import { ThemeToggle } from "@/components/layout/theme-toggle";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -52,6 +54,7 @@ export function OperationalShell({
   const resolvedUserName = currentUser.data?.user.displayName ?? userName;
   const resolvedStationName =
     stationName ?? currentUser.data?.branch?.name ?? "Dixora Şubesi";
+  const [logoutPrompt, setLogoutPrompt] = useState(false);
   const logout = useLogout({
     onSettled: () => {
       window.location.replace("/login");
@@ -103,6 +106,7 @@ export function OperationalShell({
               >
                 <link.icon className="size-4" />
                 {link.label}
+                {link.href.endsWith("/delivery") ? <NewDeliveryBadge /> : null}
               </Link>
             );
           })}
@@ -167,7 +171,12 @@ export function OperationalShell({
                 <DropdownMenuItem
                   variant="destructive"
                   disabled={logout.isPending}
-                  onClick={() => logout.mutate()}
+                  onClick={() => {
+                    // A cashier must not leave an open till behind, so the
+                    // handover is checked before the session ends.
+                    if (mode === "cashier") setLogoutPrompt(true);
+                    else logout.mutate();
+                  }}
                 >
                   {logout.isPending ? <Loader2 className="animate-spin" /> : <LogOut />}
                   {logout.isPending ? "Çıkış yapılıyor" : "Kullanıcı değiştir"}
@@ -178,6 +187,14 @@ export function OperationalShell({
         </div>
       </header>
 
+      {mode === "cashier" ? (
+        <ShiftLogoutGuard
+          open={logoutPrompt}
+          onOpenChange={setLogoutPrompt}
+          onLogoutAnyway={() => logout.mutate()}
+        />
+      ) : null}
+
       <main
         className={cn(
           "pb-20 lg:pb-0",
@@ -187,7 +204,12 @@ export function OperationalShell({
         {children}
       </main>
 
-      <nav className="fixed inset-x-0 bottom-0 z-40 grid grid-cols-3 border-t bg-background/96 px-2 pb-[max(0.4rem,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur-xl lg:hidden">
+      <nav
+        // Column count follows the link list: hard-coding three silently
+        // squashed the bar the moment a fourth destination was added.
+        style={{ gridTemplateColumns: `repeat(${links.length}, minmax(0, 1fr))` }}
+        className="fixed inset-x-0 bottom-0 z-40 grid border-t bg-background/96 px-2 pb-[max(0.4rem,env(safe-area-inset-bottom))] pt-1.5 backdrop-blur-xl lg:hidden"
+      >
         {links.map((link) => {
           const active = pathname === link.href || pathname.startsWith(`${link.href}/`);
           return (
@@ -199,7 +221,14 @@ export function OperationalShell({
                 active && "bg-brand-soft text-brand",
               )}
             >
-              <link.icon className="size-[1.15rem]" />
+              <span className="relative">
+                <link.icon className="size-[1.15rem]" />
+                {link.href.endsWith("/delivery") ? (
+                  <span className="absolute -right-2.5 -top-1.5">
+                    <NewDeliveryBadge />
+                  </span>
+                ) : null}
+              </span>
               {link.label}
             </Link>
           );

@@ -80,6 +80,13 @@ class Settings(BaseSettings):
     smtp_use_ssl: bool = False
     smtp_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
     resend_api_key: SecretStr | None = None
+
+    # Payment provider. Sandbox by default so a misconfigured deployment
+    # cannot accidentally charge a real card.
+    payment_provider: Literal["none", "iyzico"] = "none"
+    iyzico_api_key: SecretStr | None = None
+    iyzico_secret_key: SecretStr | None = None
+    iyzico_base_url: str = "sandbox-api.iyzipay.com"
     email_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
     cors_origins: list[str] = ["http://localhost:3000"]
     print_bridge_key: SecretStr = Field(default=SecretStr("development-print-bridge"))

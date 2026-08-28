@@ -1,6 +1,7 @@
 import { api } from "@/lib/api"
 
 import type {
+  CampaignApplyResult,
   LoyaltyAdminReward,
   LoyaltyCustomer,
   LoyaltyOrderContext,
@@ -71,6 +72,15 @@ export const loyaltyApi = {
     api.post<{ order_id: string; membership_code: string; program_name: string }>(
       `loyalty/orders/${segment(orderId)}/membership`,
       { membership_code: membershipCode },
+    ),
+  /** One cashier action: attach the member and apply every earned campaign. */
+  applyMemberCode: (
+    orderId: string,
+    input: { member_code: string; idempotency_key: string },
+  ) =>
+    api.post<CampaignApplyResult>(
+      `loyalty/orders/${segment(orderId)}/apply-code`,
+      input,
     ),
   redeemReward: (
     redemptionCode: string,

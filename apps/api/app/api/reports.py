@@ -8,6 +8,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, select
+from sqlalchemy.orm import aliased
 
 from app.dependencies import (
     DbSession,
@@ -17,9 +18,28 @@ from app.dependencies import (
     require_tenant,
 )
 from app.errors import DomainError
-from app.models import Category, KitchenTicket, Order, OrderItem, Payment, Product
-from app.models.enums import OrderItemStatus, OrderSource, OrderStatus, PaymentStatus
+from app.models import (
+    Category,
+    DeliveryOrder,
+    DiningTable,
+    KitchenTicket,
+    LoyaltyMembership,
+    Order,
+    OrderItem,
+    Payment,
+    Product,
+    TableSession,
+    User,
+)
+from app.models.enums import (
+    DeliveryChannel,
+    OrderItemStatus,
+    OrderSource,
+    OrderStatus,
+    PaymentStatus,
+)
 from app.schemas import (
+    OrderActivityOut,
     SalesAnalyticsCategoryBreakdownOut,
     SalesAnalyticsOrderSourceBreakdownOut,
     SalesAnalyticsOut,
@@ -28,6 +48,14 @@ from app.schemas import (
     SalesSummaryOut,
 )
 from app.security import as_utc
+
+def _naive(value: datetime) -> datetime:
+    """Order timestamps are stored naive-UTC, so incoming bounds must match.
+
+    Comparing an aware bound against a naive column silently returned nothing.
+    """
+    return value.astimezone(UTC).replace(tzinfo=None) if value.tzinfo else value
+
 
 router = APIRouter(prefix="/reports", tags=["reports"])
 ReportReader = Annotated[Identity, Depends(require_permissions("reports.read"))]
@@ -385,3 +413,82 @@ async def sales_analytics(
         by_category=by_category,
         by_order_source=by_order_source,
     )
+
+
+@router.get("/order-activity", response_model=list[OrderActivityOut])
+async def order_activity(
+    identity: ReportReader,
+    db: DbSession,
+    branch_id: UUID | None = Query(default=None),
+    date_from: datetime | None = Query(default=None),
+    date_to: datetime | None = Query(default=None),
+    limit: int = Query(default=100, ge=1, le=500),
+) -> list[OrderActivityOut]:
+    """Who put what through the till, most recent first.
+
+    One row per order with the attribution a manager actually asks about: which
+    channel it came from, which member of staff, which table, whether a loyalty
+    code was used, and — for package orders — the delivery channel.
+    """
+    tenant_id = require_tenant(identity)
+    if branch_id is not None:
+        # Validates membership; a browser-supplied branch is never trusted.
+        scope = {require_branch(identity, branch_id)}
+    else:
+        scope = set(identity.accessible_branch_ids)
+    if not scope:
+        return []
+
+    staff = aliased(User)
+    query = (
+        select(
+            Order.id,
+            Order.created_at,
+            Order.status,
+            Order.source,
+            Order.total,
+            Order.branch_id,
+            DiningTable.name.label("table_name"),
+            staff.display_name.label("staff_name"),
+            LoyaltyMembership.lookup_code.label("member_code"),
+            DeliveryOrder.channel.label("delivery_channel"),
+            DeliveryOrder.customer_name.label("delivery_customer"),
+        )
+        .select_from(Order)
+        # An order reaches its table through the session, not directly.
+        .outerjoin(TableSession, TableSession.id == Order.table_session_id)
+        .outerjoin(DiningTable, DiningTable.id == TableSession.table_id)
+        .outerjoin(staff, staff.id == Order.created_by_user_id)
+        .outerjoin(
+            LoyaltyMembership, LoyaltyMembership.id == Order.loyalty_membership_id
+        )
+        .outerjoin(DeliveryOrder, DeliveryOrder.order_id == Order.id)
+        .where(Order.tenant_id == tenant_id, Order.branch_id.in_(sorted(scope)))
+    )
+    if date_from is not None:
+        query = query.where(Order.created_at >= _naive(date_from))
+    if date_to is not None:
+        query = query.where(Order.created_at <= _naive(date_to))
+    query = query.order_by(Order.created_at.desc()).limit(limit)
+    rows = (await db.execute(query)).all()
+    return [
+        OrderActivityOut(
+            order_id=row.id,
+            created_at=row.created_at,
+            branch_id=row.branch_id,
+            status=OrderStatus(row.status).value,
+            source=OrderSource(row.source).value,
+            table_name=row.table_name,
+            # QR orders have no operator, which is itself the useful fact.
+            staff_name=row.staff_name,
+            member_code=row.member_code,
+            delivery_channel=(
+                DeliveryChannel(row.delivery_channel).value
+                if row.delivery_channel
+                else None
+            ),
+            customer_name=row.delivery_customer,
+            total=row.total,
+        )
+        for row in rows
+    ]

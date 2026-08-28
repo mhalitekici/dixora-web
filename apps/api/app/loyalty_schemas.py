@@ -211,6 +211,35 @@ class LoyaltyOrderContextOut(BaseModel):
     available_rewards: list[LoyaltyOrderRewardOut]
 
 
+class CampaignApplyIn(BaseModel):
+    """One member code typed at the payment screen."""
+
+    member_code: str = Field(min_length=4, max_length=32)
+    idempotency_key: str = Field(min_length=8, max_length=160)
+
+
+class AppliedCampaignOut(BaseModel):
+    redemption_code: str
+    order_item_id: UUID
+    product_name: str
+    amount: Decimal
+
+
+class CampaignApplyOut(BaseModel):
+    order_id: UUID
+    membership_code: str
+    program_name: str
+    applied: list[AppliedCampaignOut]
+    # Owner-defined campaigns unlocked by the same code, reported separately
+    # from stamp-card rewards so the till can tell them apart.
+    campaigns: list[AppliedCampaignOut] = []
+    total_discount: Decimal
+    order_total: Decimal
+    # Present when the code was valid but nothing could be granted, so the
+    # cashier can explain why instead of seeing a silent no-op.
+    unapplied_reason: str | None
+
+
 class LoyaltyRedemptionCreate(BaseModel):
     order_id: UUID
     order_item_id: UUID

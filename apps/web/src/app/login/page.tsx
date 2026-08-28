@@ -21,7 +21,10 @@ export default async function LoginPage({
   }>;
 }) {
   const { returnTo, business, email, mode } = await searchParams;
-  const initialMode: LoginMode = mode === "waiter" || mode === "pin" ? "pin" : "password";
+  // "waiter" is kept so older bookmarks and printed QR cards still work; the
+  // entry is for every employee now, not just waiters.
+  const initialMode: LoginMode =
+    mode === "staff" || mode === "waiter" || mode === "pin" ? "pin" : "password";
 
   return (
     <LoginPanel

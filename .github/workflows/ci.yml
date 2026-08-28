@@ -1,0 +1,105 @@
+# The suite existed long before anything ran it automatically, so a change could
+# break the till and nobody would know until a cashier did.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  # A newer push makes an in-flight run irrelevant.
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  api:
+    name: API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements*.txt
+
+      - name: Install dependencies
+        working-directory: apps/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Tests
+        working-directory: apps/api
+        # Tests run against in-memory SQLite and pin the mail provider off, so
+        # no services and no live credentials are needed.
+        run: python -m pytest -q
+
+  web:
+    name: Web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Lint
+        run: npm run lint --workspace web
+
+      - name: Types
+        run: npm exec --workspace web -- tsc --noEmit
+
+      - name: Tests
+        run: npm run test --workspace web
+
+      - name: Build
+        run: npm run build --workspace web
+
+  migrations:
+    name: Migrations apply to an empty database
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: dixora
+          POSTGRES_PASSWORD: dixora
+          POSTGRES_DB: dixora_ci
+        options: >-
+          --health-cmd "pg_isready -U dixora"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: apps/api/requirements*.txt
+
+      - name: Install dependencies
+        working-directory: apps/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Upgrade to head
+        working-directory: apps/api
+        # A fresh install broke once because a migration assumed columns an
+        # earlier revision had not created. Only an empty database catches that.
+        env:
+          DIXORA_DATABASE_URL: postgresql+asyncpg://dixora:dixora@localhost:5432/dixora_ci
+          DIXORA_JWT_SECRET: ci-secret-that-is-at-least-thirty-two-chars
+          DIXORA_PRINT_BRIDGE_KEY: ci-print-bridge-key-with-32-characters
+        run: alembic upgrade head

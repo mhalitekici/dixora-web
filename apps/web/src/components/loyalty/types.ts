@@ -140,3 +140,21 @@ export type LoyaltySetupOptions = {
   products: Array<{ id: string; name: string }>
   categories: Array<{ id: string; name: string }>
 }
+
+export type AppliedCampaign = {
+  redemption_code: string
+  order_item_id: string
+  product_name: string
+  amount: string
+}
+
+export type CampaignApplyResult = {
+  order_id: string
+  membership_code: string
+  program_name: string
+  applied: AppliedCampaign[]
+  total_discount: string
+  order_total: string
+  /** Set when the code was valid but nothing could be granted. */
+  unapplied_reason: string | null
+}

@@ -36,6 +36,7 @@ import {
   type ProductImageEditorSource,
 } from "@/components/catalog/product-image-editor";
 import { EmptyState } from "@/components/shared/empty-state";
+import { ProductTransfer } from "@/components/catalog/product-transfer";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -556,6 +557,7 @@ export function ProductManagement() {
       icon={PackageOpen}
       actions={
         <>
+          <ProductTransfer />
           <Button
             className="h-10 rounded-xl"
             disabled={

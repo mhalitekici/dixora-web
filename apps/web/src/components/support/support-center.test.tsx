@@ -26,7 +26,7 @@ describe("SupportCenter", () => {
       /Yazıcı çalışmıyor/i,
       /Sipariş görünmüyor/i,
       /Çalışan nasıl eklerim/i,
-      /Sadakat programı/i,
+      /Sadakat ve kampanya/i,
       /Şube nasıl değiştiririm/i,
       /Teknik destek/i,
     ]) {

@@ -8,7 +8,8 @@ import zipfile
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from decimal import Decimal, InvalidOperation
-from typing import Any
+from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 from openpyxl import Workbook, load_workbook  # type: ignore[import-untyped]
 from openpyxl.formatting.rule import FormulaRule  # type: ignore[import-untyped]
@@ -20,6 +21,11 @@ from openpyxl.styles import (  # type: ignore[import-untyped]
     Side,
 )
 from openpyxl.utils import get_column_letter  # type: ignore[import-untyped]
+from sqlalchemy import select
+from sqlalchemy.orm import aliased
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
 from openpyxl.worksheet.datavalidation import DataValidation  # type: ignore[import-untyped]
 from openpyxl.worksheet.table import Table, TableStyleInfo  # type: ignore[import-untyped]
 
@@ -888,3 +894,72 @@ def _display_name(field_name: str) -> str:
 
 def _error(row_number: int, field_name: str | None, message: str) -> ProductCsvImportError:
     return ProductCsvImportError(row_number=row_number, field=field_name, message=message)
+
+
+async def build_product_export(db: "AsyncSession", *, tenant_id: UUID) -> bytes:
+    """The current catalogue as a workbook the importer will accept back.
+
+    Deliberately written with the same headers as the blank template: a file
+    downloaded from one business must upload into another unchanged, which is
+    the entire point of exporting it.
+    """
+
+    from app.models import Category, PreparationStation, Product
+
+    station = aliased(PreparationStation)
+    rows = (
+        await db.execute(
+            select(Product, Category.name, station.name)
+            .join(Category, Category.id == Product.category_id)
+            .outerjoin(station, station.id == Product.preparation_station_id)
+            .where(Product.tenant_id == tenant_id)
+            .order_by(Category.name, Product.name)
+        )
+    ).all()
+
+    workbook = Workbook()
+    sheet = workbook.active
+    sheet.title = "Ürünler"
+    sheet.sheet_view.showGridLines = False
+    sheet.freeze_panes = "A2"
+    sheet.append(XLSX_TEMPLATE_HEADERS)
+
+    def flag(value: bool) -> str:
+        return "evet" if value else "hayır"
+
+    for product, category_name, station_name in rows:
+        sheet.append(
+            (
+                category_name,
+                product.name,
+                float(product.selling_price),
+                product.internal_name or "",
+                product.description or "",
+                product.sku or "",
+                float(product.cost_price),
+                float(product.tax_rate),
+                product.preparation_minutes or "",
+                station_name or "",
+                flag(product.is_active),
+                flag(product.is_available),
+                flag(product.qr_visible),
+                flag(product.waiter_visible),
+                flag(product.track_inventory),
+            )
+        )
+
+    header_fill = PatternFill("solid", fgColor="172033")
+    required_fill = PatternFill("solid", fgColor="E45124")
+    header_font = Font(color="FFFFFF", bold=True)
+    for column_index, cell in enumerate(sheet[1], start=1):
+        cell.fill = required_fill if column_index <= 3 else header_fill
+        cell.font = header_font
+        cell.alignment = Alignment(vertical="center")
+
+    widths = (22, 30, 13, 18, 40, 14, 14, 11, 16, 16, 8, 12, 16, 22, 12)
+    for index, width in enumerate(widths, start=1):
+        sheet.column_dimensions[get_column_letter(index)].width = width
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()

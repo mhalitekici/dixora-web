@@ -16,3 +16,7 @@ SQLAlchemy>=2.0.36,<3
 structlog>=24.4,<26
 uvicorn[standard]>=0.34,<1
 sentry-sdk[fastapi]>=2.20,<3
+
+# Payment provider SDK. The stored-card + charge flow was verified against
+# their sandbox before this was added.
+iyzipay==1.0.46

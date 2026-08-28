@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import logging
+
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -55,9 +57,18 @@ def error_payload(request: Request, code: str, message: str, details: Any = None
     }
 
 
+logger = logging.getLogger(__name__)
+
+
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(DomainError)
     async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
+        if exc.status_code == 401:
+            # Authentication rejections are worth a trace: without the specific
+            # code, every one of them looks alike from the outside.
+            logger.warning(
+                "auth.rejected code=%s path=%s", exc.code, request.url.path
+            )
         return JSONResponse(
             status_code=exc.status_code,
             content=error_payload(request, exc.code, exc.message, exc.details),

@@ -3,6 +3,7 @@ from __future__ import annotations
 import hmac
 import logging
 from datetime import timedelta
+from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
@@ -21,6 +22,9 @@ from app.dependencies import (
 )
 from app.errors import DomainError
 from app.loyalty_schemas import (
+    AppliedCampaignOut,
+    CampaignApplyIn,
+    CampaignApplyOut,
     LoyaltyAdminRewardOut,
     LoyaltyCustomerOut,
     LoyaltyEnroll,
@@ -65,9 +69,11 @@ from app.models.base import utcnow
 from app.models.enums import LoyaltyRewardStatus, TenantState
 from app.security import as_utc
 from app.services.audit import add_audit_log
+from app.services.campaigns import apply_campaigns_to_order
 from app.services.loyalty import (
     CONSENT_VERSION,
     active_program_for_branch,
+    apply_campaigns_by_member_code,
     attach_membership_to_order,
     enroll_membership,
     ensure_membership,
@@ -1015,6 +1021,93 @@ async def attach_membership(
         order_id=order.id,
         membership_code=membership.lookup_code,
         program_name=program.name,
+    )
+
+
+@router.post(
+    "/orders/{order_id}/apply-code",
+    response_model=CampaignApplyOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def apply_member_code(
+    order_id: UUID,
+    payload: CampaignApplyIn,
+    identity: LoyaltyRedeemer,
+    db: DbSession,
+) -> CampaignApplyOut:
+    """Apply every campaign a member has earned, in one cashier action.
+
+    The code comes from the customer at the payment screen; which lines it
+    touches is decided here, never by the browser.
+    """
+    tenant_id = require_tenant(identity)
+    order = await load_order(db, tenant_id, order_id, lock=True)
+    _ensure_order_branch(identity, order.branch_id)
+    result = await apply_campaigns_by_member_code(
+        db,
+        tenant_id=tenant_id,
+        order=order,
+        member_code=payload.member_code,
+        idempotency_key=payload.idempotency_key,
+        identity=identity,
+    )
+    # Campaigns are members-only, so the code that identifies the member is
+    # also what unlocks them. Evaluated here rather than inside the loyalty
+    # service so the two domains stay independent — a campaign knows nothing
+    # about stamp cards, and loyalty progress still accrues on payment as usual.
+    campaign_outcome = await apply_campaigns_to_order(
+        db,
+        tenant_id=tenant_id,
+        order=order,
+        identity=identity,
+        has_membership=True,
+    )
+    add_audit_log(
+        db,
+        identity=identity,
+        action="loyalty.campaign_applied",
+        resource_type="order",
+        resource_id=order.id,
+        branch_id=order.branch_id,
+        new_value={
+            "membership_code": result.membership.lookup_code,
+            "applied": [entry.redemption_code for entry in result.applied],
+        },
+    )
+    await db.commit()
+    await db.refresh(order)
+    return CampaignApplyOut(
+        order_id=order.id,
+        membership_code=result.membership.lookup_code,
+        program_name=result.program_name,
+        applied=[
+            AppliedCampaignOut(
+                redemption_code=entry.redemption_code,
+                order_item_id=entry.order_item_id,
+                product_name=entry.product_name,
+                amount=entry.amount,
+            )
+            for entry in result.applied
+        ],
+        campaigns=[
+            AppliedCampaignOut(
+                redemption_code=grant.campaign_name,
+                order_item_id=grant.order_item_id,
+                product_name=grant.product_name,
+                amount=grant.amount,
+            )
+            for grant in campaign_outcome.granted
+        ],
+        total_discount=(
+            sum((entry.amount for entry in result.applied), Decimal("0"))
+            + campaign_outcome.total_discount
+        ),
+        order_total=order.total,
+        unapplied_reason=(
+            None
+            if campaign_outcome.granted
+            else result.unapplied_reason
+        ),
     )
 
 

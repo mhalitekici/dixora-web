@@ -16,6 +16,7 @@ from app.errors import register_error_handlers
 from app.logging import bind_request_context, configure_logging, logger
 from app.observability import configure_sentry
 from app.realtime import RealtimeBroadcaster, RealtimeHub, RedisRealtimeHub
+from app.services.rate_limit import close_rate_limiter
 from app.services.media_storage import MediaStorage, create_media_storage
 
 
@@ -56,6 +57,7 @@ def create_app(
         yield
         if isinstance(realtime, RedisRealtimeHub):
             await realtime.stop()
+        await close_rate_limiter()
         await app_database.dispose()
         logger.info("application.stopped")
 
