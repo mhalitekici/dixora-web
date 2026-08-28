@@ -16,6 +16,7 @@ from app.dependencies import (
     get_app_settings,
     require_branch,
     require_permissions,
+    require_record_branch,
     require_tenant,
 )
 from app.errors import DomainError
@@ -160,6 +161,7 @@ async def update_printer_device(
     ).scalar_one_or_none()
     if device is None:
         raise DomainError("printer_not_found", "Printer not found", status_code=404)
+    require_record_branch(identity, device.branch_id)
     data = payload.model_dump(exclude_unset=True)
     if "preparation_station_id" in data:
         await _scoped_station(
@@ -213,6 +215,7 @@ async def create_test_print_job(
     ).scalar_one_or_none()
     if device is None:
         raise DomainError("printer_not_found", "Printer not found", status_code=404)
+    require_record_branch(identity, device.branch_id)
     if not device.is_active:
         raise DomainError(
             "printer_inactive",

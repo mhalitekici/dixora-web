@@ -6,15 +6,17 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
-from app.dependencies import Identity
+from app.dependencies import Identity, require_record_branch
 from app.errors import DomainError
 from app.models import (
     ApprovalRequest,
     Cancellation,
+    Category,
     DiningTable,
     Discount,
     InventoryLocation,
@@ -26,6 +28,7 @@ from app.models import (
     OrderItemModifier,
     OrderOperation,
     Payment,
+    PreparationStation,
     PrinterDevice,
     PrintJob,
     Product,
@@ -84,6 +87,90 @@ async def _station_printer_id(
             .limit(1)
         )
     ).scalar_one_or_none()
+
+
+def _sellable_here(tenant_id: UUID, branch_id: UUID) -> ColumnElement[bool]:
+    """Products a given branch is allowed to sell.
+
+    Most categories belong to the whole business. One pinned to a branch is that
+    branch's own section of the menu, and the QR menu has always honoured that.
+    The till did not, so a product could be hidden from a branch's customers and
+    still be rung up on its own register.
+    """
+    return Product.category_id.in_(
+        select(Category.id).where(
+            Category.tenant_id == tenant_id,
+            or_(Category.branch_id == branch_id, Category.branch_id.is_(None)),
+        )
+    )
+
+
+async def branch_station_map(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    branch_id: UUID,
+    station_ids: set[UUID],
+) -> dict[UUID | None, UUID | None]:
+    """Translate the catalogue's stations into this branch's own.
+
+    A product belongs to the whole business but a preparation station belongs to
+    one branch, so `Product.preparation_station_id` can only ever name one
+    branch's grill. Left as-is, an order taken in Beşiktaş would carry Kadıköy's
+    station id: its ticket would still surface on the right board (tickets are
+    filtered by branch) but the station filter would never match it, and the
+    printer lookup — which asks for a device in *this* branch routed to *that*
+    station — would come back empty and the ticket would never print.
+
+    The catalogue entry is therefore read as a template and matched to the local
+    station by code, so "GRILL" means the grill of whichever branch is cooking.
+    Falling back to the name covers stations created before codes were used.
+    A station with no counterpart here resolves to None, exactly as an unset one
+    does, which leaves the line off the kitchen board rather than on a stranger's.
+    """
+    # A product with no station of its own keeps having none here.
+    resolved: dict[UUID | None, UUID | None] = {None: None}
+    if not station_ids:
+        return resolved
+    sources = (
+        (
+            await db.execute(
+                select(PreparationStation).where(
+                    PreparationStation.tenant_id == tenant_id,
+                    PreparationStation.id.in_(station_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    foreign = [station for station in sources if station.branch_id != branch_id]
+    resolved.update(
+        {station.id: station.id for station in sources if station.branch_id == branch_id}
+    )
+    if not foreign:
+        return resolved
+
+    local = (
+        (
+            await db.execute(
+                select(PreparationStation).where(
+                    PreparationStation.tenant_id == tenant_id,
+                    PreparationStation.branch_id == branch_id,
+                    PreparationStation.is_active.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_code = {station.code.casefold(): station.id for station in local}
+    by_name = {station.name.casefold(): station.id for station in local}
+    for station in foreign:
+        resolved[station.id] = by_code.get(station.code.casefold()) or by_name.get(
+            station.name.casefold()
+        )
+    return resolved
 
 
 async def load_order(
@@ -228,6 +315,7 @@ async def create_order(
                     Product.id.in_(product_ids),
                     Product.is_active.is_(True),
                     Product.is_available.is_(True),
+                    _sellable_here(tenant_id, branch_id),
                 )
             )
         )
@@ -305,6 +393,17 @@ async def create_order(
     db.add(order)
     await db.flush()
 
+    station_map = await branch_station_map(
+        db,
+        tenant_id=tenant_id,
+        branch_id=branch_id,
+        station_ids={
+            product.preparation_station_id
+            for product in product_map.values()
+            if product.preparation_station_id is not None
+        },
+    )
+
     subtotal = Decimal("0.00")
     for input_item in payload.items:
         product = product_map[input_item.product_id]
@@ -322,7 +421,7 @@ async def create_order(
             branch_id=branch_id,
             order_id=order.id,
             product_id=product.id,
-            preparation_station_id=product.preparation_station_id,
+            preparation_station_id=station_map.get(product.preparation_station_id),
             product_name_snapshot=product.name,
             unit_price=unit_price,
             quantity=input_item.quantity,
@@ -423,6 +522,7 @@ async def append_order_items(
                     Product.id.in_(product_ids),
                     Product.is_active.is_(True),
                     Product.is_available.is_(True),
+                    _sellable_here(tenant_id, order.branch_id),
                 )
             )
         )
@@ -482,6 +582,17 @@ async def append_order_items(
                         status_code=409,
                     )
 
+    station_map = await branch_station_map(
+        db,
+        tenant_id=tenant_id,
+        branch_id=order.branch_id,
+        station_ids={
+            product.preparation_station_id
+            for product in product_map.values()
+            if product.preparation_station_id is not None
+        },
+    )
+
     new_items: list[OrderItem] = []
     subtotal_delta = Decimal("0.00")
     now = datetime.now(UTC)
@@ -501,7 +612,7 @@ async def append_order_items(
             branch_id=order.branch_id,
             order=order,
             product_id=product.id,
-            preparation_station_id=product.preparation_station_id,
+            preparation_station_id=station_map.get(product.preparation_station_id),
             product_name_snapshot=product.name,
             unit_price=unit_price,
             quantity=input_item.quantity,
@@ -1054,6 +1165,7 @@ async def approve_discount(
     ).scalar_one_or_none()
     if approval is None:
         raise DomainError("approval_not_found", "Approval request not found", status_code=404)
+    require_record_branch(identity, approval.branch_id)
     if approval.status != ApprovalStatus.PENDING:
         return approval
     if approval.order_id is None:
@@ -1125,6 +1237,7 @@ async def reject_cancellation(
     ).scalar_one_or_none()
     if approval is None:
         raise DomainError("approval_not_found", "Approval request not found", status_code=404)
+    require_record_branch(identity, approval.branch_id)
     if approval.status != ApprovalStatus.PENDING:
         return approval
     approval.status = ApprovalStatus.REJECTED
@@ -1160,6 +1273,7 @@ async def reject_discount(
     ).scalar_one_or_none()
     if approval is None:
         raise DomainError("approval_not_found", "Approval request not found", status_code=404)
+    require_record_branch(identity, approval.branch_id)
     if approval.status != ApprovalStatus.PENDING:
         return approval
     approval.status = ApprovalStatus.REJECTED
@@ -1660,6 +1774,7 @@ async def approve_cancellation(
     ).scalar_one_or_none()
     if approval is None:
         raise DomainError("approval_not_found", "Approval request not found", status_code=404)
+    require_record_branch(identity, approval.branch_id)
     if approval.status != ApprovalStatus.PENDING:
         return approval
     assert approval.order_id is not None

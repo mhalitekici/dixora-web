@@ -89,6 +89,7 @@ Make is not included with PowerShell by default.
    ```bash
    docker compose run --rm api alembic upgrade head
    docker compose run --rm api dixora-seed
+docker compose run --rm api python -m app.demo --reset
    ```
 
 5. Open:
@@ -134,6 +135,69 @@ Yeni bir tarayıcı, gizli pencere veya süresi dolmuş/iptal edilmiş cihaz kay
 ilk parola yetkilendirmesi tekrar gerekir. Ham cihaz anahtarı yalnız HttpOnly
 cookie'de tutulur; API veritabanına SHA-256 özeti yazılır.
 
+## Demo işletme: Meydan Restaurant
+
+`dixora-seed` bir sistemin ayakta olduğunu göstermeye yeter; ürün tanıtımı ve
+uçtan uca test için dolu bir işletme gerekir. `app.demo` üç şubeli, 90 günlük
+satış geçmişi olan kurgusal bir restoran kurar.
+
+```bash
+docker compose exec -T api python -m app.demo --reset
+```
+
+`--reset` var olan demo işletmesini tüm verisiyle siler ve sıfırdan kurar; bayrak
+verilmezse ve işletme zaten varsa komut hiçbir şeye dokunmadan çıkar. Yalnızca
+`meydan-restaurant` kodlu işletme etkilenir, veritabanındaki diğer işletmeler
+hiç okunmaz. Kurulum yaklaşık 40 saniye sürer.
+
+| Bayrak            | Etkisi                                                          |
+| ----------------- | --------------------------------------------------------------- |
+| `--reset`         | Var olan demo işletmesini silip yeniden kurar                    |
+| `--days N`        | Üretilecek geçmiş gün sayısı (varsayılan 90)                     |
+| `--seed N`        | Rastgelelik tohumu; aynı tohum aynı veriyi üretir                |
+| `--force`         | Production ortam kontrolünü atlar                                |
+
+İşletme: `meydan-restaurant` · Şubeler: `kadikoy`, `besiktas`, `bagdat-caddesi`
+
+| Rol             | Login                                | Parola / PIN            |
+| --------------- | ------------------------------------ | ----------------------- |
+| İşletme Sahibi  | `kemal.meydan@meydanrestaurant.com`  | `Meydan!2026`           |
+| Yönetici        | `nurten.aksoy@meydanrestaurant.com`  | `Meydan!2026`           |
+| Muhasebe        | `serpil.yildiz@meydanrestaurant.com` | `Meydan!2026`           |
+| Şube Müdürü     | `emre.tanriverdi@meydanrestaurant.com` | `Meydan!2026` / PIN `4410` |
+| Kasiyer         | `selin.korkmaz@meydanrestaurant.com` | `Meydan!2026` / PIN `1204` |
+| Garson          | `deniz.arslan@meydanrestaurant.com`  | `Meydan!2026` / PIN `2301` |
+| Mutfak          | `hasan.kilic@meydanrestaurant.com`   | `Meydan!2026`           |
+
+Toplam 27 personel kurulur; şube başına müdür, kasiyer, garson ve istasyon
+bazlı mutfak kullanıcıları vardır. Tam liste `apps/api/app/demo/data.py`
+içindedir ve tüm hesaplar aynı parolayı kullanır.
+
+Kurulumdan çıkan tablo:
+
+- 12 kategori, 83 ürün (fiyat, açıklama, alerjen, kalori, hazırlık süresi),
+  7 seçenek grubu, pizza ve kebaplarda porsiyon varyantları
+- Şube başına Salon/Teras/Bahçe alanları ve toplam 64 masa
+- Şube başına Mutfak, Izgara, Bar, Tatlı istasyonları ve yazıcıları
+- 27 stok kalemi, reçeteler, hareket geçmişi ve bilerek eşiğin altında
+  bırakılmış birkaç kalem (düşük stok uyarısı boş kalmasın diye)
+- ~9.000 sipariş, ~57.000 sipariş satırı, ödemeler, mutfak fişleri, indirimler,
+  iptaller ve günlük kasa devirleri
+- 50 sadakat üyesi, biriken ziyaretler, kazanılmış ve kullanılmış ödüller
+- Getir / Yemeksepeti / Trendyol entegrasyonları ve paket servis kutusunda
+  hâlen hareket eden siparişler
+- O anki canlı durum: dolu masalar, mutfaktaki fişler, onay bekleyen QR
+  sepetleri ve açık kasa devirleri
+
+QR menü şu adreste açılır:
+`http://localhost:3000/m/meydan-restaurant/kadikoy`
+
+Print bridge token'ları: `pb_demo_meydan_kadikoy`, `pb_demo_meydan_besiktas`,
+`pb_demo_meydan_bagdat-caddesi`.
+
+Bu veri kurgusaldır ve yalnız geliştirme ortamında üretilir; komut production
+ortamında `--force` verilmedikçe çalışmayı reddeder.
+
 ## Commands
 
 ### Complete stack
@@ -176,6 +240,50 @@ docker compose run --rm api pytest
 If GNU Make is available, `make help` lists equivalent shortcuts. `make check`
 runs both JavaScript and API quality gates.
 
+## Çok şubeli işletmeler
+
+Bir işletmenin kataloğu (kategoriler, ürünler, seçenek grupları, kampanyalar,
+sadakat programı) işletme genelindedir; hazırlık istasyonları, yazıcılar,
+masalar, stok, reçeteler ve adisyonlar şubeye aittir. Bu iki kapsamın kesiştiği
+yerlerde geçerli kurallar:
+
+**Şube erişimi.** Şubesi olmayan kullanıcı (sahip, yönetici) tüm şubeleri
+kapsar. Bir şubeye bağlı kullanıcı yalnız o şubeyi ve kendisine ayrıca verilmiş
+şube üyeliklerini kapsar. Kimlikle gelen her kayıt — adisyon, masa, fiş, kasa
+devri, QR isteği, yazıcı, personel, şube — kaydın kendi şubesine erişim
+kontrolünden geçer; UUID bilmek erişim değildir. `require_record_branch`
+(`app/dependencies.py`) bu kontrolün tek yeridir ve
+`tests/test_cross_branch_sweep.py` her `{id}` alan ucu süpürerek yenisinin
+unutulmasını engeller.
+
+**Mutfak yönlendirmesi.** `Product.preparation_station_id` tek bir şubenin
+istasyonunu gösterebilir, bu yüzden katalog kaydı bir şablon olarak okunur:
+sipariş satırı, siparişi alan şubenin aynı koda sahip istasyonuna bağlanır
+(`branch_station_map`, `app/services/orders.py`). Aksi hâlde ikinci şubenin
+fişleri kendi istasyon filtresinde görünmez ve yazıcı araması boş dönerdi.
+
+**Yeni şube açmak.** `POST /branches` yeni şubeyi boş bırakmaz: hazırlık
+istasyonlarını, varsayılan depoyu, stok kalemi tanımlarını ve reçeteleri en eski
+aktif şubeden kopyalar (`app/services/branch_setup.py`). Stok miktarları sıfır
+başlar ve masa düzeni işletmeye bırakılır. Kopyalanmasaydı yeni şube sipariş
+alır ama mutfağa hiçbir fiş düşmez, stok takipli her ürün de `recipe_missing`
+ile reddedilirdi.
+
+**Şubeye özel menü.** Kategori `branch_id` alabilir. Böyle bir kategorideki
+ürünler yalnız o şubede satılabilir — QR menü bunu zaten uyguluyordu, artık
+kasa da uyguluyor. `GET /catalog/products?branch_id=…` aynı daraltmayı yapar;
+parametresiz çağrı tüm işletmeyi döndürür, katalog yönetim ekranı bunu kullanır.
+
+**Faturalama.** Plan bir şube içerir, fazlası aylık ek ücretlidir
+(`GET /branches/pricing`). Arşivlenen şube faturadan düşer, geçmiş kayıtları
+durur.
+
+Bilinen eksik: `product_branch_availability` tablosu şemada var ama hiçbir kod
+onu okumuyor veya yazmıyor. "Bu ürün bugün sadece şu şubede yok" hâlâ
+ifade edilemiyor; şubeye özel menü bugün yalnız kategori düzeyinde çalışıyor.
+Ayrıca raporlar tek şube kapsamındadır; şubeleri yan yana karşılaştıran
+birleşik bir görünüm yoktur.
+
 ## Environment configuration
 
 `.env.example` documents local configuration for:
@@ -205,6 +313,7 @@ Critical test categories are:
 
 - Authentication, refresh rotation, revocation, and permissions
 - Tenant and branch isolation for read/write/reference attempts
+- Multi-branch station routing, branch provisioning, and branch-scoped menus
 - Order state, item snapshots, idempotency, table transfer, and payments
 - QR session, duplicate submission, and staff approval
 - Decimal inventory deduction and reversal
@@ -214,6 +323,11 @@ Critical test categories are:
 Tenant isolation is a release blocker. A Tenant A user must be unable to list,
 read, update, delete, reference, subscribe to, export, or print Tenant B
 resources even when they know a valid UUID.
+
+Branch isolation is the same rule one level down and is swept the same way: a
+user scoped to Branch A must not reach Branch B's records inside the same
+business. `tests/test_cross_branch_sweep.py` walks every id-bearing route, so an
+endpoint added later that filters on `tenant_id` alone fails the suite.
 
 ## Documentation
 

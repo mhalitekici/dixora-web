@@ -13,6 +13,7 @@ from app.dependencies import (
     Identity,
     require_branch,
     require_permissions,
+    require_record_branch,
     require_tenant,
 )
 from app.errors import DomainError
@@ -89,6 +90,24 @@ async def _broadcast(request: Request, order: Order) -> None:
             "version": order.version,
         },
     )
+
+
+async def _scoped_order(
+    identity: Identity,
+    db: DbSession,
+    order_id: UUID,
+    *,
+    lock: bool = False,
+) -> Order:
+    """Load an order by id, refusing one that belongs to another branch.
+
+    `load_order` is scoped to the business, which is the right scope for the
+    services that call it with a branch already in hand. Coming in off a URL the
+    caller typed, the branch has to be checked too.
+    """
+    order = await load_order(db, require_tenant(identity), order_id, lock=lock)
+    require_record_branch(identity, order.branch_id)
+    return order
 
 
 @router.get("", response_model=Page[OrderOut])
@@ -357,7 +376,7 @@ async def get_order(
     identity: OrderReader,
     db: DbSession,
 ) -> OrderOut:
-    return OrderOut.model_validate(await load_order(db, require_tenant(identity), order_id))
+    return OrderOut.model_validate(await _scoped_order(identity, db, order_id))
 
 
 @router.post("/{order_id}/items", response_model=OrderOut)
@@ -368,6 +387,7 @@ async def append_items(
     identity: OrderCreator,
     db: DbSession,
 ) -> OrderOut:
+    await _scoped_order(identity, db, order_id)
     order, replayed = await append_order_items(
         db,
         tenant_id=require_tenant(identity),
@@ -401,7 +421,7 @@ async def accept_existing_order(
     identity: OrderManager,
     db: DbSession,
 ) -> OrderOut:
-    order = await load_order(db, require_tenant(identity), order_id, lock=True)
+    order = await _scoped_order(identity, db, order_id, lock=True)
     await accept_order(db, order, actor_user_id=identity.user_id)
     add_audit_log(
         db,
@@ -423,7 +443,7 @@ async def request_bill(
     identity: OrderCreator,
     db: DbSession,
 ) -> OrderOut:
-    order = await load_order(db, require_tenant(identity), order_id, lock=True)
+    order = await _scoped_order(identity, db, order_id, lock=True)
     if order.status not in {
         OrderStatus.ACCEPTED,
         OrderStatus.PREPARING,
@@ -464,7 +484,7 @@ async def record_payment(
     identity: PaymentManager,
     db: DbSession,
 ) -> PaymentOut:
-    order = await load_order(db, require_tenant(identity), order_id, lock=True)
+    order = await _scoped_order(identity, db, order_id, lock=True)
     payment = await add_payment(
         db,
         order=order,
@@ -496,7 +516,7 @@ async def transfer_table(
     identity: TableTransferer,
     db: DbSession,
 ) -> OrderOut:
-    order = await load_order(db, require_tenant(identity), order_id, lock=True)
+    order = await _scoped_order(identity, db, order_id, lock=True)
     await transfer_order_table(
         db,
         order=order,
@@ -518,7 +538,7 @@ async def merge_table(
     identity: TableTransferer,
     db: DbSession,
 ) -> OrderOut:
-    source_order = await load_order(db, require_tenant(identity), order_id, lock=True)
+    source_order = await _scoped_order(identity, db, order_id, lock=True)
     destination_order = await merge_table_order(
         db,
         source_order=source_order,
@@ -541,7 +561,7 @@ async def split_order_items(
     identity: PaymentManager,
     db: DbSession,
 ) -> OrderOut:
-    order = await load_order(db, require_tenant(identity), order_id, lock=True)
+    order = await _scoped_order(identity, db, order_id, lock=True)
     split_order = await split_check_by_items(
         db,
         order=order,
@@ -562,7 +582,7 @@ async def split_order_amount(
     identity: PaymentManager,
     db: DbSession,
 ) -> AmountCheckSplitOut:
-    order = await load_order(db, require_tenant(identity), order_id, lock=True)
+    order = await _scoped_order(identity, db, order_id, lock=True)
     parts = await plan_amount_split(
         db,
         order=order,
@@ -590,7 +610,7 @@ async def create_discount_request(
     identity: DiscountRequester,
     db: DbSession,
 ) -> ApprovalOut:
-    order = await load_order(db, require_tenant(identity), order_id)
+    order = await _scoped_order(identity, db, order_id)
     approval = await request_discount(db, order=order, payload=payload, identity=identity)
     await db.commit()
     await db.refresh(approval)
@@ -608,7 +628,7 @@ async def create_cancellation_request(
     identity: OrderCreator,
     db: DbSession,
 ) -> ApprovalOut:
-    order = await load_order(db, require_tenant(identity), order_id)
+    order = await _scoped_order(identity, db, order_id)
     approval = await request_cancellation(
         db,
         order=order,

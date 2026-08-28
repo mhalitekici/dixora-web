@@ -12,6 +12,7 @@ from app.dependencies import (
     Identity,
     require_branch,
     require_permissions,
+    require_record_branch,
     require_tenant,
 )
 from app.errors import DomainError
@@ -49,12 +50,14 @@ from app.schemas import (
     StationOut,
     TranslationFieldsOut,
 )
+from app.security import utcnow
 from app.services.audit import add_audit_log
 from app.services.product_csv import (
     MAX_PRODUCT_CSV_BYTES,
     MAX_PRODUCT_XLSX_BYTES,
     ParsedProductCsvRow,
     build_product_csv_template,
+    build_product_export,
     build_product_xlsx_template,
     normalize_lookup_name,
     parse_product_import,
@@ -155,6 +158,7 @@ async def create_category(
     branch_id = payload.branch_id
     if branch_id is not None:
         await _validate_branch(db, tenant_id, branch_id)
+        require_record_branch(identity, branch_id)
     if payload.parent_id is not None:
         parent = (
             await db.execute(
@@ -253,12 +257,31 @@ async def list_products(
     identity: CatalogReader,
     db: DbSession,
     category_id: UUID | None = None,
+    branch_id: UUID | None = None,
     search: str | None = None,
     include_inactive: bool = False,
     limit: int = Query(default=100, ge=1, le=250),
     offset: int = Query(default=0, ge=0),
 ) -> Page[ProductOut]:
-    predicates = [Product.tenant_id == require_tenant(identity)]
+    """List the catalogue, optionally narrowed to what one branch can sell.
+
+    Without `branch_id` this is the whole business, which is what the catalogue
+    screen manages. With it, products living in another branch's category drop
+    out — the same rule the QR menu and the order service apply, so a till never
+    offers a line the kitchen would refuse.
+    """
+    tenant_id = require_tenant(identity)
+    predicates = [Product.tenant_id == tenant_id]
+    if branch_id is not None:
+        scoped = require_branch(identity, branch_id)
+        predicates.append(
+            Product.category_id.in_(
+                select(Category.id).where(
+                    Category.tenant_id == tenant_id,
+                    or_(Category.branch_id == scoped, Category.branch_id.is_(None)),
+                )
+            )
+        )
     if category_id:
         predicates.append(Product.category_id == category_id)
     if search:
@@ -301,6 +324,30 @@ async def download_product_csv_template(identity: CatalogReader) -> Response:
     )
 
 
+@router.get("/products/export")
+async def export_products(identity: CatalogManager, db: DbSession) -> Response:
+    """The current catalogue as a workbook.
+
+    Written in the same layout as the blank template, so a file downloaded from
+    one business uploads into another through the existing importer without
+    being edited first.
+    """
+    tenant_id = require_tenant(identity)
+    content = await build_product_export(db, tenant_id=tenant_id)
+    stamp = utcnow().strftime("%Y%m%d")
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="dixora-urunler-{stamp}.xlsx"'
+            ),
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
 @router.get("/products/import-template")
 async def download_product_import_template(identity: CatalogReader) -> Response:
     require_tenant(identity)
@@ -321,6 +368,14 @@ async def import_products_csv(
     db: DbSession,
     file: Annotated[UploadFile, File(description="XLSX or UTF-8 CSV product file")],
     dry_run: bool = Query(default=True),
+    update_existing: bool = Query(
+        default=False,
+        description=(
+            "Update products whose stock code already exists instead of "
+            "rejecting the row. Off by default: importing must not rewrite a "
+            "live menu unless that is what was asked for."
+        ),
+    ),
 ) -> ProductCsvImportResult:
     tenant_id = require_tenant(identity)
     filename = (file.filename or "").lower()
@@ -387,6 +442,19 @@ async def import_products_csv(
             station_item
         )
 
+    all_products = (
+        (await db.execute(select(Product).where(Product.tenant_id == tenant_id)))
+        .scalars()
+        .all()
+    )
+    existing_by_sku = {
+        product.sku.casefold(): product for product in all_products if product.sku
+    }
+    # Most catalogues carry no stock codes at all, so a code-only match would
+    # quietly duplicate the whole menu on re-import. Name is the fallback key.
+    existing_by_name = {
+        product.name.strip().casefold(): product for product in all_products
+    }
     existing_skus = {
         sku.casefold()
         for sku in (
@@ -449,12 +517,15 @@ async def import_products_csv(
 
         if row.sku:
             normalized_sku = row.sku.casefold()
-            if normalized_sku in existing_skus:
+            if normalized_sku in existing_skus and not update_existing:
                 row_errors.append(
                     ProductCsvImportError(
                         row_number=row.row_number,
                         field="sku",
-                        message=f"'{row.sku}' SKU kodu bu işletmede zaten kullanılıyor.",
+                        message=(
+                            f"'{row.sku}' SKU kodu bu işletmede zaten kullanılıyor. "
+                            "Güncellemek için 'mevcutları güncelle' seçeneğini açın."
+                        ),
                     )
                 )
             elif normalized_sku in csv_skus:
@@ -484,6 +555,45 @@ async def import_products_csv(
     imported_rows = 0
     if not dry_run:
         for row, category, station in validated_rows:
+            target = None
+            if update_existing:
+                target = (
+                    existing_by_sku.get(row.sku.casefold())
+                    if row.sku
+                    else existing_by_name.get(row.name.strip().casefold())
+                )
+            if target is not None:
+                # Same product, new values. Anything the sheet does not carry
+                # — images, sort order, modifier links — is left alone.
+                target.category_id = category.id
+                target.preparation_station_id = station.id if station else None
+                target.name = row.name
+                target.internal_name = row.internal_name
+                target.description = row.description
+                target.selling_price = row.selling_price
+                target.cost_price = row.cost_price
+                target.tax_rate = row.tax_rate
+                target.is_active = row.is_active
+                target.is_available = row.is_available
+                target.qr_visible = row.qr_visible
+                target.waiter_visible = row.waiter_visible
+                target.preparation_minutes = row.preparation_minutes
+                target.track_inventory = row.track_inventory
+                await db.flush()
+                add_audit_log(
+                    db,
+                    identity=identity,
+                    action="catalog.product_import_updated",
+                    resource_type="product",
+                    resource_id=target.id,
+                    new_value={
+                        "name": target.name,
+                        "selling_price": str(target.selling_price),
+                    },
+                )
+                imported_rows += 1
+                continue
+
             product = Product(
                 tenant_id=tenant_id,
                 category_id=category.id,
@@ -1321,3 +1431,4 @@ async def delete_modifier(
         new_value={"is_active": modifier.is_active},
     )
     await db.commit()
+

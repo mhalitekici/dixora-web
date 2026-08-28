@@ -18,6 +18,7 @@ from app.dependencies import (
     get_app_settings,
     require_branch,
     require_permissions,
+    require_record_branch,
     require_tenant,
 )
 from app.errors import DomainError
@@ -875,6 +876,7 @@ async def approve_qr_request(
     ).scalar_one_or_none()
     if qr_request is None:
         raise DomainError("qr_request_not_found", "QR order request not found", status_code=404)
+    require_record_branch(identity, qr_request.branch_id)
     if qr_request.status == QrRequestStatus.APPROVED:
         return QrRequestOut.model_validate(qr_request)
     expires_at = qr_request.expires_at
@@ -953,6 +955,7 @@ async def reject_qr_request(
     ).scalar_one_or_none()
     if qr_request is None:
         raise DomainError("qr_request_not_found", "QR order request not found", status_code=404)
+    require_record_branch(identity, qr_request.branch_id)
     if qr_request.status == QrRequestStatus.PENDING:
         qr_request.status = QrRequestStatus.REJECTED
         qr_request.resolved_by_user_id = identity.user_id
@@ -984,6 +987,7 @@ async def regenerate_table_token(
     ).scalar_one_or_none()
     if table is None:
         raise DomainError("table_not_found", "Table not found", status_code=404)
+    require_record_branch(identity, table.branch_id)
     table.qr_token = uuid4().hex
     table.version += 1
     add_audit_log(

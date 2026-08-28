@@ -13,6 +13,7 @@ from app.dependencies import (
     Identity,
     require_branch,
     require_permissions,
+    require_record_branch,
     require_tenant,
 )
 from app.errors import DomainError
@@ -312,6 +313,7 @@ async def get_table(
     ).scalar_one_or_none()
     if table is None:
         raise DomainError("table_not_found", "Table not found", status_code=404)
+    require_record_branch(identity, table.branch_id)
     return TableOut.model_validate(table)
 
 
@@ -324,7 +326,7 @@ async def get_active_table_order(
     tenant_id = require_tenant(identity)
     table = (
         await db.execute(
-            select(DiningTable.id).where(
+            select(DiningTable).where(
                 DiningTable.id == table_id,
                 DiningTable.tenant_id == tenant_id,
             )
@@ -332,6 +334,7 @@ async def get_active_table_order(
     ).scalar_one_or_none()
     if table is None:
         raise DomainError("table_not_found", "Table not found", status_code=404)
+    require_record_branch(identity, table.branch_id)
     order = (
         await db.execute(
             select(Order)
@@ -631,6 +634,7 @@ async def update_table(
     ).scalar_one_or_none()
     if table is None:
         raise DomainError("table_not_found", "Table not found", status_code=404)
+    require_record_branch(identity, table.branch_id)
     data = payload.model_dump(exclude_unset=True)
     if "area_id" in data:
         area = (
@@ -684,6 +688,7 @@ async def delete_table(
     ).scalar_one_or_none()
     if table is None:
         raise DomainError("table_not_found", "Table not found", status_code=404)
+    require_record_branch(identity, table.branch_id)
     table.is_active = False
     table.state = TableState.DISABLED
     table.version += 1
@@ -719,10 +724,7 @@ async def set_table_guest_label(
     ).scalar_one_or_none()
     if table is None:
         raise DomainError("table_not_found", "Table not found", status_code=404)
-    if not identity.can_access_branch(table.branch_id):
-        raise DomainError(
-            "branch_forbidden", "You do not have access to this branch", status_code=403
-        )
+    require_record_branch(identity, table.branch_id)
 
     label = (payload.guest_label or "").strip()
     previous = table.guest_label

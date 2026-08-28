@@ -38,6 +38,7 @@ dev = [
 
 [project.scripts]
 dixora-seed = "app.seed:main"
+dixora-demo-seed = "app.demo.__main__:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
