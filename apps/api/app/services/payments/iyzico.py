@@ -14,7 +14,9 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from decimal import Decimal
+from typing import Any
 
 from app.config import Settings
 from app.services.payments.base import (
@@ -47,16 +49,25 @@ class IyzicoProvider:
             "base_url": settings.iyzico_base_url,
         }
 
-    def _client(self):
-        # Imported lazily so the rest of the app runs without the SDK present.
-        import iyzipay
+    def _client(self) -> Any:
+        """The iyzico SDK, imported lazily and left untyped.
+
+        `iyzipay` ships no stubs and no `py.typed`, so nothing about it can be
+        checked. `Any` says that honestly and keeps the boundary in one method
+        instead of scattering ignores across every call site. The import stays
+        lazy so the rest of the app runs without the SDK installed.
+        """
+        import iyzipay  # type: ignore[import-untyped]
 
         return iyzipay
 
-    async def _call(self, factory, request: dict) -> dict:
-        def run() -> dict:
+    async def _call(
+        self, factory: Callable[[], Any], request: dict[str, Any]
+    ) -> dict[str, Any]:
+        def run() -> dict[str, Any]:
             raw = factory().create(request, self._options).read().decode("utf-8")
-            return json.loads(raw)
+            parsed: dict[str, Any] = json.loads(raw)
+            return parsed
 
         try:
             return await asyncio.to_thread(run)

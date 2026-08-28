@@ -1,5 +1,10 @@
 from app.models.audit import AuditLog
 from app.models.base import Base
+from app.models.campaigns import (
+    Campaign,
+    CampaignApplication,
+    CampaignBranch,
+)
 from app.models.catalog import (
     Category,
     Modifier,
@@ -10,12 +15,6 @@ from app.models.catalog import (
     ProductModifierGroup,
     ProductVariant,
 )
-from app.models.campaigns import (
-    Campaign,
-    CampaignApplication,
-    CampaignBranch,
-)
-from app.models.payments import PaymentAttempt, SavedCard
 from app.models.delivery import (
     DeliveryOrder,
     MarketplaceIntegration,
@@ -74,6 +73,7 @@ from app.models.orders import (
     OrderOperation,
     Payment,
 )
+from app.models.payments import PaymentAttempt, SavedCard
 from app.models.printing import PrintBridgeClient, PrinterDevice, PrintJob
 from app.models.qr import QrMenuConfig, QrOrderRequest
 from app.models.shifts import CashierShift

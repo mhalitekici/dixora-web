@@ -200,7 +200,7 @@ async def mark_failed(db: AsyncSession, *, invoice: Invoice, reason: str) -> Inv
 async def outstanding_for_tenant(
     db: AsyncSession, *, tenant_id: UUID
 ) -> list[Invoice]:
-    return (
+    rows = (
         (
             await db.execute(
                 select(Invoice)
@@ -214,3 +214,5 @@ async def outstanding_for_tenant(
         .scalars()
         .all()
     )
+    # `.all()` hands back a Sequence; the caller's contract is a list.
+    return list(rows)

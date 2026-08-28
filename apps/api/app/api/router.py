@@ -3,11 +3,11 @@ from fastapi import APIRouter
 from app.api import (
     audit,
     auth,
+    billing,
     businesses,
+    campaigns,
     catalog,
     dashboard,
-    billing,
-    campaigns,
     delivery,
     hotel_rooms,
     inventory,

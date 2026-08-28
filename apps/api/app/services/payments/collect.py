@@ -18,7 +18,7 @@ from app.config import Settings
 from app.errors import DomainError
 from app.models import Invoice, PaymentAttempt, SavedCard, Tenant, User
 from app.security import utcnow
-from app.services.billing import ISSUED, PAID, FAILED, mark_failed, mark_paid
+from app.services.billing import FAILED, ISSUED, PAID, mark_failed, mark_paid
 from app.services.payments.base import (
     Buyer,
     ChargeResult,

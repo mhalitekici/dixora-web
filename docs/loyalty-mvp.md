@@ -48,6 +48,7 @@ Limit ortam değişkenleri:
 - `DIXORA_LOYALTY_VERIFICATION_RATE_LIMIT_WINDOW_MINUTES`
 - `DIXORA_LOYALTY_VERIFICATION_IP_RATE_LIMIT_ATTEMPTS`
 - `DIXORA_LOYALTY_VERIFICATION_TENANT_DAILY_LIMIT`
+
 6. Uygulamayı yeniden başlatıp Türkiye mobil numarasıyla gerçek teslimatı test edin.
 
 Adapter Netgsm'in `https://api.netgsm.com.tr/sms/rest/v2/otp` endpoint'ini Basic

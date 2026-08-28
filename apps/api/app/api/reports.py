@@ -49,6 +49,7 @@ from app.schemas import (
 )
 from app.security import as_utc
 
+
 def _naive(value: datetime) -> datetime:
     """Order timestamps are stored naive-UTC, so incoming bounds must match.
 

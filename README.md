@@ -89,7 +89,7 @@ Make is not included with PowerShell by default.
    ```bash
    docker compose run --rm api alembic upgrade head
    docker compose run --rm api dixora-seed
-docker compose run --rm api python -m app.demo --reset
+   docker compose run --rm api python -m app.demo --reset
    ```
 
 5. Open:
@@ -109,7 +109,7 @@ Uvicorn serves traffic.
 These credentials are only for the local development seed. They are intentionally
 public and must never be enabled or reused in staging or production.
 
-Business: `dixora-lab`  
+Business: `dixora-lab`
 Branch: `merkez`
 
 | Role               | Login                   | Development password / PIN    |
@@ -150,24 +150,24 @@ verilmezse ve işletme zaten varsa komut hiçbir şeye dokunmadan çıkar. Yaln�
 `meydan-restaurant` kodlu işletme etkilenir, veritabanındaki diğer işletmeler
 hiç okunmaz. Kurulum yaklaşık 40 saniye sürer.
 
-| Bayrak            | Etkisi                                                          |
-| ----------------- | --------------------------------------------------------------- |
-| `--reset`         | Var olan demo işletmesini silip yeniden kurar                    |
-| `--days N`        | Üretilecek geçmiş gün sayısı (varsayılan 90)                     |
-| `--seed N`        | Rastgelelik tohumu; aynı tohum aynı veriyi üretir                |
-| `--force`         | Production ortam kontrolünü atlar                                |
+| Bayrak     | Etkisi                                            |
+| ---------- | ------------------------------------------------- |
+| `--reset`  | Var olan demo işletmesini silip yeniden kurar     |
+| `--days N` | Üretilecek geçmiş gün sayısı (varsayılan 90)      |
+| `--seed N` | Rastgelelik tohumu; aynı tohum aynı veriyi üretir |
+| `--force`  | Production ortam kontrolünü atlar                 |
 
 İşletme: `meydan-restaurant` · Şubeler: `kadikoy`, `besiktas`, `bagdat-caddesi`
 
-| Rol             | Login                                | Parola / PIN            |
-| --------------- | ------------------------------------ | ----------------------- |
-| İşletme Sahibi  | `kemal.meydan@meydanrestaurant.com`  | `Meydan!2026`           |
-| Yönetici        | `nurten.aksoy@meydanrestaurant.com`  | `Meydan!2026`           |
-| Muhasebe        | `serpil.yildiz@meydanrestaurant.com` | `Meydan!2026`           |
-| Şube Müdürü     | `emre.tanriverdi@meydanrestaurant.com` | `Meydan!2026` / PIN `4410` |
-| Kasiyer         | `selin.korkmaz@meydanrestaurant.com` | `Meydan!2026` / PIN `1204` |
-| Garson          | `deniz.arslan@meydanrestaurant.com`  | `Meydan!2026` / PIN `2301` |
-| Mutfak          | `hasan.kilic@meydanrestaurant.com`   | `Meydan!2026`           |
+| Rol            | Login                                  | Parola / PIN               |
+| -------------- | -------------------------------------- | -------------------------- |
+| İşletme Sahibi | `kemal.meydan@meydanrestaurant.com`    | `Meydan!2026`              |
+| Yönetici       | `nurten.aksoy@meydanrestaurant.com`    | `Meydan!2026`              |
+| Muhasebe       | `serpil.yildiz@meydanrestaurant.com`   | `Meydan!2026`              |
+| Şube Müdürü    | `emre.tanriverdi@meydanrestaurant.com` | `Meydan!2026` / PIN `4410` |
+| Kasiyer        | `selin.korkmaz@meydanrestaurant.com`   | `Meydan!2026` / PIN `1204` |
+| Garson         | `deniz.arslan@meydanrestaurant.com`    | `Meydan!2026` / PIN `2301` |
+| Mutfak         | `hasan.kilic@meydanrestaurant.com`     | `Meydan!2026`              |
 
 Toplam 27 personel kurulur; şube başına müdür, kasiyer, garson ve istasyon
 bazlı mutfak kullanıcıları vardır. Tam liste `apps/api/app/demo/data.py`

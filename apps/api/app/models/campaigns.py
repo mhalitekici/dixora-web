@@ -24,7 +24,7 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import MONEY, Base, TimestampMixin, UUIDPrimaryKeyMixin, ZERO_MONEY
+from app.models.base import MONEY, ZERO_MONEY, Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.enums import CampaignAudience, CampaignRewardKind, enum_column
 
 

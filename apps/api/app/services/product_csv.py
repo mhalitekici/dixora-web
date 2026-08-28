@@ -896,7 +896,7 @@ def _error(row_number: int, field_name: str | None, message: str) -> ProductCsvI
     return ProductCsvImportError(row_number=row_number, field=field_name, message=message)
 
 
-async def build_product_export(db: "AsyncSession", *, tenant_id: UUID) -> bytes:
+async def build_product_export(db: AsyncSession, *, tenant_id: UUID) -> bytes:
     """The current catalogue as a workbook the importer will accept back.
 
     Deliberately written with the same headers as the blank template: a file

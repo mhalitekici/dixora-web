@@ -9,11 +9,7 @@ services:
     # PostgreSQL default of 100 is not enough once API_WORKERS > 2, and hitting
     # it surfaces as HTTP 500 "sorry, too many clients already".
     command:
-      [
-        "postgres",
-        "-c",
-        "max_connections=${POSTGRES_MAX_CONNECTIONS:-200}",
-      ]
+      ["postgres", "-c", "max_connections=${POSTGRES_MAX_CONNECTIONS:-200}"]
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-dixora}
       POSTGRES_USER: ${POSTGRES_USER:-dixora}

@@ -4,7 +4,6 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
-import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 

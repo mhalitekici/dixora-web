@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from datetime import date, datetime, timedelta
 from decimal import Decimal
-
-from pydantic import BaseModel
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 

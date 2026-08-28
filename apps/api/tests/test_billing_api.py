@@ -22,7 +22,7 @@ async def _headers(api: ApiContext) -> dict[str, str]:
     return auth_headers(await login(api))
 
 
-async def _other_tenant(api: ApiContext) -> "Tenant":
+async def _other_tenant(api: ApiContext) -> Tenant:
     """A real second business — a bare uuid would fail the foreign key."""
     async with api.database.session_factory() as db:
         tenant = Tenant(

@@ -6,7 +6,6 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from sqlalchemy import select
 
-from app.services.audit import add_audit_log
 from app.campaign_schemas import (
     CampaignApplyOut,
     CampaignGrantOut,
@@ -22,6 +21,7 @@ from app.dependencies import (
 from app.errors import DomainError
 from app.models import Branch, Campaign, CampaignBranch, Category, Product
 from app.models.enums import CampaignAudience, CampaignRewardKind
+from app.services.audit import add_audit_log
 from app.services.campaigns import apply_campaigns_to_order, validate_definition
 from app.services.orders import load_order
 
@@ -31,7 +31,13 @@ CampaignManager = Annotated[Identity, Depends(require_permissions("loyalty.manag
 CampaignApplier = Annotated[Identity, Depends(require_permissions("loyalty.redeem"))]
 
 
-async def _label(db: DbSession, *, tenant_id: UUID, product_id, category_id) -> str:
+async def _label(
+    db: DbSession,
+    *,
+    tenant_id: UUID,
+    product_id: UUID | None,
+    category_id: UUID | None,
+) -> str:
     if product_id is not None:
         name = (
             await db.execute(

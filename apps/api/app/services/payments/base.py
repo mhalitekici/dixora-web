@@ -81,7 +81,7 @@ class PaymentProvider(Protocol):
         ...
 
     async def start_card_checkout(
-        self, *, buyer: "Buyer", callback_url: str, reference: str
+        self, *, buyer: Buyer, callback_url: str, reference: str
     ) -> CardCheckout:
         """Open a hosted card-entry form and return where to send the customer."""
         ...

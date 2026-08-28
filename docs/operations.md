@@ -87,11 +87,11 @@ scope even though nothing is stored here.
 
 Three failures are handled differently and must stay that way:
 
-| What happened | Result |
-|---|---|
-| Card declined | Invoice stays owed, reason recorded, attempt counted |
-| Provider unreachable | Invoice untouched — an outage must not spend the customer's retry budget |
-| Billing e-mail unusable | Never attempted; a clear error instead of a decline nobody can act on |
+| What happened           | Result                                                                   |
+| ----------------------- | ------------------------------------------------------------------------ |
+| Card declined           | Invoice stays owed, reason recorded, attempt counted                     |
+| Provider unreachable    | Invoice untouched — an outage must not spend the customer's retry budget |
+| Billing e-mail unusable | Never attempted; a clear error instead of a decline nobody can act on    |
 
 Collection stops after four declines. Endless retries irritate the bank's fraud
 systems and never recover the money.
