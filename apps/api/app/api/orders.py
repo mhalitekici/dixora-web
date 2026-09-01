@@ -13,7 +13,6 @@ from app.dependencies import (
     Identity,
     require_branch,
     require_permissions,
-    require_record_branch,
     require_tenant,
 )
 from app.errors import DomainError
@@ -106,7 +105,8 @@ async def _scoped_order(
     caller typed, the branch has to be checked too.
     """
     order = await load_order(db, require_tenant(identity), order_id, lock=lock)
-    require_record_branch(identity, order.branch_id)
+    if order.branch_id != require_branch(identity):
+        raise DomainError("order_not_found", "Order not found", status_code=404)
     return order
 
 

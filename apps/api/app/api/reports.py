@@ -432,13 +432,9 @@ async def order_activity(
     code was used, and — for package orders — the delivery channel.
     """
     tenant_id = require_tenant(identity)
-    if branch_id is not None:
-        # Validates membership; a browser-supplied branch is never trusted.
-        scope = {require_branch(identity, branch_id)}
-    else:
-        scope = set(identity.accessible_branch_ids)
-    if not scope:
-        return []
+    # Historical activity must follow the active branch just like the till.
+    # A manager changes branch explicitly before reviewing another location.
+    selected_branch = require_branch(identity, branch_id)
 
     staff = aliased(User)
     query = (
@@ -464,7 +460,7 @@ async def order_activity(
             LoyaltyMembership, LoyaltyMembership.id == Order.loyalty_membership_id
         )
         .outerjoin(DeliveryOrder, DeliveryOrder.order_id == Order.id)
-        .where(Order.tenant_id == tenant_id, Order.branch_id.in_(sorted(scope)))
+        .where(Order.tenant_id == tenant_id, Order.branch_id == selected_branch)
     )
     if date_from is not None:
         query = query.where(Order.created_at >= _naive(date_from))

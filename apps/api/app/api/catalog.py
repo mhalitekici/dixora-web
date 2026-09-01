@@ -4,7 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload, with_loader_criteria
 
 from app.dependencies import (
@@ -12,7 +12,6 @@ from app.dependencies import (
     Identity,
     require_branch,
     require_permissions,
-    require_record_branch,
     require_tenant,
 )
 from app.errors import DomainError
@@ -52,6 +51,7 @@ from app.schemas import (
 )
 from app.security import utcnow
 from app.services.audit import add_audit_log
+from app.services.catalog_sync import centre_catalog_status, sync_centre_catalog
 from app.services.product_csv import (
     MAX_PRODUCT_CSV_BYTES,
     MAX_PRODUCT_XLSX_BYTES,
@@ -114,6 +114,48 @@ async def _validate_product_ids(
         )
 
 
+@router.get("/centre/status")
+async def get_centre_catalog_status(identity: CatalogReader, db: DbSession) -> dict[str, object]:
+    return await centre_catalog_status(
+        db,
+        tenant_id=require_tenant(identity),
+        branch_id=require_branch(identity),
+    )
+
+
+async def _sync_centre_catalog(
+    *, identity: Identity, db: DbSession, initial_import: bool
+) -> dict[str, object]:
+    tenant_id = require_tenant(identity)
+    branch_id = require_branch(identity)
+    outcome = await sync_centre_catalog(
+        db,
+        tenant_id=tenant_id,
+        target_branch_id=branch_id,
+        initial_import=initial_import,
+    )
+    add_audit_log(
+        db,
+        identity=identity,
+        action="catalog.centre_imported" if initial_import else "catalog.centre_synced",
+        resource_type="branch",
+        resource_id=branch_id,
+        new_value=outcome.as_dict(),
+    )
+    await db.commit()
+    return outcome.as_dict()
+
+
+@router.post("/centre/import")
+async def import_centre_catalog(identity: CatalogManager, db: DbSession) -> dict[str, object]:
+    return await _sync_centre_catalog(identity=identity, db=db, initial_import=True)
+
+
+@router.post("/centre/sync")
+async def update_from_centre_catalog(identity: CatalogManager, db: DbSession) -> dict[str, object]:
+    return await _sync_centre_catalog(identity=identity, db=db, initial_import=False)
+
+
 @router.get("/categories", response_model=Page[CategoryOut])
 async def list_categories(
     identity: CatalogReader,
@@ -123,9 +165,8 @@ async def list_categories(
     offset: int = Query(default=0, ge=0),
 ) -> Page[CategoryOut]:
     tenant_id = require_tenant(identity)
-    predicates = [Category.tenant_id == tenant_id]
-    if branch_id:
-        predicates.append(or_(Category.branch_id == branch_id, Category.branch_id.is_(None)))
+    selected_branch = require_branch(identity, branch_id)
+    predicates = [Category.tenant_id == tenant_id, Category.branch_id == selected_branch]
     total = (await db.execute(select(func.count(Category.id)).where(*predicates))).scalar_one()
     items = (
         (
@@ -155,15 +196,14 @@ async def create_category(
     db: DbSession,
 ) -> CategoryOut:
     tenant_id = require_tenant(identity)
-    branch_id = payload.branch_id
-    if branch_id is not None:
-        await _validate_branch(db, tenant_id, branch_id)
-        require_record_branch(identity, branch_id)
+    branch_id = require_branch(identity, payload.branch_id)
+    await _validate_branch(db, tenant_id, branch_id)
     if payload.parent_id is not None:
         parent = (
             await db.execute(
                 select(Category).where(
-                    Category.id == payload.parent_id, Category.tenant_id == tenant_id
+                    Category.id == payload.parent_id, Category.tenant_id == tenant_id,
+                    Category.branch_id == branch_id,
                 )
             )
         ).scalar_one_or_none()
@@ -204,7 +244,8 @@ async def update_category(
     category = (
         await db.execute(
             select(Category).where(
-                Category.id == category_id, Category.tenant_id == require_tenant(identity)
+                Category.id == category_id, Category.tenant_id == require_tenant(identity),
+                Category.branch_id == require_branch(identity),
             )
         )
     ).scalar_one_or_none()
@@ -235,7 +276,8 @@ async def delete_category(
     category = (
         await db.execute(
             select(Category).where(
-                Category.id == category_id, Category.tenant_id == require_tenant(identity)
+                Category.id == category_id, Category.tenant_id == require_tenant(identity),
+                Category.branch_id == require_branch(identity),
             )
         )
     ).scalar_one_or_none()
@@ -271,17 +313,8 @@ async def list_products(
     offers a line the kitchen would refuse.
     """
     tenant_id = require_tenant(identity)
-    predicates = [Product.tenant_id == tenant_id]
-    if branch_id is not None:
-        scoped = require_branch(identity, branch_id)
-        predicates.append(
-            Product.category_id.in_(
-                select(Category.id).where(
-                    Category.tenant_id == tenant_id,
-                    or_(Category.branch_id == scoped, Category.branch_id.is_(None)),
-                )
-            )
-        )
+    scoped = require_branch(identity, branch_id)
+    predicates = [Product.tenant_id == tenant_id, Product.branch_id == scoped]
     if category_id:
         predicates.append(Product.category_id == category_id)
     if search:
@@ -378,6 +411,7 @@ async def import_products_csv(
     ),
 ) -> ProductCsvImportResult:
     tenant_id = require_tenant(identity)
+    branch_id = require_branch(identity)
     filename = (file.filename or "").lower()
     content_type = (file.content_type or "").lower().split(";", 1)[0]
     allowed_content_types = {
@@ -416,6 +450,7 @@ async def import_products_csv(
             await db.execute(
                 select(Category).where(
                     Category.tenant_id == tenant_id,
+                    Category.branch_id == branch_id,
                     Category.is_active.is_(True),
                 )
             )
@@ -431,8 +466,7 @@ async def import_products_csv(
         PreparationStation.tenant_id == tenant_id,
         PreparationStation.is_active.is_(True),
     ]
-    if identity.branch_id is not None:
-        station_predicates.append(PreparationStation.branch_id == identity.branch_id)
+    station_predicates.append(PreparationStation.branch_id == branch_id)
     stations = (
         (await db.execute(select(PreparationStation).where(*station_predicates))).scalars().all()
     )
@@ -443,7 +477,14 @@ async def import_products_csv(
         )
 
     all_products = (
-        (await db.execute(select(Product).where(Product.tenant_id == tenant_id)))
+        (
+            await db.execute(
+                select(Product).where(
+                    Product.tenant_id == tenant_id,
+                    Product.branch_id == branch_id,
+                )
+            )
+        )
         .scalars()
         .all()
     )
@@ -462,6 +503,7 @@ async def import_products_csv(
                 await db.execute(
                     select(Product.sku).where(
                         Product.tenant_id == tenant_id,
+                        Product.branch_id == branch_id,
                         Product.sku.is_not(None),
                     )
                 )
@@ -596,6 +638,7 @@ async def import_products_csv(
 
             product = Product(
                 tenant_id=tenant_id,
+                branch_id=branch_id,
                 category_id=category.id,
                 preparation_station_id=station.id if station else None,
                 name=row.name,
@@ -661,7 +704,8 @@ async def get_product(
     product = (
         await db.execute(
             select(Product).where(
-                Product.id == product_id, Product.tenant_id == require_tenant(identity)
+                Product.id == product_id, Product.tenant_id == require_tenant(identity),
+                Product.branch_id == require_branch(identity),
             )
         )
     ).scalar_one_or_none()
@@ -717,12 +761,17 @@ async def _validate_product_references(
     db: DbSession,
     *,
     tenant_id: UUID,
+    branch_id: UUID,
     category_id: UUID,
     station_id: UUID | None,
 ) -> None:
     category = (
         await db.execute(
-            select(Category.id).where(Category.id == category_id, Category.tenant_id == tenant_id)
+            select(Category.id).where(
+                Category.id == category_id,
+                Category.tenant_id == tenant_id,
+                Category.branch_id == branch_id,
+            )
         )
     ).scalar_one_or_none()
     if category is None:
@@ -733,6 +782,7 @@ async def _validate_product_references(
                 select(PreparationStation.id).where(
                     PreparationStation.id == station_id,
                     PreparationStation.tenant_id == tenant_id,
+                    PreparationStation.branch_id == branch_id,
                 )
             )
         ).scalar_one_or_none()
@@ -776,15 +826,18 @@ async def create_product(
     db: DbSession,
 ) -> ProductOut:
     tenant_id = require_tenant(identity)
+    branch_id = require_branch(identity)
     await _validate_product_references(
         db,
         tenant_id=tenant_id,
+        branch_id=branch_id,
         category_id=payload.category_id,
         station_id=payload.preparation_station_id,
     )
     await _validate_modifier_groups(db, tenant_id=tenant_id, group_ids=payload.modifier_group_ids)
     product = Product(
         tenant_id=tenant_id,
+        branch_id=branch_id,
         **payload.model_dump(exclude={"modifier_group_ids"}),
     )
     db.add(product)
@@ -817,9 +870,14 @@ async def update_product(
     db: DbSession,
 ) -> ProductOut:
     tenant_id = require_tenant(identity)
+    branch_id = require_branch(identity)
     product = (
         await db.execute(
-            select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id)
+            select(Product).where(
+                Product.id == product_id,
+                Product.tenant_id == tenant_id,
+                Product.branch_id == branch_id,
+            )
         )
     ).scalar_one_or_none()
     if product is None:
@@ -829,7 +887,7 @@ async def update_product(
     category_id = data.get("category_id", product.category_id)
     station_id = data.get("preparation_station_id", product.preparation_station_id)
     await _validate_product_references(
-        db, tenant_id=tenant_id, category_id=category_id, station_id=station_id
+        db, tenant_id=tenant_id, branch_id=branch_id, category_id=category_id, station_id=station_id
     )
     if modifier_group_ids is not None:
         await _validate_modifier_groups(db, tenant_id=tenant_id, group_ids=modifier_group_ids)
@@ -889,7 +947,8 @@ async def delete_product(
     product = (
         await db.execute(
             select(Product).where(
-                Product.id == product_id, Product.tenant_id == require_tenant(identity)
+                Product.id == product_id, Product.tenant_id == require_tenant(identity),
+                Product.branch_id == require_branch(identity),
             )
         )
     ).scalar_one_or_none()
@@ -907,10 +966,16 @@ async def delete_product(
     await db.commit()
 
 
-async def _product_for_translation(db: DbSession, tenant_id: UUID, product_id: UUID) -> Product:
+async def _product_for_translation(
+    db: DbSession, tenant_id: UUID, branch_id: UUID, product_id: UUID
+) -> Product:
     product = (
         await db.execute(
-            select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id)
+            select(Product).where(
+                Product.id == product_id,
+                Product.tenant_id == tenant_id,
+                Product.branch_id == branch_id,
+            )
         )
     ).scalar_one_or_none()
     if product is None:
@@ -929,7 +994,7 @@ async def get_product_translations(
 ) -> EntityTranslationsOut:
     """Every language this business has entered for one product."""
     tenant_id = require_tenant(identity)
-    product = await _product_for_translation(db, tenant_id, product_id)
+    product = await _product_for_translation(db, tenant_id, require_branch(identity), product_id)
 
     rows = (
         (
@@ -978,7 +1043,7 @@ async def update_product_translations(
 ) -> EntityTranslationsOut:
     """Save the business's own translations. Blank values clear a translation."""
     tenant_id = require_tenant(identity)
-    product = await _product_for_translation(db, tenant_id, product_id)
+    product = await _product_for_translation(db, tenant_id, require_branch(identity), product_id)
 
     for locale, fields in payload.translations.items():
         if locale == SOURCE_LOCALE or not is_supported_locale(locale):

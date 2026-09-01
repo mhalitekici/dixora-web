@@ -50,12 +50,24 @@ const printerSchema = z.object({
   paper_width: z.enum(["58", "80"]),
 });
 
+const stationSchema = z.object({
+  name: z.string().trim().min(2, "İstasyon adı en az 2 karakter olmalı.").max(100),
+  code: z
+    .string()
+    .trim()
+    .min(2, "Kod en az 2 karakter olmalı.")
+    .max(50)
+    .regex(/^[A-Za-z][A-Za-z0-9_-]+$/, "Harf, rakam, tire ve alt çizgi kullanın."),
+});
+
 type PrinterValues = z.infer<typeof printerSchema>;
+type StationValues = z.infer<typeof stationSchema>;
 
 export function PrinterManagement() {
   const queryClient = useQueryClient();
   const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
   const [createOpen, setCreateOpen] = useState(false);
+  const [stationCreateOpen, setStationCreateOpen] = useState(false);
   const branchesQuery = useQuery({
     queryKey: adminKeys.branches(),
     queryFn: ({ signal }) => adminApi.branches(signal),
@@ -101,6 +113,25 @@ export function PrinterManagement() {
       await invalidate();
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Yazıcı kaydedilemedi."),
+  });
+  const createStationMutation = useMutation({
+    mutationFn: (values: StationValues) =>
+      adminApi.createStation({
+        branch_id: branchId,
+        name: values.name,
+        code: values.code.toUpperCase(),
+        sort_order: stationsQuery.data?.length ?? 0,
+      }),
+    onSuccess: async () => {
+      setStationCreateOpen(false);
+      toast.success("Hazırlık istasyonu eklendi.");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: adminKeys.stations(branchId) }),
+        queryClient.invalidateQueries({ queryKey: ["catalog", "stations"] }),
+      ]);
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "İstasyon eklenemedi."),
   });
   const updateMutation = useMutation({
     mutationFn: ({ id, input }: { id: string; input: Parameters<typeof adminApi.updatePrinterDevice>[1] }) =>
@@ -148,10 +179,16 @@ export function PrinterManagement() {
         description="Hazırlık istasyonlarını gerçek yazıcı cihazlarına bağlayın ve test işinin kuyruk durumunu izleyin."
         icon={Printer}
         actions={
-          <Button disabled={!branchId} onClick={() => setCreateOpen(true)}>
-            <Plus />
-            Yazıcı ekle
-          </Button>
+          <>
+            <Button variant="outline" disabled={!branchId} onClick={() => setStationCreateOpen(true)}>
+              <Plus />
+              İstasyon ekle
+            </Button>
+            <Button disabled={!branchId} onClick={() => setCreateOpen(true)}>
+              <Plus />
+              Yazıcı ekle
+            </Button>
+          </>
         }
       />
 
@@ -161,7 +198,11 @@ export function PrinterManagement() {
             <p className="text-sm font-medium">Yazdırma kapsamı</p>
             <p className="text-xs text-muted-foreground">Cihaz ve işler şube bazında izole edilir.</p>
           </div>
-          <Select value={branchId} onValueChange={(value) => setSelectedBranchId(value ?? null)}>
+          <Select
+            items={branches.map((branch) => ({ value: branch.id, label: branch.name }))}
+            value={branchId}
+            onValueChange={(value) => setSelectedBranchId(value ?? null)}
+          >
             <SelectTrigger className="w-full sm:w-64"><SelectValue /></SelectTrigger>
             <SelectContent>
               {branches.map((branch) => (
@@ -231,7 +272,62 @@ export function PrinterManagement() {
         onClose={() => setCreateOpen(false)}
         onSubmit={(values) => createMutation.mutate(values)}
       />
+      <StationCreateDialog
+        open={stationCreateOpen}
+        pending={createStationMutation.isPending}
+        onClose={() => setStationCreateOpen(false)}
+        onSubmit={(values) => createStationMutation.mutate(values)}
+      />
     </>
+  );
+}
+
+function StationCreateDialog({
+  open,
+  pending,
+  onClose,
+  onSubmit,
+}: {
+  open: boolean;
+  pending: boolean;
+  onClose: () => void;
+  onSubmit: (values: StationValues) => void;
+}) {
+  const form = useForm<StationValues>({
+    resolver: zodResolver(stationSchema),
+    defaultValues: { name: "", code: "" },
+  });
+
+  return (
+    <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>Hazırlık istasyonu ekle</DialogTitle>
+          <DialogDescription>
+            Ürünleri mutfak, bar veya servis hazırlık akışına yönlendirmek için bir istasyon oluşturun.
+          </DialogDescription>
+        </DialogHeader>
+        <form id="station-create-form" className="space-y-4" onSubmit={form.handleSubmit(onSubmit)}>
+          <div>
+            <Label htmlFor="station-name">İstasyon adı</Label>
+            <Input id="station-name" className="mt-1.5" placeholder="Sıcak mutfak" {...form.register("name")} />
+            <FieldError>{form.formState.errors.name?.message}</FieldError>
+          </div>
+          <div>
+            <Label htmlFor="station-code">İstasyon kodu</Label>
+            <Input id="station-code" className="mt-1.5 uppercase" placeholder="HOT-KITCHEN" {...form.register("code")} />
+            <FieldError>{form.formState.errors.code?.message}</FieldError>
+          </div>
+        </form>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>Vazgeç</Button>
+          <Button type="submit" form="station-create-form" disabled={pending}>
+            {pending ? <LoaderCircle className="animate-spin" /> : <Plus />}
+            İstasyonu kaydet
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -277,7 +373,17 @@ function DeviceRow({
       </div>
       <div className="mt-3 flex items-center gap-2 pl-0 sm:pl-12">
         <Route className="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-        <Select value={device.preparation_station_id ?? "GENERAL"} onValueChange={(value) => value && onRoute(value)} disabled={pending}>
+        <Select
+          items={[
+            { value: "GENERAL", label: "Genel şube kuyruğu" },
+            ...stations
+              .filter((station) => station.is_active)
+              .map((station) => ({ value: station.id, label: station.name })),
+          ]}
+          value={device.preparation_station_id ?? "GENERAL"}
+          onValueChange={(value) => value && onRoute(value)}
+          disabled={pending}
+        >
           <SelectTrigger className="h-9 w-full sm:w-72"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="GENERAL">Genel şube kuyruğu</SelectItem>

@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.dependencies import (
     DbSession,
     Identity,
+    require_branch,
     require_permissions,
     require_record_branch,
     require_tenant,
@@ -610,7 +611,8 @@ async def set_user_branch_access(
 
 @router.get("/users", response_model=list[UserOut])
 async def list_users(identity: UserManager, db: DbSession) -> list[UserOut]:
-    predicates = [User.tenant_id == require_tenant(identity)]
+    selected_branch = require_branch(identity)
+    predicates = [User.tenant_id == require_tenant(identity), User.branch_id == selected_branch]
     if not identity.has_all_branch_access:
         # A pinned manager manages their own branches' staff. Listing colleagues
         # they cannot edit would only be a roster of 403s.

@@ -110,7 +110,7 @@ export const adminApi = {
       search: { branch_id: branchId },
       signal,
     }),
-  createStation: (input: { name: string; code: string; sort_order: number }) =>
+  createStation: (input: { branch_id: string; name: string; code: string; sort_order: number }) =>
     api.post<Station>("catalog/stations", input),
   printJobs: (signal?: AbortSignal, branchId?: string) =>
     api.get<PrintJob[]>("printing/jobs", {

@@ -102,6 +102,7 @@ type Product = {
   category_id: string;
   selling_price: string | number;
   is_available: boolean;
+  image_url?: string | null;
 };
 type OrderItemModifier = {
   id: string;
@@ -1792,12 +1793,27 @@ export function CashierWorkspace() {
                 key={product.id}
                 disabled={productMutation.isPending}
                 onClick={() => productMutation.mutate(product)}
-                className="flex min-h-28 flex-col rounded-xl border p-3 text-left transition-colors hover:border-brand/25 hover:bg-brand-soft/40 disabled:opacity-50"
+                className="group relative flex min-h-36 flex-col overflow-hidden rounded-xl border bg-card text-left transition-colors hover:border-brand/35 hover:bg-brand-soft/40 disabled:opacity-50"
               >
-                <span className="line-clamp-2 text-sm font-semibold">{product.name}</span>
-                <span className="mt-auto flex w-full items-center justify-between pt-3">
-                  <span className="text-xs font-bold">{currency.format(Number(product.selling_price))}</span>
-                  <Plus className="size-4 text-brand" />
+                <span className="relative flex h-24 w-full items-center justify-center overflow-hidden bg-muted/55">
+                  {product.image_url ? (
+                    // Product media may come from tenant object storage.
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={product.image_url}
+                      alt=""
+                      className="size-full object-cover transition-transform duration-200 group-hover:scale-105"
+                    />
+                  ) : (
+                    <ReceiptText className="size-7 text-muted-foreground/60" />
+                  )}
+                </span>
+                <span className="flex min-h-14 flex-col p-2.5">
+                  <span className="line-clamp-1 text-sm font-semibold">{product.name}</span>
+                  <span className="mt-auto flex w-full items-center justify-between pt-1.5">
+                    <span className="text-xs font-bold">{currency.format(Number(product.selling_price))}</span>
+                    <Plus className="size-4 text-brand" />
+                  </span>
                 </span>
               </button>
             ))}

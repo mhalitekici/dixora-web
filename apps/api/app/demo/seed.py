@@ -424,7 +424,7 @@ async def _build_staff(
     for spec in D.HQ_STAFF:
         user = User(
             tenant_id=context.tenant_id,
-            branch_id=None,
+            branch_id=context.branches[0].id,
             role_id=roles[spec.role].id,
             username=f"{spec.local_part}@{D.EMAIL_DOMAIN}",
             email=f"{spec.local_part}@{D.EMAIL_DOMAIN}",
@@ -540,7 +540,7 @@ async def _build_menu(db: AsyncSession, context: DemoContext) -> None:
     for index, (name, color) in enumerate(D.CATEGORIES):
         category = Category(
             tenant_id=context.tenant_id,
-            branch_id=None,
+            branch_id=main_branch.id,
             name=name,
             color=color,
             sort_order=index,
@@ -555,10 +555,8 @@ async def _build_menu(db: AsyncSession, context: DemoContext) -> None:
         price = Decimal(spec.price)
         product = Product(
             tenant_id=context.tenant_id,
+            branch_id=main_branch.id,
             category_id=context.categories[spec.category],
-            # Products are business-wide while stations are per branch, so the
-            # catalog record points at the main kitchen. Orders resolve the
-            # station of the branch they were taken in.
             preparation_station_id=main_branch.stations[spec.station],
             name=spec.name,
             description=spec.description,

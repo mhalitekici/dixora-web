@@ -63,7 +63,11 @@ async def upload_product_image(
     product = (
         await db.execute(
             select(Product)
-            .where(Product.id == product_id, Product.tenant_id == tenant_id)
+            .where(
+                Product.id == product_id,
+                Product.tenant_id == tenant_id,
+                Product.branch_id == require_branch(identity),
+            )
             .with_for_update()
         )
     ).scalar_one_or_none()
@@ -139,7 +143,11 @@ async def delete_product_image(
     product = (
         await db.execute(
             select(Product)
-            .where(Product.id == product_id, Product.tenant_id == tenant_id)
+            .where(
+                Product.id == product_id,
+                Product.tenant_id == tenant_id,
+                Product.branch_id == require_branch(identity),
+            )
             .with_for_update()
         )
     ).scalar_one_or_none()

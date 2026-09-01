@@ -8,7 +8,7 @@ from uuid import UUID, uuid4
 
 import jwt
 from fastapi import APIRouter, Depends, Header, Query, Request, Response, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload, with_loader_criteria
 
 from app.config import Settings
@@ -312,7 +312,7 @@ async def public_menu(
                 select(Category)
                 .where(
                     Category.tenant_id == tenant.id,
-                    or_(Category.branch_id == branch.id, Category.branch_id.is_(None)),
+                    Category.branch_id == branch.id,
                     Category.is_active.is_(True),
                 )
                 .order_by(Category.sort_order, Category.name)
@@ -328,6 +328,7 @@ async def public_menu(
                 select(Product)
                 .where(
                     Product.tenant_id == tenant.id,
+                    Product.branch_id == branch.id,
                     Product.category_id.in_(category_ids),
                     Product.is_active.is_(True),
                     Product.is_available.is_(True),
@@ -597,7 +598,7 @@ async def create_public_qr_request(
             await db.execute(
                 select(Category.id).where(
                     Category.tenant_id == tenant.id,
-                    or_(Category.branch_id == branch.id, Category.branch_id.is_(None)),
+                    Category.branch_id == branch.id,
                     Category.is_active.is_(True),
                 )
             )
@@ -610,6 +611,7 @@ async def create_public_qr_request(
             await db.execute(
                 select(Product.id).where(
                     Product.tenant_id == tenant.id,
+                    Product.branch_id == branch.id,
                     Product.category_id.in_(allowed_category_ids),
                     Product.is_active.is_(True),
                     Product.is_available.is_(True),

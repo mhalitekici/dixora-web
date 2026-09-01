@@ -14,6 +14,7 @@ import {
   Plus,
   RefreshCw,
   Tags,
+  Trash2,
 } from "lucide-react";
 import { Controller, useForm, useWatch } from "react-hook-form";
 import { useState } from "react";
@@ -24,6 +25,16 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import {
   Dialog,
   DialogContent,
@@ -85,6 +96,7 @@ export function CategoryManagement() {
   const queryClient = useQueryClient();
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editing, setEditing] = useState<Category | null>(null);
+  const [deleting, setDeleting] = useState<Category | null>(null);
   const form = useForm<CategoryFormValues>({
     resolver: zodResolver(categorySchema),
     defaultValues: {
@@ -105,7 +117,7 @@ export function CategoryManagement() {
       unwrap<Category>(await api<unknown>("/catalog/categories")),
   });
 
-  const categories = query.data ?? [];
+  const categories = (query.data ?? []).filter((category) => category.is_active);
   const mutation = useMutation({
     mutationFn: (values: CategoryFormValues) => {
       return api<Category>(editing ? `/catalog/categories/${editing.id}` : "/catalog/categories", {
@@ -153,6 +165,21 @@ export function CategoryManagement() {
       void queryClient.invalidateQueries({ queryKey: ["catalog", "categories"] }),
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Kategori sırası güncellenemedi."),
+  });
+
+  const deleteMutation = useMutation({
+    mutationFn: (category: Category) =>
+      api<void>(`/catalog/categories/${category.id}`, { method: "DELETE" }),
+    onSuccess: () => {
+      toast.success("Kategori silindi.");
+      setDeleting(null);
+      void Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["catalog", "categories"] }),
+        queryClient.invalidateQueries({ queryKey: ["catalog", "products"] }),
+      ]);
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Kategori silinemedi."),
   });
 
   function open(category?: Category) {
@@ -251,6 +278,13 @@ export function CategoryManagement() {
                       >
                         <ArrowDown />
                         Aşağı taşı
+                      </DropdownMenuItem>
+                      <DropdownMenuItem
+                        variant="destructive"
+                        onClick={() => setDeleting(category)}
+                      >
+                        <Trash2 />
+                        Sil
                       </DropdownMenuItem>
                     </DropdownMenuContent>
                   </DropdownMenu>
@@ -417,6 +451,34 @@ export function CategoryManagement() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <AlertDialog
+        open={Boolean(deleting)}
+        onOpenChange={(open) => !open && setDeleting(null)}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Kategoriyi silmek istiyor musunuz?</AlertDialogTitle>
+            <AlertDialogDescription>
+              {deleting?.name} yeni ürün seçimlerinde görünmeyecek. Bu kategorideki
+              mevcut ürünler korunur.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleteMutation.isPending}>
+              Vazgeç
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={() => deleting && deleteMutation.mutate(deleting)}
+            >
+              {deleteMutation.isPending ? <Loader2 className="animate-spin" /> : <Trash2 />}
+              Sil
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

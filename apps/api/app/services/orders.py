@@ -6,17 +6,16 @@ from decimal import ROUND_HALF_UP, Decimal
 from typing import cast
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.dependencies import Identity, require_record_branch
+from app.dependencies import Identity, require_branch
 from app.errors import DomainError
 from app.models import (
     ApprovalRequest,
     Cancellation,
-    Category,
     DiningTable,
     Discount,
     InventoryLocation,
@@ -92,17 +91,16 @@ async def _station_printer_id(
 def _sellable_here(tenant_id: UUID, branch_id: UUID) -> ColumnElement[bool]:
     """Products a given branch is allowed to sell.
 
-    Most categories belong to the whole business. One pinned to a branch is that
-    branch's own section of the menu, and the QR menu has always honoured that.
-    The till did not, so a product could be hidden from a branch's customers and
-    still be rung up on its own register.
+    Every product is owned by exactly one branch, so a till can never ring up a
+    product that belongs to another location.
     """
-    return Product.category_id.in_(
-        select(Category.id).where(
-            Category.tenant_id == tenant_id,
-            or_(Category.branch_id == branch_id, Category.branch_id.is_(None)),
-        )
-    )
+    return Product.branch_id == branch_id
+
+
+def _require_active_branch(identity: Identity, branch_id: UUID) -> None:
+    """Block cross-branch approval actions until the operator switches branch."""
+    if branch_id != require_branch(identity):
+        raise DomainError("approval_not_found", "Approval request not found", status_code=404)
 
 
 async def branch_station_map(
@@ -1165,7 +1163,7 @@ async def approve_discount(
     ).scalar_one_or_none()
     if approval is None:
         raise DomainError("approval_not_found", "Approval request not found", status_code=404)
-    require_record_branch(identity, approval.branch_id)
+    _require_active_branch(identity, approval.branch_id)
     if approval.status != ApprovalStatus.PENDING:
         return approval
     if approval.order_id is None:
@@ -1237,7 +1235,7 @@ async def reject_cancellation(
     ).scalar_one_or_none()
     if approval is None:
         raise DomainError("approval_not_found", "Approval request not found", status_code=404)
-    require_record_branch(identity, approval.branch_id)
+    _require_active_branch(identity, approval.branch_id)
     if approval.status != ApprovalStatus.PENDING:
         return approval
     approval.status = ApprovalStatus.REJECTED
@@ -1273,7 +1271,7 @@ async def reject_discount(
     ).scalar_one_or_none()
     if approval is None:
         raise DomainError("approval_not_found", "Approval request not found", status_code=404)
-    require_record_branch(identity, approval.branch_id)
+    _require_active_branch(identity, approval.branch_id)
     if approval.status != ApprovalStatus.PENDING:
         return approval
     approval.status = ApprovalStatus.REJECTED
@@ -1774,7 +1772,7 @@ async def approve_cancellation(
     ).scalar_one_or_none()
     if approval is None:
         raise DomainError("approval_not_found", "Approval request not found", status_code=404)
-    require_record_branch(identity, approval.branch_id)
+    _require_active_branch(identity, approval.branch_id)
     if approval.status != ApprovalStatus.PENDING:
         return approval
     assert approval.order_id is not None

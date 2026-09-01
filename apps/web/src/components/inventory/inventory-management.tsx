@@ -130,6 +130,14 @@ type RecipePayload = {
   items: Array<{ inventory_item_id: string; quantity: string }>;
 };
 
+type InventoryItemDraft = {
+  name: string;
+  sku: string;
+  unit: "piece" | "gram" | "kilogram" | "milliliter" | "liter";
+  minimum_stock: string;
+  opening_quantity: string;
+};
+
 const EMPTY_ITEMS: InventoryItem[] = [];
 const EMPTY_PRODUCTS: CatalogProduct[] = [];
 const EMPTY_RECIPES: Recipe[] = [];
@@ -198,6 +206,14 @@ export function InventoryManagement() {
   const [search, setSearch] = useState("");
   const [stockFilter, setStockFilter] = useState("all");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [itemDialogOpen, setItemDialogOpen] = useState(false);
+  const [inventoryItemDraft, setInventoryItemDraft] = useState<InventoryItemDraft>({
+    name: "",
+    sku: "",
+    unit: "piece",
+    minimum_stock: "0",
+    opening_quantity: "0",
+  });
   const [selectedItem, setSelectedItem] = useState("");
   const [movementType, setMovementType] = useState("ADJUSTMENT");
   const [quantity, setQuantity] = useState("");
@@ -336,6 +352,40 @@ export function InventoryManagement() {
       void queryClient.invalidateQueries({ queryKey: ["inventory"] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "İşlem başarısız."),
+  });
+
+  const createItemMutation = useMutation({
+    mutationFn: async (draft: InventoryItemDraft) => {
+      const response = await fetch("/api/backend/inventory/items", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: draft.name.trim(),
+          sku: draft.sku.trim() || null,
+          unit: draft.unit,
+          minimum_stock: normalizeDecimal(draft.minimum_stock),
+          opening_quantity: normalizeDecimal(draft.opening_quantity),
+        }),
+      });
+      const data = (await response.json().catch(() => null)) as { detail?: string } | null;
+      if (!response.ok) {
+        throw new Error(data?.detail ?? "Stok kartı oluşturulamadı.");
+      }
+    },
+    onSuccess: () => {
+      toast.success("Stok kartı oluşturuldu.");
+      setItemDialogOpen(false);
+      setInventoryItemDraft({
+        name: "",
+        sku: "",
+        unit: "piece",
+        minimum_stock: "0",
+        opening_quantity: "0",
+      });
+      void queryClient.invalidateQueries({ queryKey: ["inventory"] });
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Stok kartı oluşturulamadı."),
   });
 
   const recipeMutation = useMutation({
@@ -581,6 +631,14 @@ export function InventoryManagement() {
         icon={Boxes}
         actions={
           <>
+            <Button
+              variant="outline"
+              className="h-10 rounded-xl"
+              onClick={() => setItemDialogOpen(true)}
+            >
+              <Plus />
+              Stok kartı ekle
+            </Button>
             <Button
               variant="outline"
               className="h-10 rounded-xl"
@@ -1038,6 +1096,134 @@ export function InventoryManagement() {
             >
               {adjustmentMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
               Hareketi kaydet
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={itemDialogOpen}
+        onOpenChange={(open) => !createItemMutation.isPending && setItemDialogOpen(open)}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Stok kartı ekle</DialogTitle>
+            <DialogDescription>
+              Malzeme veya satılabilir ürüne ait başlangıç stoğunu tanımlayın.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            id="inventory-item-form"
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              createItemMutation.mutate(inventoryItemDraft);
+            }}
+          >
+            <div className="space-y-2">
+              <Label htmlFor="inventory-item-name">Stok adı</Label>
+              <Input
+                id="inventory-item-name"
+                className="h-11 rounded-xl"
+                placeholder="Dana kıyma"
+                value={inventoryItemDraft.name}
+                onChange={(event) =>
+                  setInventoryItemDraft((current) => ({ ...current, name: event.target.value }))
+                }
+                required
+              />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="inventory-item-sku">Stok kodu</Label>
+              <Input
+                id="inventory-item-sku"
+                className="h-11 rounded-xl"
+                placeholder="KIRMA-001"
+                value={inventoryItemDraft.sku}
+                onChange={(event) =>
+                  setInventoryItemDraft((current) => ({ ...current, sku: event.target.value }))
+                }
+              />
+            </div>
+            <div className="grid gap-3 sm:grid-cols-3">
+              <div className="space-y-2">
+                <Label>Birim</Label>
+                <Select
+                  items={[
+                    { value: "piece", label: "Adet" },
+                    { value: "gram", label: "Gram" },
+                    { value: "kilogram", label: "Kilogram" },
+                    { value: "milliliter", label: "Mililitre" },
+                    { value: "liter", label: "Litre" },
+                  ]}
+                  value={inventoryItemDraft.unit}
+                  onValueChange={(value) =>
+                    setInventoryItemDraft((current) => ({
+                      ...current,
+                      unit: (value ?? "piece") as InventoryItemDraft["unit"],
+                    }))
+                  }
+                >
+                  <SelectTrigger className="h-11 w-full rounded-xl"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="piece">Adet</SelectItem>
+                    <SelectItem value="gram">Gram</SelectItem>
+                    <SelectItem value="kilogram">Kilogram</SelectItem>
+                    <SelectItem value="milliliter">Mililitre</SelectItem>
+                    <SelectItem value="liter">Litre</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="inventory-minimum-stock">Minimum</Label>
+                <Input
+                  id="inventory-minimum-stock"
+                  inputMode="decimal"
+                  className="h-11 rounded-xl"
+                  value={inventoryItemDraft.minimum_stock}
+                  onChange={(event) =>
+                    setInventoryItemDraft((current) => ({ ...current, minimum_stock: event.target.value }))
+                  }
+                  required
+                />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="inventory-opening-quantity">Açılış</Label>
+                <Input
+                  id="inventory-opening-quantity"
+                  inputMode="decimal"
+                  className="h-11 rounded-xl"
+                  value={inventoryItemDraft.opening_quantity}
+                  onChange={(event) =>
+                    setInventoryItemDraft((current) => ({ ...current, opening_quantity: event.target.value }))
+                  }
+                  required
+                />
+              </div>
+            </div>
+          </form>
+          <DialogFooter>
+            <Button
+              variant="outline"
+              disabled={createItemMutation.isPending}
+              onClick={() => setItemDialogOpen(false)}
+            >
+              Vazgeç
+            </Button>
+            <Button
+              type="submit"
+              form="inventory-item-form"
+              disabled={
+                createItemMutation.isPending ||
+                !inventoryItemDraft.name.trim() ||
+                !Number.isFinite(Number(normalizeDecimal(inventoryItemDraft.minimum_stock))) ||
+                !Number.isFinite(Number(normalizeDecimal(inventoryItemDraft.opening_quantity))) ||
+                Number(normalizeDecimal(inventoryItemDraft.minimum_stock)) < 0 ||
+                Number(normalizeDecimal(inventoryItemDraft.opening_quantity)) < 0
+              }
+            >
+              {createItemMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
+              Stok kartını kaydet
             </Button>
           </DialogFooter>
         </DialogContent>

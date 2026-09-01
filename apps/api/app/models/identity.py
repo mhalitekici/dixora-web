@@ -52,6 +52,12 @@ class Branch(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     # are simply retired from day-to-day operation. Kept alongside `is_active`
     # so existing queries that filter on it keep working unchanged.
     archived_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    # Catalogue imports are intentionally explicit: branches receive the centre
+    # menu once, then owners decide when to pull later additions and edits.
+    catalog_imported_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    catalog_source_branch_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("branches.id", ondelete="SET NULL"), nullable=True
+    )
 
     tenant: Mapped[Tenant] = relationship(back_populates="branches")
 

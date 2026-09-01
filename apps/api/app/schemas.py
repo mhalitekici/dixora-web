@@ -606,6 +606,7 @@ class CategoryOut(ORMModel):
     id: UUID
     tenant_id: UUID
     branch_id: UUID | None
+    source_category_id: UUID | None = None
     parent_id: UUID | None
     name: str
     description: str | None
@@ -722,6 +723,8 @@ class ProductCsvImportResult(BaseModel):
 class ProductOut(ORMModel):
     id: UUID
     tenant_id: UUID
+    branch_id: UUID | None = None
+    source_product_id: UUID | None = None
     category_id: UUID
     preparation_station_id: UUID | None
     name: str
