@@ -97,6 +97,9 @@ services:
     build:
       context: .
       dockerfile: infrastructure/docker/api.Dockerfile
+      # Explicit: the file's last stage is the production image, and the local
+      # stack needs the one that can run pytest, ruff and mypy.
+      target: development
     restart: unless-stopped
     environment:
       DIXORA_ENVIRONMENT: ${DIXORA_ENVIRONMENT:-development}

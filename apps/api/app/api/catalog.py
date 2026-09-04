@@ -125,7 +125,7 @@ async def get_centre_catalog_status(identity: CatalogReader, db: DbSession) -> d
 
 async def _sync_centre_catalog(
     *, identity: Identity, db: DbSession, initial_import: bool
-) -> dict[str, object]:
+) -> dict[str, int]:
     tenant_id = require_tenant(identity)
     branch_id = require_branch(identity)
     outcome = await sync_centre_catalog(
@@ -147,12 +147,12 @@ async def _sync_centre_catalog(
 
 
 @router.post("/centre/import")
-async def import_centre_catalog(identity: CatalogManager, db: DbSession) -> dict[str, object]:
+async def import_centre_catalog(identity: CatalogManager, db: DbSession) -> dict[str, int]:
     return await _sync_centre_catalog(identity=identity, db=db, initial_import=True)
 
 
 @router.post("/centre/sync")
-async def update_from_centre_catalog(identity: CatalogManager, db: DbSession) -> dict[str, object]:
+async def update_from_centre_catalog(identity: CatalogManager, db: DbSession) -> dict[str, int]:
     return await _sync_centre_catalog(identity=identity, db=db, initial_import=False)
 
 

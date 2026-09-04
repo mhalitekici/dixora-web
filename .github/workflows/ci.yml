@@ -4,7 +4,11 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    # Feature branches are where the work actually lands here, and a push that
+    # is never gated is a release risk that only shows up at merge time.
+    branches:
+      - main
+      - "feat/**"
   pull_request:
 
 concurrency:
@@ -36,6 +40,14 @@ jobs:
         # Tests run against in-memory SQLite and pin the mail provider off, so
         # no services and no live credentials are needed.
         run: python -m pytest -q
+
+      - name: Lint
+        working-directory: apps/api
+        run: ruff check .
+
+      - name: Types
+        working-directory: apps/api
+        run: mypy app
 
   web:
     name: Web
@@ -103,3 +115,78 @@ jobs:
           DIXORA_JWT_SECRET: ci-secret-that-is-at-least-thirty-two-chars
           DIXORA_PRINT_BRIDGE_KEY: ci-print-bridge-key-with-32-characters
         run: alembic upgrade head
+
+  deployment:
+    name: Deployment configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Local compose file is valid
+        run: docker compose -f docker-compose.yml config --quiet
+
+      - name: Production compose file is valid
+        # Rendered with throwaway secrets: this checks the file's shape, not
+        # the deployment's values.
+        run: |
+          python - <<'PY'
+          import re, secrets, pathlib
+          template = pathlib.Path(".env.production.example").read_text(encoding="utf-8")
+          rendered = re.sub(r"<GENERATE>", lambda _: secrets.token_hex(24), template)
+          password = re.search(r"^POSTGRES_PASSWORD=(.+)$", rendered, re.M).group(1)
+          rendered = re.sub(
+              r"^DIXORA_DATABASE_URL=.*$",
+              f"DIXORA_DATABASE_URL=postgresql+asyncpg://dixora_prod:{password}@postgres:5432/dixora",
+              rendered,
+              flags=re.M,
+          )
+          rendered += "DIXORA_ENV_FILE=.env.ci" + chr(10)
+          pathlib.Path(".env.ci").write_text(rendered, encoding="utf-8")
+          PY
+          docker compose -f docker-compose.prod.yml --env-file .env.ci config --quiet
+
+      - name: Production API settings pass validation
+        # The API refuses development defaults in production; that guard is
+        # only useful if the shipped template actually satisfies it.
+        working-directory: apps/api
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python - <<'PY'
+          import os, pathlib, re
+          env = pathlib.Path("../../.env.ci").read_text(encoding="utf-8")
+          for line in env.splitlines():
+              if line.startswith("#") or "=" not in line:
+                  continue
+              key, _, value = line.partition("=")
+              os.environ[key.strip()] = value.strip()
+          from app.config import Settings
+          settings = Settings()
+          assert settings.environment == "production"
+          assert not settings.dev_seed_enabled
+          assert not settings.auto_create_schema
+          assert not settings.sql_echo
+          assert not settings.expose_api_docs
+          assert settings.payment_provider == "none"
+          print("production settings validated")
+          PY
+
+      - name: Nginx configuration compiles
+        run: |
+          sudo mkdir -p /tmp/le/live/dixoratech.com
+          sudo openssl req -x509 -nodes -newkey rsa:2048 -days 1 \
+            -keyout /tmp/le/live/dixoratech.com/privkey.pem \
+            -out /tmp/le/live/dixoratech.com/fullchain.pem \
+            -subj "/CN=dixoratech.com"
+          docker run --rm \
+            --add-host api:127.0.0.1 --add-host web:127.0.0.1 \
+            -e DIXORA_DOMAIN=dixoratech.com \
+            -e DIXORA_NETWORK_SUBNET=172.28.0.0/16 \
+            -v "$PWD/infrastructure/nginx/templates:/etc/nginx/templates:ro" \
+            -v "$PWD/infrastructure/nginx/snippets:/etc/nginx/snippets:ro" \
+            -v /tmp/le:/etc/letsencrypt:ro \
+            --entrypoint /bin/sh nginx:1.29.5-alpine -c \
+            'envsubst "\$DIXORA_DOMAIN \$DIXORA_NETWORK_SUBNET" < /etc/nginx/templates/dixora.conf.template > /etc/nginx/conf.d/dixora.conf && rm -f /etc/nginx/conf.d/default.conf && nginx -t'
+
+      - name: Production API image builds
+        run: docker build -f infrastructure/docker/api.Dockerfile --target production -t dixora-api:ci .

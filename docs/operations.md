@@ -1,6 +1,8 @@
 # Operations
 
 What has to be running for Dixora to be safe in production, and how to check it.
+Standing up a new production host is a separate document:
+[Hetzner deployment](hetzner-production-deploy.md).
 
 ## Backups
 
@@ -12,6 +14,16 @@ cd /srv/dixora
 set -a && . ./.env && set +a
 ./ops/backup.sh                     # writes ./backups
 BACKUP_DIR=/mnt/backup ./ops/backup.sh
+```
+
+On a production host the stack lives in a different Compose file, and these
+scripts talk to it through `docker compose`. Point them at it with the
+variable Compose reads natively:
+
+```bash
+export COMPOSE_FILE=docker-compose.prod.yml
+set -a && . ./.env.production && set +a
+./ops/backup.sh
 ```
 
 Schedule it from the host crontab:
@@ -108,8 +120,16 @@ and only an empty database catches that.
 
 ## Health
 
-- `GET /api/v1/system/health` — process is up
-- `GET /api/v1/system/ready` — database reachable
+- `GET /health` — process is up
+- `GET /ready` — database reachable, returns 503 when it is not
+
+Both sit at the root, outside the `/api/v1` prefix, and the production proxy
+only answers them from the internal network. Check them through the container
+rather than the domain:
+
+```bash
+docker compose exec -T api python -c   "import urllib.request;print(urllib.request.urlopen('http://127.0.0.1:8000/ready').read())"
+```
 
 ## Things to watch
 

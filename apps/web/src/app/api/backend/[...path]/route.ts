@@ -2,6 +2,7 @@ import { NextRequest } from "next/server"
 
 import { authenticatedBackendFetch } from "@/lib/server/auth-session"
 import { backendFetch } from "@/lib/server/backend"
+import { clientAddressHeaders } from "@/lib/server/client-address"
 import { isPublicBackendRequest } from "@/lib/server/backend-route-policy"
 import { readLoyaltyToken } from "@/lib/server/loyalty-cookie"
 import { mutationOriginError } from "@/lib/server/request-security"
@@ -67,6 +68,11 @@ async function proxy(
     const headers = copyRequestHeaders(request.headers)
     if (!headers.has("x-request-id")) {
       headers.set("x-request-id", crypto.randomUUID())
+    }
+    // Rate limits and audit records on the API are per client address, and
+    // every one of these requests originates from this server.
+    for (const [name, value] of Object.entries(clientAddressHeaders(request))) {
+      headers.set(name, value)
     }
     if (isLoyaltyAwarePublicPath(validatedPath)) {
       const loyaltyToken = await readLoyaltyToken(

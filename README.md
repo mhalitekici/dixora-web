@@ -6,8 +6,10 @@ business administration, waiter and cashier operations, kitchen routing, QR
 menus, inventory, reporting, audit, subscriptions, and local printing.
 
 The web, API, migrations, seed, tests, and Docker topology run as one system.
-Production certification still depends on the deployment-specific controls and
-external hardware integrations listed under **Current limitations**.
+Deploying it is documented separately in
+[Hetzner production deployment](docs/hetzner-production-deploy.md); the
+external hardware and payment integrations that remain out of scope are listed
+under **Current limitations**.
 
 ## Architecture at a glance
 
@@ -39,9 +41,12 @@ packages/
   shared-types/   Wire and operational contracts
   ui/             Small reusable presentation primitives
 infrastructure/
-  docker/         Local image and database initialization assets
+  docker/         Image and database initialization assets
+  nginx/          Production reverse proxy (TLS, routing, edge rate limits)
+ops/              Backup, restore and first-certificate scripts
 docs/             Architecture and domain documentation
-docker-compose.yml
+docker-compose.yml        Local development stack
+docker-compose.prod.yml   Internet-facing stack
 Makefile
 ```
 
@@ -96,7 +101,8 @@ Make is not included with PowerShell by default.
 
    - Web: <http://localhost:3000>
    - API: <http://localhost:8000>
-   - OpenAPI: <http://localhost:8000/api/v1/docs>
+   - OpenAPI: <http://localhost:8000/api/v1/docs> (off in production unless
+     `DIXORA_EXPOSE_API_DOCS=true`)
    - MinIO console: <http://localhost:9001>
    - Mock Print Bridge health: <http://localhost:9100/healthz>
 
@@ -344,6 +350,8 @@ endpoint added later that filters on `tenant_id` alone fails the suite.
 - [Printing](docs/printing.md)
 - [Loyalty MVP](docs/loyalty-mvp.md)
 - [Local development](docs/local-development.md)
+- [Hetzner production deployment](docs/hetzner-production-deploy.md)
+- [Operations](docs/operations.md)
 - [Future roadmap](docs/future-roadmap.md)
 
 ## Current limitations
@@ -356,9 +364,10 @@ endpoint added later that filters on `tenant_id` alone fails the suite.
 - The real-time layer requires persisted outbox dispatch and reconnect
   integration tests before production use.
 - Login throttling is persistent and QR ordering has server-side pending-request
-  quotas. Before an internet-facing deployment, the reverse proxy must provide a
-  trusted client-IP boundary and an edge/distributed limiter; otherwise the BFF
-  collapses callers to one backend network address.
+  quotas. The production stack closes the client-IP boundary end to end: nginx
+  overwrites `X-Forwarded-For` with the connecting address, the BFF forwards it,
+  and uvicorn trusts it only from the internal network. Distributed limiting
+  needs Redis configured, which the production template does.
 - Product media upload validation and private-bucket delivery are implemented.
   Responsive variants, thumbnails, malware scanning, and CDN deployment remain
   production integration work.
@@ -366,8 +375,12 @@ endpoint added later that filters on `tenant_id` alone fails the suite.
   bundled printer transport is a mock. Physical printer drivers, durable local
   disk spooling, enrollment rotation, and device-specific acceptance remain
   deployment work.
-- Online payments, fiscal cash registers, accounting, delivery, reservations,
-  hotel room charges, and subscription billing are not implemented. Loyalty is
+- Online card collection, fiscal cash registers (ÖKC), accounting integrations
+  and reservations are not implemented. The Iyzico adapter exists but is
+  unproven against a live account and is switched off
+  (`DIXORA_PAYMENT_PROVIDER=none`); subscription invoicing itself runs from
+  `app.cli billing-run`. Delivery orders and hotel room folios are implemented
+  as MVPs without provider integrations. Loyalty is
   available as an MVP; its Netgsm OTP adapter requires a customer-owned Netgsm
   account, OTP package, approved message header and production secrets. Production
   launch also requires bot protection, atomic provider/spend quotas and one-time
@@ -375,9 +388,11 @@ endpoint added later that filters on `tenant_id` alone fails the suite.
 - Trusted PIN devices are tenant/branch scoped and revocation-ready. A management
   screen for listing/revoking devices and explicit multi-branch terminal
   enrollment remain release work.
-- Docker Compose is for local development. Production infrastructure, backups,
-  observability, incident response, compliance, and restore drills remain
-  release work.
+- `docker-compose.yml` is the local stack; `docker-compose.prod.yml` is the
+  internet-facing one (nginx with TLS and edge rate limits, no published
+  service ports, no mock print bridge). Verified backup and restore scripts
+  ship with it. Observability beyond structured logs, incident response,
+  compliance and offsite backup copies remain release work.
 - Code-native light/dark SVG marks, PWA icons, and the supplied raster originals
   are included. A final trademark/brand review is still recommended before a
   public launch.

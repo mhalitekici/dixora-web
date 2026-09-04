@@ -105,6 +105,10 @@ class Settings(BaseSettings):
     media_max_pixels: int = Field(default=36_000_000, ge=4096, le=100_000_000)
     auto_create_schema: bool = False
     dev_seed_enabled: bool = False
+    # Swagger/ReDoc/openapi.json. Always available outside production; opt-in
+    # there, so a deployment can turn them back on deliberately rather than by
+    # forgetting to turn them off.
+    expose_api_docs: bool = False
     log_level: str = "INFO"
     sql_echo: bool = False
 

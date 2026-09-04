@@ -1,8 +1,9 @@
-"""Running a second branch, with a catalogue shared across both.
+"""Running a second branch, with a catalogue copied from the centre.
 
-Products belong to the business; preparation stations, printers, recipes and
-tables belong to a branch. These tests pin down what has to happen where those
-two scopes meet, which is the seam a single-branch install never exercises.
+Every catalogue row, preparation station, printer, recipe and table belongs to
+exactly one branch; a new branch imports the centre branch's catalogue to get
+started. These tests pin down what has to happen where those copies meet, which
+is the seam a single-branch install never exercises.
 """
 
 from __future__ import annotations
@@ -130,14 +131,23 @@ async def _open_second_branch(api: ApiContext) -> dict[str, Any]:
             )
         )
         await db.commit()
-
-        return {
+        fixture = {
             "tenant_id": tenant.id,
             "first_branch_id": first.id,
             "branch_id": branch.id,
             "stations": stations,
             "table_id": table.id,
         }
+
+    # A branch's catalogue is its own: it starts empty and is filled by an
+    # explicit copy from the centre branch, which is how a real chain opens a
+    # site. Without this the branch has nothing to sell and every test below
+    # would fail on the setup step rather than on what it is checking.
+    imported = await api.client.post(
+        "/api/v1/catalog/centre/import", headers=await _manager_headers(api)
+    )
+    assert imported.status_code == 200, imported.text
+    return fixture
 
 
 async def _manager_headers(api: ApiContext) -> dict[str, str]:
@@ -328,12 +338,16 @@ async def test_a_branch_manager_cannot_open_another_branchs_order(
         ("POST", f"/api/v1/orders/{foreign_order_id}/payments"),
     ):
         response = await api.client.request(method, path, headers=headers, json={})
-        assert response.status_code in (403, 422), (
+        # 404 is the preferred shape and what the order routes now return:
+        # confirming that an id exists in another branch is itself a leak.
+        assert response.status_code in (403, 404, 422), (
             f"{method} {path} reached another branch's order: "
             f"{response.status_code} {response.text}"
         )
         if response.status_code == 403:
             assert response.json()["error"]["code"] == "branch_forbidden"
+        if response.status_code == 404:
+            assert response.json()["error"]["code"] == "order_not_found"
 
 
 async def test_the_branch_switcher_only_offers_reachable_branches(
@@ -534,6 +548,9 @@ async def test_a_tracked_product_fails_on_stock_not_on_configuration(
     assert switched.status_code == 200, switched.text
     headers = auth_headers(switched.json())
 
+    imported = await api.client.post("/api/v1/catalog/centre/import", headers=headers)
+    assert imported.status_code == 200, imported.text
+
     response = await _place_order(
         api,
         headers,
@@ -541,6 +558,9 @@ async def test_a_tracked_product_fails_on_stock_not_on_configuration(
         product_id=await _product_id(api, headers, TRACKED_PRODUCT),
         idempotency_key="new-branch-tracked-1",
     )
+    # Not `recipe_missing`: the recipes copied when the branch opened must be
+    # re-pointed at the branch's own catalogue rows by the import, or a tracked
+    # product could never be sold here at all.
     assert response.status_code == 409, response.text
     assert response.json()["error"]["code"] == "insufficient_stock", response.text
 
@@ -561,20 +581,20 @@ async def test_a_branch_scoped_product_cannot_be_sold_elsewhere(
     """
     fixture = await _open_second_branch(api)
     owner = auth_headers(await login(api))
+    # Catalogue rows are created in the branch the editor is working in, so the
+    # second branch's own manager adds its own dessert.
+    manager = await _manager_headers(api)
 
     category = await api.client.post(
         "/api/v1/catalog/categories",
-        headers=owner,
-        json={
-            "name": "Sadece İkinci Şube",
-            "branch_id": str(fixture["branch_id"]),
-            "sort_order": 99,
-        },
+        headers=manager,
+        json={"name": "Sadece İkinci Şube", "sort_order": 99},
     )
     assert category.status_code == 201, category.text
+    assert category.json()["branch_id"] == str(fixture["branch_id"])
     product = await api.client.post(
         "/api/v1/catalog/products",
-        headers=owner,
+        headers=manager,
         json={
             "category_id": category.json()["id"],
             "name": "Şubeye Özel Tatlı",
@@ -607,23 +627,25 @@ async def test_a_branch_scoped_product_cannot_be_sold_elsewhere(
 
 
 async def test_the_product_list_can_be_narrowed_to_one_branch(api: ApiContext) -> None:
-    """So a till can show what it may actually sell, and only that."""
+    """So a till can show what it may actually sell, and only that.
+
+    The list follows the branch being worked in, not the whole business: an
+    owner reviewing another site passes `branch_id` explicitly and gets that
+    site's catalogue, never a merged one that no till could serve.
+    """
     fixture = await _open_second_branch(api)
     owner = auth_headers(await login(api))
+    manager = await _manager_headers(api)
 
     category = await api.client.post(
         "/api/v1/catalog/categories",
-        headers=owner,
-        json={
-            "name": "Sadece İkinci Şube",
-            "branch_id": str(fixture["branch_id"]),
-            "sort_order": 99,
-        },
+        headers=manager,
+        json={"name": "Sadece İkinci Şube", "sort_order": 99},
     )
     assert category.status_code == 201, category.text
     product = await api.client.post(
         "/api/v1/catalog/products",
-        headers=owner,
+        headers=manager,
         json={
             "category_id": category.json()["id"],
             "name": "Şubeye Özel Tatlı",
@@ -634,10 +656,11 @@ async def test_the_product_list_can_be_narrowed_to_one_branch(api: ApiContext) -
     assert product.status_code == 201, product.text
     special = product.json()["id"]
 
-    everything = await api.client.get("/api/v1/catalog/products", headers=owner)
-    assert special in {row["id"] for row in everything.json()["items"]}, (
-        "the catalogue screen must still manage the whole business"
-    )
+    # The owner is working in the centre branch, so the dessert added at the
+    # second site is not on their screen unless they ask for that site.
+    here = await api.client.get("/api/v1/catalog/products", headers=owner)
+    assert here.status_code == 200, here.text
+    assert special not in {row["id"] for row in here.json()["items"]}
 
     main_only = await api.client.get(
         "/api/v1/catalog/products",

@@ -431,7 +431,7 @@ async def _build_bill_payload(
     order_id: UUID,
     kind: str,
 ) -> dict[str, object]:
-    order = await load_order(db, identity.tenant_id, order_id, lock=True)
+    order = await load_order(db, require_tenant(identity), order_id, lock=True)
     if order.branch_id != identity.branch_id:
         raise DomainError("order_not_found", "Order not found", status_code=404)
     if kind == "ORIGINAL":

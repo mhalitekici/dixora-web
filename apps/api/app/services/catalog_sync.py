@@ -9,7 +9,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.errors import DomainError
-from app.models import Branch, Category, PreparationStation, Product
+from app.models import Branch, Category, PreparationStation, Product, ProductRecipe
 from app.security import utcnow
 
 
@@ -230,25 +230,94 @@ async def sync_centre_catalog(
         "tags",
         "translations",
     )
-    for source in source_products:
-        local = product_by_source.get(source.id)
-        values = {field: getattr(source, field) for field in copied_fields}
-        values["category_id"] = category_map[source.category_id].id
-        values["preparation_station_id"] = station_map.get(source.preparation_station_id)
-        if local is None:
+    for source_product in source_products:
+        # Deliberately not the name used for categories above: reusing it made
+        # every product line read as a Category to anyone (and anything)
+        # checking types.
+        local_product = product_by_source.get(source_product.id)
+        values = {field: getattr(source_product, field) for field in copied_fields}
+        values["category_id"] = category_map[source_product.category_id].id
+        # A product with no station keeps none; only a named one is translated
+        # to this branch's equivalent.
+        values["preparation_station_id"] = (
+            station_map.get(source_product.preparation_station_id)
+            if source_product.preparation_station_id is not None
+            else None
+        )
+        if local_product is None:
             db.add(
                 Product(
-                    tenant_id=tenant_id, branch_id=target.id, source_product_id=source.id, **values
+                    tenant_id=tenant_id,
+                    branch_id=target.id,
+                    source_product_id=source_product.id,
+                    **values,
                 )
             )
             outcome.products_created += 1
         else:
             for field, value in values.items():
-                setattr(local, field, value)
+                setattr(local_product, field, value)
             outcome.products_updated += 1
+
+    await db.flush()
+    await _repoint_recipes(db, tenant_id=tenant_id, target_branch_id=target.id)
 
     if initial_import:
         target.catalog_imported_at = utcnow()
         target.catalog_source_branch_id = centre.id
     await db.flush()
     return outcome
+
+
+async def _repoint_recipes(
+    db: AsyncSession, *, tenant_id: UUID, target_branch_id: UUID
+) -> None:
+    """Point this branch's recipes at this branch's own products.
+
+    Opening a branch copies the operational blueprint — stations, ingredients
+    and the recipes that consume them — before there is any catalogue to attach
+    them to, so those recipes still name the source branch's product rows. The
+    import creates local copies of those products with new ids, and a recipe is
+    looked up by (branch, product): without this step every inventory-tracked
+    product is refused at the till with `recipe_missing`, which reads as a bug
+    rather than as the setup step it is.
+    """
+    local_products = (
+        (
+            await db.execute(
+                select(Product).where(
+                    Product.tenant_id == tenant_id,
+                    Product.branch_id == target_branch_id,
+                    Product.source_product_id.is_not(None),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not local_products:
+        return
+    local_by_source = {item.source_product_id: item.id for item in local_products}
+    recipes = (
+        (
+            await db.execute(
+                select(ProductRecipe).where(
+                    ProductRecipe.tenant_id == tenant_id,
+                    ProductRecipe.branch_id == target_branch_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # One recipe per (branch, product) is a database constraint, so a stale row
+    # is only moved when the local product has none of its own.
+    taken = {recipe.product_id for recipe in recipes}
+    for recipe in recipes:
+        local_product_id = local_by_source.get(recipe.product_id)
+        if local_product_id is None or local_product_id in taken:
+            continue
+        recipe.product_id = local_product_id
+        for line in recipe.items:
+            line.branch_id = target_branch_id
+        taken.add(local_product_id)
