@@ -33,6 +33,7 @@ tmp/
 .env
 .env.*
 !.env.example
+!.env.production.example
 *.pem
 *.key
 
@@ -47,3 +48,7 @@ Thumbs.db
 .turbo/
 .cache/
 
+
+# Database dumps contain customer data — never commit them.
+backups/
+*.dump

@@ -15,6 +15,7 @@ from app.dependencies import (
     DbSession,
     Identity,
     get_app_settings,
+    require_branch,
     require_permissions,
     require_tenant,
 )
@@ -44,12 +45,18 @@ from app.services.audit import add_audit_log
 from app.services.email import OutgoingEmail, get_email_sender
 from app.services.email_templates import registration_code_email
 from app.services.loyalty_enrollment import generate_verification_code, hash_code
+from app.services.onboarding_setup import apply_onboarding
+from app.services.rate_limit import get_rate_limiter, limiter_key
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/registrations", tags=["registrations"])
 
 REGISTRATION_CODE_TTL_MINUTES = 20
+VERIFICATION_LIMIT_PER_IP = 5
+VERIFICATION_IP_WINDOW_SECONDS = 3600
+VERIFICATION_LIMIT_PER_EMAIL = 3
+VERIFICATION_EMAIL_WINDOW_SECONDS = 1800
 MAX_REGISTRATION_CODE_ATTEMPTS = 5
 OnboardingManager = Annotated[Identity, Depends(require_permissions("settings.manage"))]
 
@@ -109,6 +116,11 @@ async def _available_business_slug(db: DbSession, business_name: str) -> str:
 
 
 async def _enforce_registration_rate_limit(db: DbSession, ip_address: str | None) -> None:
+    """Cap completed registrations per IP.
+
+    Kept as a backstop on the provisioning step; the expensive part (sending
+    verification email) is throttled separately in `_enforce_verification_limits`.
+    """
     window_started = utcnow() - timedelta(hours=1)
     count = (
         await db.execute(
@@ -126,6 +138,43 @@ async def _enforce_registration_rate_limit(db: DbSession, ip_address: str | None
             status_code=429,
             details={"retry_after_seconds": 3600},
         )
+
+
+async def _enforce_verification_limits(
+    settings: Settings, *, ip_address: str | None, email: str
+) -> None:
+    """Throttle verification-email requests, not just completed signups.
+
+    The previous limiter only counted `registration.created`, which `/start`
+    never writes — so an attacker could trigger unlimited verification emails at
+    any address, burning the mail quota and the sending domain's reputation.
+
+    The email window is deliberately checked without revealing whether the
+    address belongs to an existing account: the same 429 is returned either way.
+    """
+    limiter = get_rate_limiter(settings)
+    checks = (
+        (
+            limiter_key("registration:ip", ip_address or "unknown"),
+            VERIFICATION_LIMIT_PER_IP,
+            VERIFICATION_IP_WINDOW_SECONDS,
+        ),
+        (
+            limiter_key("registration:email", email),
+            VERIFICATION_LIMIT_PER_EMAIL,
+            VERIFICATION_EMAIL_WINDOW_SECONDS,
+        ),
+    )
+    for key, limit, window in checks:
+        result = await limiter.hit(key, limit=limit, window_seconds=window)
+        if not result.allowed:
+            raise DomainError(
+                "registration_rate_limited",
+                "Çok fazla doğrulama isteği gönderildi. "
+                "Lütfen bir süre sonra tekrar deneyin.",
+                status_code=429,
+                details={"retry_after_seconds": result.retry_after_seconds},
+            )
 
 
 async def _provision_business(
@@ -242,9 +291,8 @@ async def start_registration(
 ) -> BusinessRegistrationStartOut:
     """Step 1: verify the owner's email before provisioning anything."""
     ip_address = request.client.host if request.client else None
-    await _enforce_registration_rate_limit(db, ip_address)
-
     email = payload.email.lower()
+    await _enforce_verification_limits(settings, ip_address=ip_address, email=email)
     # Usernames are unique per tenant, not globally, so one address can legitimately
     # exist on several businesses. scalar_one_or_none() raised MultipleResultsFound
     # on those and turned signup into a 500 — take the first match instead.
@@ -278,25 +326,39 @@ async def start_registration(
     await db.flush()
 
     sender = get_email_sender(settings)
-    await sender.send(
-        OutgoingEmail(
-            to=email,
-            subject="Dixora · E-posta doğrulama kodunuz",
-            text_body=(
-                f"Merhaba {payload.owner_name},\n\n"
-                f"{payload.business_name} işletmenizi Dixora'da oluşturmak için "
-                f"doğrulama kodunuz:\n\n    {code}\n\n"
-                f"Kod {REGISTRATION_CODE_TTL_MINUTES} dakika geçerlidir.\n"
-                "Bu isteği siz yapmadıysanız bu e-postayı yok sayabilirsiniz."
-            ),
-            html_body=registration_code_email(
-                owner_name=payload.owner_name,
-                business_name=payload.business_name,
-                code=code,
-                ttl_minutes=REGISTRATION_CODE_TTL_MINUTES,
-            ),
+    try:
+        await sender.send(
+            OutgoingEmail(
+                to=email,
+                subject="Dixora · E-posta doğrulama kodunuz",
+                text_body=(
+                    f"Merhaba {payload.owner_name},\n\n"
+                    f"{payload.business_name} işletmenizi Dixora'da oluşturmak için "
+                    f"doğrulama kodunuz:\n\n    {code}\n\n"
+                    f"Kod {REGISTRATION_CODE_TTL_MINUTES} dakika geçerlidir.\n"
+                    "Bu isteği siz yapmadıysanız bu e-postayı yok sayabilirsiniz."
+                ),
+                html_body=registration_code_email(
+                    owner_name=payload.owner_name,
+                    business_name=payload.business_name,
+                    code=code,
+                    ttl_minutes=REGISTRATION_CODE_TTL_MINUTES,
+                ),
+            )
         )
-    )
+    except Exception:
+        # A provider rejection or outage used to surface as a bare 500 reading
+        # "beklenmedik bir hata". The signup is abandoned rather than committed:
+        # a verification row whose code was never delivered is unusable, and the
+        # applicant needs to know it was the address/mail step that failed.
+        await db.rollback()
+        logger.warning("registration.verification_email_failed", exc_info=True)
+        raise DomainError(
+            "verification_email_failed",
+            "Doğrulama e-postası gönderilemedi. Lütfen e-posta adresinizi "
+            "kontrol edip tekrar deneyin.",
+            status_code=502,
+        ) from None
     await db.commit()
 
     return BusinessRegistrationStartOut(
@@ -421,8 +483,17 @@ async def save_onboarding(
     record.monthly_order_volume = payload.monthly_order_volume
     record.table_count = payload.table_count
     record.heard_from = payload.heard_from
+    outcome = None
     if payload.completed and record.completed_at is None:
         record.completed_at = utcnow()
+        # Answers only mean something if they change the product: turn the
+        # table count into an actual floor plan on first completion.
+        outcome = await apply_onboarding(
+            db,
+            tenant_id=tenant_id,
+            branch_id=require_branch(identity),
+            record=record,
+        )
 
     add_audit_log(
         db,
@@ -434,6 +505,7 @@ async def save_onboarding(
             "offers_delivery": payload.offers_delivery,
             "delivery_platforms": payload.delivery_platforms,
             "completed": payload.completed,
+            **({"applied": outcome.as_dict()} if outcome else {}),
         },
     )
     await db.commit()
@@ -447,4 +519,5 @@ async def save_onboarding(
         table_count=record.table_count,
         heard_from=record.heard_from,
         completed=record.completed_at is not None,
+        applied=outcome.as_dict() if outcome else None,
     )

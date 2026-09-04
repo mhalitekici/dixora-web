@@ -3,9 +3,12 @@ from fastapi import APIRouter
 from app.api import (
     audit,
     auth,
+    billing,
     businesses,
+    campaigns,
     catalog,
     dashboard,
+    delivery,
     hotel_rooms,
     inventory,
     kitchen,
@@ -34,6 +37,9 @@ api_router.include_router(dashboard.router)
 api_router.include_router(catalog.router)
 api_router.include_router(media.router)
 api_router.include_router(tables.router)
+api_router.include_router(billing.router)
+api_router.include_router(campaigns.router)
+api_router.include_router(delivery.router)
 api_router.include_router(hotel_rooms.router)
 api_router.include_router(inventory.router)
 api_router.include_router(orders.router)

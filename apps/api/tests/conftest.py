@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
@@ -11,6 +12,7 @@ from app.db import Database
 from app.main import create_app
 from app.seed import seed_database
 from app.services.media_storage import InMemoryMediaStorage
+from app.services.rate_limit import close_rate_limiter, reset_fallback_state
 
 
 @dataclass
@@ -20,6 +22,22 @@ class ApiContext:
     settings: Settings
     app: Any
     media_storage: InMemoryMediaStorage
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def _isolate_rate_limits() -> AsyncIterator[None]:
+    """Rate-limit windows live in module state, so clear them between tests.
+
+    Without this one test's signup attempts count against the next one's, which
+    made unrelated registration tests fail once throttling was introduced.
+
+    The shared limiter is also closed afterwards: leaving its Redis connection
+    open leaked into later tests as an unraisable ResourceWarning.
+    """
+    reset_fallback_state()
+    yield
+    await close_rate_limiter()
+    reset_fallback_state()
 
 
 @pytest_asyncio.fixture
@@ -34,6 +52,16 @@ async def api() -> ApiContext:
         auto_create_schema=False,
         log_level="WARNING",
         media_public_base_url="http://test/api/v1/media",
+        # Pinned off even when REDIS_URL is present in the environment. Without
+        # this the suite shares one real Redis, so rate-limit windows leaked
+        # between tests and registration cases failed with 429 depending on
+        # what had run before them.
+        redis_url=None,
+        # Likewise pinned: running the suite inside the deployed container
+        # inherited DIXORA_EMAIL_PROVIDER=resend and the live API key, so tests
+        # tried to send real mail with production credentials.
+        email_provider="development",
+        resend_api_key=None,
     )
     database = Database(settings)
     await database.create_schema()

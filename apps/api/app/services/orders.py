@@ -9,8 +9,9 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
-from app.dependencies import Identity
+from app.dependencies import Identity, require_branch
 from app.errors import DomainError
 from app.models import (
     ApprovalRequest,
@@ -26,6 +27,7 @@ from app.models import (
     OrderItemModifier,
     OrderOperation,
     Payment,
+    PreparationStation,
     PrinterDevice,
     PrintJob,
     Product,
@@ -84,6 +86,98 @@ async def _station_printer_id(
             .limit(1)
         )
     ).scalar_one_or_none()
+
+
+def _sellable_here(tenant_id: UUID, branch_id: UUID) -> ColumnElement[bool]:
+    """Products a given branch is allowed to sell.
+
+    Every product is owned by exactly one branch, so a till can never ring up a
+    product that belongs to another location.
+    """
+    return Product.branch_id == branch_id
+
+
+def _require_active_branch(identity: Identity, branch_id: UUID) -> None:
+    """Block cross-branch approval actions until the operator switches branch."""
+    if branch_id != require_branch(identity):
+        raise DomainError("approval_not_found", "Approval request not found", status_code=404)
+
+
+async def branch_station_map(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    branch_id: UUID,
+    station_ids: set[UUID],
+) -> dict[UUID | None, UUID | None]:
+    """Translate the catalogue's stations into this branch's own.
+
+    A product belongs to the whole business but a preparation station belongs to
+    one branch, so `Product.preparation_station_id` can only ever name one
+    branch's grill. Left as-is, an order taken in Beşiktaş would carry Kadıköy's
+    station id: its ticket would still surface on the right board (tickets are
+    filtered by branch) but the station filter would never match it, and the
+    printer lookup — which asks for a device in *this* branch routed to *that*
+    station — would come back empty and the ticket would never print.
+
+    The catalogue entry is therefore read as a template and matched to the local
+    station by code, so "GRILL" means the grill of whichever branch is cooking.
+    Falling back to the name covers stations created before codes were used.
+    A station with no counterpart here resolves to None, exactly as an unset one
+    does, which leaves the line off the kitchen board rather than on a stranger's.
+    """
+    # A product with no station of its own keeps having none here.
+    resolved: dict[UUID | None, UUID | None] = {None: None}
+    if not station_ids:
+        return resolved
+    sources = (
+        (
+            await db.execute(
+                select(PreparationStation).where(
+                    PreparationStation.tenant_id == tenant_id,
+                    PreparationStation.id.in_(station_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    foreign = [station for station in sources if station.branch_id != branch_id]
+    resolved.update(
+        {station.id: station.id for station in sources if station.branch_id == branch_id}
+    )
+    if not foreign:
+        return resolved
+
+    local = (
+        (
+            await db.execute(
+                select(PreparationStation).where(
+                    PreparationStation.tenant_id == tenant_id,
+                    PreparationStation.branch_id == branch_id,
+                    PreparationStation.is_active.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_code = {station.code.casefold(): station.id for station in local}
+    by_name = {station.name.casefold(): station.id for station in local}
+    for station in foreign:
+        resolved[station.id] = by_code.get(station.code.casefold()) or by_name.get(
+            station.name.casefold()
+        )
+    return resolved
+
+
+def order_bill_reference(order_id: UUID) -> str:
+    """The short reference a guest reads off the bill, never a raw UUID.
+
+    Printed receipts and the admin order feed must agree on it, so both go
+    through here rather than formatting the id themselves.
+    """
+    return f"AD-{str(order_id).split('-')[0].upper()}"
 
 
 async def load_order(
@@ -228,6 +322,7 @@ async def create_order(
                     Product.id.in_(product_ids),
                     Product.is_active.is_(True),
                     Product.is_available.is_(True),
+                    _sellable_here(tenant_id, branch_id),
                 )
             )
         )
@@ -305,6 +400,17 @@ async def create_order(
     db.add(order)
     await db.flush()
 
+    station_map = await branch_station_map(
+        db,
+        tenant_id=tenant_id,
+        branch_id=branch_id,
+        station_ids={
+            product.preparation_station_id
+            for product in product_map.values()
+            if product.preparation_station_id is not None
+        },
+    )
+
     subtotal = Decimal("0.00")
     for input_item in payload.items:
         product = product_map[input_item.product_id]
@@ -322,7 +428,7 @@ async def create_order(
             branch_id=branch_id,
             order_id=order.id,
             product_id=product.id,
-            preparation_station_id=product.preparation_station_id,
+            preparation_station_id=station_map.get(product.preparation_station_id),
             product_name_snapshot=product.name,
             unit_price=unit_price,
             quantity=input_item.quantity,
@@ -423,6 +529,7 @@ async def append_order_items(
                     Product.id.in_(product_ids),
                     Product.is_active.is_(True),
                     Product.is_available.is_(True),
+                    _sellable_here(tenant_id, order.branch_id),
                 )
             )
         )
@@ -482,6 +589,17 @@ async def append_order_items(
                         status_code=409,
                     )
 
+    station_map = await branch_station_map(
+        db,
+        tenant_id=tenant_id,
+        branch_id=order.branch_id,
+        station_ids={
+            product.preparation_station_id
+            for product in product_map.values()
+            if product.preparation_station_id is not None
+        },
+    )
+
     new_items: list[OrderItem] = []
     subtotal_delta = Decimal("0.00")
     now = datetime.now(UTC)
@@ -501,7 +619,7 @@ async def append_order_items(
             branch_id=order.branch_id,
             order=order,
             product_id=product.id,
-            preparation_station_id=product.preparation_station_id,
+            preparation_station_id=station_map.get(product.preparation_station_id),
             product_name_snapshot=product.name,
             unit_price=unit_price,
             quantity=input_item.quantity,
@@ -857,6 +975,38 @@ async def accept_order(
     return order
 
 
+async def mark_order_bill_requested(db: AsyncSession, *, order: Order) -> Order:
+    """Move an in-service order into the bill-requested stage exactly once."""
+
+    if order.status in {OrderStatus.BILL_REQUESTED, OrderStatus.PAYMENT_PENDING}:
+        return order
+    if order.status in {OrderStatus.CANCELLED, OrderStatus.VOIDED, OrderStatus.PAID}:
+        raise DomainError(
+            "invalid_order_transition", "Bill cannot be requested now", status_code=409
+        )
+    if order.status not in {
+        OrderStatus.ACCEPTED,
+        OrderStatus.PREPARING,
+        OrderStatus.PARTIALLY_READY,
+        OrderStatus.READY,
+        OrderStatus.SERVED,
+    }:
+        raise DomainError(
+            "invalid_order_transition", "Bill cannot be requested now", status_code=409
+        )
+    order.status = OrderStatus.BILL_REQUESTED
+    order.version += 1
+    if order.table_session_id:
+        table_session = await db.get(TableSession, order.table_session_id)
+        if table_session:
+            table = await db.get(DiningTable, table_session.table_id)
+            if table:
+                table.state = TableState.BILL_REQUESTED
+                table.version += 1
+    await db.flush()
+    return order
+
+
 async def add_payment(
     db: AsyncSession,
     *,
@@ -945,6 +1095,13 @@ async def add_payment(
         )
     else:
         order.status = OrderStatus.PAYMENT_PENDING
+        if order.table_session_id:
+            table_session = await db.get(TableSession, order.table_session_id)
+            if table_session and table_session.status == TableSessionStatus.OPEN:
+                table = await db.get(DiningTable, table_session.table_id)
+                if table:
+                    table.state = TableState.PAYMENT_PENDING
+                    table.version += 1
     order.version += 1
     return payment
 
@@ -1054,6 +1211,7 @@ async def approve_discount(
     ).scalar_one_or_none()
     if approval is None:
         raise DomainError("approval_not_found", "Approval request not found", status_code=404)
+    _require_active_branch(identity, approval.branch_id)
     if approval.status != ApprovalStatus.PENDING:
         return approval
     if approval.order_id is None:
@@ -1125,6 +1283,7 @@ async def reject_cancellation(
     ).scalar_one_or_none()
     if approval is None:
         raise DomainError("approval_not_found", "Approval request not found", status_code=404)
+    _require_active_branch(identity, approval.branch_id)
     if approval.status != ApprovalStatus.PENDING:
         return approval
     approval.status = ApprovalStatus.REJECTED
@@ -1160,6 +1319,7 @@ async def reject_discount(
     ).scalar_one_or_none()
     if approval is None:
         raise DomainError("approval_not_found", "Approval request not found", status_code=404)
+    _require_active_branch(identity, approval.branch_id)
     if approval.status != ApprovalStatus.PENDING:
         return approval
     approval.status = ApprovalStatus.REJECTED
@@ -1660,6 +1820,7 @@ async def approve_cancellation(
     ).scalar_one_or_none()
     if approval is None:
         raise DomainError("approval_not_found", "Approval request not found", status_code=404)
+    _require_active_branch(identity, approval.branch_id)
     if approval.status != ApprovalStatus.PENDING:
         return approval
     assert approval.order_id is not None

@@ -69,6 +69,17 @@ type QrTranslationKey =
   | "request_number_label"
   | "request_status_footer"
   | "back_to_menu"
+  | "active_check_title"
+  | "active_check_desc"
+  | "active_check_total"
+  | "active_check_remaining"
+  | "request_bill"
+  | "request_bill_pending"
+  | "request_bill_success"
+  | "request_bill_failed"
+  | "request_bill_failed_desc"
+  | "bill_already_requested"
+  | "bill_request_no_active_order"
 
 const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
   tr: {
@@ -134,6 +145,17 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     request_status_footer:
       "Bu ekran sunucunun son onaylı durumunu gösterir. Güncel bilgi için servis personeline başvurabilirsiniz.",
     back_to_menu: "Menüye dön",
+    active_check_title: "Masanızın açık hesabı",
+    active_check_desc: "Siparişiniz bu masaya bağlı kaldığı sürece hesabı buradan isteyebilirsiniz.",
+    active_check_total: "Toplam",
+    active_check_remaining: "Kalan",
+    request_bill: "Hesap iste",
+    request_bill_pending: "Hesap isteniyor…",
+    request_bill_success: "Hesap talebiniz kasaya iletildi",
+    request_bill_failed: "Hesap talebi gönderilemedi",
+    request_bill_failed_desc: "Lütfen bağlantınızı kontrol edip tekrar deneyin.",
+    bill_already_requested: "Hesap talebiniz alındı. Personel ödemeniz için fişi hazırlıyor.",
+    bill_request_no_active_order: "Hesap isteyebilmek için bu masada aktif bir sipariş olmalıdır.",
   },
   en: {
     search_placeholder: "Search the menu",
@@ -197,6 +219,17 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     request_status_footer:
       "This screen shows the last confirmed status from the server. Ask staff for the latest update.",
     back_to_menu: "Back to menu",
+    active_check_title: "Open check for your table",
+    active_check_desc: "As long as this table stays open, you can request the bill from here.",
+    active_check_total: "Total",
+    active_check_remaining: "Remaining",
+    request_bill: "Request bill",
+    request_bill_pending: "Requesting bill…",
+    request_bill_success: "Your bill request was sent to the cashier",
+    request_bill_failed: "Bill request couldn't be sent",
+    request_bill_failed_desc: "Please check your connection and try again.",
+    bill_already_requested: "Your bill request is already in progress. Staff are preparing it for payment.",
+    bill_request_no_active_order: "An active order is required before you can request the bill.",
   },
   ru: {
     search_placeholder: "Поиск по меню",
@@ -261,6 +294,17 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     request_status_footer:
       "Этот экран показывает последний подтверждённый статус с сервера. За актуальной информацией обратитесь к персоналу.",
     back_to_menu: "Назад в меню",
+    active_check_title: "Открытый счёт вашего стола",
+    active_check_desc: "Пока этот стол открыт, вы можете запросить счёт прямо отсюда.",
+    active_check_total: "Итого",
+    active_check_remaining: "Остаток",
+    request_bill: "Запросить счёт",
+    request_bill_pending: "Запрашиваем счёт…",
+    request_bill_success: "Запрос на счёт отправлен кассе",
+    request_bill_failed: "Не удалось отправить запрос на счёт",
+    request_bill_failed_desc: "Проверьте соединение и попробуйте снова.",
+    bill_already_requested: "Запрос на счёт уже принят. Персонал готовит чек к оплате.",
+    bill_request_no_active_order: "Сначала нужно оформить активный заказ на этом столе.",
   },
 }
 

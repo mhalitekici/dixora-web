@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from typing import Any
@@ -22,12 +23,25 @@ from app.schemas import TokenPair
 password_hasher = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4)
 
 
+# Tolerance for time claims (iat/nbf/exp).
+#
+# Without it a token was rejected as "not yet valid" whenever the verifying
+# clock read even a fraction of a second behind the issuing one — which happens
+# on any NTP correction, and across workers or hosts that are not perfectly in
+# step. The failure looked like a random logout. Half a minute is far too small
+# to matter against a 15-minute token, and iat is not a security control.
+CLOCK_SKEW_LEEWAY = timedelta(seconds=30)
+
+
 def utcnow() -> datetime:
     return datetime.now(UTC)
 
 
 def as_utc(value: datetime) -> datetime:
     return value.replace(tzinfo=UTC) if value.tzinfo is None else value.astimezone(UTC)
+
+
+logger = logging.getLogger(__name__)
 
 
 def hash_password(password: str) -> str:
@@ -39,6 +53,13 @@ def verify_password(password: str, password_hash: str) -> bool:
         return password_hasher.verify(password_hash, password)
     except (VerifyMismatchError, InvalidHashError):
         return False
+    except Exception:
+        # Anything else — an argon2 memory failure, a corrupted parameter — is
+        # not a wrong password. Returning False anyway would report it to the
+        # user as "invalid credentials" and leave no trace to diagnose, which
+        # is exactly how an intermittent infrastructure fault hides.
+        logger.exception("auth.password_verify_failed")
+        raise
 
 
 def refresh_jti_hash(jti: str) -> str:
@@ -102,10 +123,18 @@ def decode_token(
             algorithms=[settings.jwt_algorithm],
             audience="dixora-app",
             issuer="dixora-api",
+            leeway=CLOCK_SKEW_LEEWAY,
         )
     except jwt.ExpiredSignatureError as exc:
         raise DomainError("token_expired", "Token has expired", status_code=401) from exc
     except jwt.PyJWTError as exc:
+        # The concrete PyJWT error is the only thing that distinguishes a
+        # forged token from a clock or configuration fault.
+        logger.warning(
+            "auth.token_decode_failed error=%s detail=%s",
+            type(exc).__name__,
+            exc,
+        )
         raise DomainError("invalid_token", "Token is invalid", status_code=401) from exc
     if expected_type and payload.get("typ") != expected_type:
         raise DomainError("invalid_token_type", "Unexpected token type", status_code=401)

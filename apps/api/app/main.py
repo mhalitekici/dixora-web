@@ -17,6 +17,7 @@ from app.logging import bind_request_context, configure_logging, logger
 from app.observability import configure_sentry
 from app.realtime import RealtimeBroadcaster, RealtimeHub, RedisRealtimeHub
 from app.services.media_storage import MediaStorage, create_media_storage
+from app.services.rate_limit import close_rate_limiter
 
 
 def create_app(
@@ -56,15 +57,21 @@ def create_app(
         yield
         if isinstance(realtime, RedisRealtimeHub):
             await realtime.stop()
+        await close_rate_limiter()
         await app_database.dispose()
         logger.info("application.stopped")
 
+    # The schema documents every route, its payloads and its error codes — a
+    # ready-made map for anyone probing the deployment. It stays on everywhere
+    # it is useful and off in production, where the people who need it can read
+    # it from a staging instance or the repository.
+    docs_enabled = app_settings.environment != "production" or app_settings.expose_api_docs
     application = FastAPI(
         title=app_settings.app_name,
         version="0.1.0",
-        openapi_url=f"{app_settings.api_prefix}/openapi.json",
-        docs_url=f"{app_settings.api_prefix}/docs",
-        redoc_url=f"{app_settings.api_prefix}/redoc",
+        openapi_url=f"{app_settings.api_prefix}/openapi.json" if docs_enabled else None,
+        docs_url=f"{app_settings.api_prefix}/docs" if docs_enabled else None,
+        redoc_url=f"{app_settings.api_prefix}/redoc" if docs_enabled else None,
         lifespan=lifespan,
     )
     application.state.settings = app_settings

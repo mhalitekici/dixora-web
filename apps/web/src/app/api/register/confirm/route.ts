@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { z } from "zod";
 
 import { backendFetch } from "@/lib/server/backend";
+import { clientAddressHeaders } from "@/lib/server/client-address";
 import { mutationOriginError } from "@/lib/server/request-security";
 import {
   apiErrorResponse,
@@ -77,10 +78,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         accept: "application/json",
         "content-type": "application/json",
         "user-agent": request.headers.get("user-agent") ?? "Dixora Web BFF",
-        "x-forwarded-for":
-          request.headers.get("x-forwarded-for") ??
-          request.headers.get("x-real-ip") ??
-          "",
+        ...clientAddressHeaders(request),
         "x-request-id":
           request.headers.get("x-request-id") ?? crypto.randomUUID(),
       },

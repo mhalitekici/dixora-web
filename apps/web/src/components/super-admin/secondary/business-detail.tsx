@@ -209,7 +209,8 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
       ])
       setReactivateOpen(false)
       setReactivateNote("")
-      toast.success("Üyelik etkinleştirildi ve süre uzatıldı.")
+      setExtendDays("30")
+      toast.success("Abonelik süresi güncellendi.")
     },
     onError: (error) => {
       toast.error(
@@ -321,10 +322,10 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
                 Askıya al
               </Button>
             )}
-            {!activeNow && business.state !== "ARCHIVED" ? (
+            {business.state !== "ARCHIVED" ? (
               <Button variant="outline" onClick={() => setReactivateOpen(true)}>
                 <RefreshCw />
-                Üyeliği uzat / aktifleştir
+                Aboneliği manuel uzat
               </Button>
             ) : null}
           </>
@@ -707,11 +708,11 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
       >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
-            <DialogTitle>Üyeliği uzat / aktifleştir</DialogTitle>
+            <DialogTitle>Aboneliği manuel uzat</DialogTitle>
             <DialogDescription>
-              {business.name} için ödeme alındıktan sonra bu işlemi kullanın.
-              Tenant durumu ACTIVE olarak ayarlanır ve abonelik bitiş tarihi
-              bugünden itibaren uzatılır.
+              {business.name} için bu işlem tenantı ACTIVE durumuna taşır.
+              Abonelik bitişi gelecekteyse mevcut tarihin üstüne eklenir; geçmişteyse
+              4 Eylül 2026 tarihinden itibaren uzatılır.
             </DialogDescription>
           </DialogHeader>
 

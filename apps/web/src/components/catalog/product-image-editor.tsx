@@ -34,6 +34,8 @@ export type ProductImageEditorSource = {
   url: string
 }
 
+const DEFAULT_CROP_ZOOM = 1.08
+
 export function ProductImageEditor({
   open,
   source,
@@ -53,7 +55,7 @@ export function ProductImageEditor({
   const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null)
   const [viewportSize, setViewportSize] = useState(0)
   const [position, setPosition] = useState<CropPosition>({ x: 0, y: 0 })
-  const [zoom, setZoom] = useState(1)
+  const [zoom, setZoom] = useState(DEFAULT_CROP_ZOOM)
   const [outputSize, setOutputSize] = useState(1200)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -252,7 +254,7 @@ export function ProductImageEditor({
                 id="product-image-zoom"
                 name="product-image-zoom"
                 type="range"
-                min="1"
+                min={DEFAULT_CROP_ZOOM}
                 max="3"
                 step="0.05"
                 value={zoom}
@@ -282,9 +284,9 @@ export function ProductImageEditor({
               type="button"
               variant="outline"
               className="w-full"
-              disabled={busy || (zoom === 1 && position.x === 0 && position.y === 0)}
+              disabled={busy || (zoom === DEFAULT_CROP_ZOOM && position.x === 0 && position.y === 0)}
               onClick={() => {
-                setZoom(1)
+                setZoom(DEFAULT_CROP_ZOOM)
                 setPosition({ x: 0, y: 0 })
               }}
             >

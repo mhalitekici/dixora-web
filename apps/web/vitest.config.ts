@@ -29,5 +29,8 @@ export default defineConfig({
     mockReset: true,
     restoreMocks: true,
     setupFiles: ["./src/test/setup.ts"],
+    // Must exceed the asyncUtilTimeout set in the setup file, or a waitFor can
+    // never use its budget: the test aborts first and reports a bare timeout.
+    testTimeout: 15_000,
   },
 })

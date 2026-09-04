@@ -8,7 +8,14 @@ from fastapi import APIRouter, Depends, status
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
-from app.dependencies import DbSession, Identity, require_permissions, require_tenant
+from app.dependencies import (
+    DbSession,
+    Identity,
+    require_branch,
+    require_permissions,
+    require_record_branch,
+    require_tenant,
+)
 from app.errors import DomainError
 from app.models import (
     AuthSession,
@@ -42,6 +49,7 @@ from app.schemas import (
 )
 from app.security import hash_password, utcnow
 from app.services.audit import add_audit_log
+from app.services.branch_setup import provision_branch
 from app.services.pricing import branch_pricing_for_tenant
 
 router = APIRouter(tags=["organization"])
@@ -95,17 +103,48 @@ async def _tenant_role(db: DbSession, tenant_id: UUID, role_id: UUID) -> Role:
     return role
 
 
-async def _tenant_branch(db: DbSession, tenant_id: UUID, branch_id: UUID | None) -> Branch | None:
+async def _tenant_branch(
+    db: DbSession,
+    identity: Identity,
+    branch_id: UUID | None,
+) -> Branch | None:
+    """Load a branch of this business that the caller is allowed to act on.
+
+    Access is checked here rather than at each call site because every route
+    that names a branch by id needs the same answer, and the one that forgets to
+    ask is how a manager pinned to one branch ends up renaming another's.
+    """
     if branch_id is None:
         return None
     branch = (
         await db.execute(
-            select(Branch).where(Branch.id == branch_id, Branch.tenant_id == tenant_id)
+            select(Branch).where(
+                Branch.id == branch_id, Branch.tenant_id == require_tenant(identity)
+            )
         )
     ).scalar_one_or_none()
     if branch is None:
         raise DomainError("branch_not_found", "Branch not found", status_code=404)
+    require_record_branch(identity, branch.id)
     return branch
+
+
+def _assert_user_in_scope(identity: Identity, user: User) -> None:
+    """A branch-pinned manager may only act on staff from branches they cover.
+
+    A user with no branch spans the whole business, so only a caller who also
+    spans it may touch them — otherwise a manager pinned to one branch could
+    reset the owner's password from their own employee screen.
+    """
+    if user.branch_id is None:
+        if not identity.has_all_branch_access:
+            raise DomainError(
+                "branch_forbidden",
+                "You do not have access to this employee",
+                status_code=403,
+            )
+        return
+    require_record_branch(identity, user.branch_id)
 
 
 async def _tenant_station(
@@ -140,6 +179,7 @@ async def _tenant_station(
 async def _validate_employee_scope(
     db: DbSession,
     *,
+    identity: Identity,
     tenant_id: UUID,
     role: Role,
     branch_id: UUID | None,
@@ -165,7 +205,7 @@ async def _validate_employee_scope(
             "This employee role requires a branch",
             status_code=422,
         )
-    await _tenant_branch(db, tenant_id, branch_id)
+    await _tenant_branch(db, identity, branch_id)
     if role.code == "KITCHEN":
         if station_id is None:
             raise DomainError(
@@ -213,14 +253,13 @@ async def _branch_usage(db: DbSession, tenant_id: UUID) -> BranchUsageOut:
 
 @router.get("/branches", response_model=list[BranchOut])
 async def list_branches(identity: SettingsManager, db: DbSession) -> list[BranchOut]:
+    predicates = [Branch.tenant_id == require_tenant(identity)]
+    if not identity.has_all_branch_access:
+        # The branch switcher is built from this list, so a pinned user must see
+        # exactly the branches they may act in and no more.
+        predicates.append(Branch.id.in_(identity.accessible_branch_ids))
     rows = (
-        (
-            await db.execute(
-                select(Branch)
-                .where(Branch.tenant_id == require_tenant(identity))
-                .order_by(Branch.name)
-            )
-        )
+        (await db.execute(select(Branch).where(*predicates).order_by(Branch.name)))
         .scalars()
         .all()
     )
@@ -261,6 +300,10 @@ async def create_branch(
     branch = Branch(tenant_id=tenant_id, **payload.model_dump())
     db.add(branch)
     await db.flush()
+    # An empty branch cannot take an order: tickets are grouped by station and it
+    # has none, and every inventory-tracked product is refused for want of a
+    # recipe. Both are copied from a branch that already works.
+    setup = await provision_branch(db, tenant_id=tenant_id, branch=branch)
     add_audit_log(
         db,
         identity=identity,
@@ -268,7 +311,7 @@ async def create_branch(
         resource_type="branch",
         resource_id=branch.id,
         branch_id=branch.id,
-        new_value={"name": branch.name, "slug": branch.slug},
+        new_value={"name": branch.name, "slug": branch.slug, "setup": setup.as_dict()},
     )
     await db.commit()
     return BranchOut.model_validate(branch)
@@ -281,7 +324,7 @@ async def update_branch(
     identity: SettingsManager,
     db: DbSession,
 ) -> BranchOut:
-    branch = await _tenant_branch(db, require_tenant(identity), branch_id)
+    branch = await _tenant_branch(db, identity, branch_id)
     assert branch is not None
     previous = {"name": branch.name, "is_active": branch.is_active}
     changes = payload.model_dump(exclude_unset=True)
@@ -368,7 +411,7 @@ async def archive_branch(
     every order, payment and audit row stays queryable for reporting.
     """
     tenant_id = require_tenant(identity)
-    branch = await _tenant_branch(db, tenant_id, branch_id)
+    branch = await _tenant_branch(db, identity, branch_id)
     assert branch is not None
     if not branch.is_active:
         return BranchOut.model_validate(branch)
@@ -405,7 +448,7 @@ async def restore_branch(
 ) -> BranchOut:
     """Bring an archived branch back into service (and back onto the bill)."""
     tenant_id = require_tenant(identity)
-    branch = await _tenant_branch(db, tenant_id, branch_id)
+    branch = await _tenant_branch(db, identity, branch_id)
     assert branch is not None
     if branch.is_active:
         return BranchOut.model_validate(branch)
@@ -450,6 +493,8 @@ async def get_user_branch_access(
     ).scalar_one_or_none()
     if user is None:
         raise DomainError("user_not_found", "User not found", status_code=404)
+    _assert_user_in_scope(identity, user)
+    _assert_user_in_scope(identity, user)
     memberships = (
         (
             await db.execute(
@@ -492,6 +537,8 @@ async def set_user_branch_access(
     ).scalar_one_or_none()
     if user is None:
         raise DomainError("user_not_found", "User not found", status_code=404)
+    _assert_user_in_scope(identity, user)
+    _assert_user_in_scope(identity, user)
     if user.branch_id is None:
         raise DomainError(
             "user_already_business_wide",
@@ -518,6 +565,9 @@ async def set_user_branch_access(
                 "One or more branches were not found",
                 status_code=404,
             )
+        # Nobody may grant access wider than their own.
+        for candidate in requested:
+            require_record_branch(identity, candidate)
 
     # The primary branch is implicit and cannot be revoked here.
     requested.discard(user.branch_id)
@@ -561,11 +611,17 @@ async def set_user_branch_access(
 
 @router.get("/users", response_model=list[UserOut])
 async def list_users(identity: UserManager, db: DbSession) -> list[UserOut]:
+    selected_branch = require_branch(identity)
+    predicates = [User.tenant_id == require_tenant(identity), User.branch_id == selected_branch]
+    if not identity.has_all_branch_access:
+        # A pinned manager manages their own branches' staff. Listing colleagues
+        # they cannot edit would only be a roster of 403s.
+        predicates.append(User.branch_id.in_(identity.accessible_branch_ids))
     rows = (
         (
             await db.execute(
                 select(User)
-                .where(User.tenant_id == require_tenant(identity))
+                .where(*predicates)
                 .options(selectinload(User.role).selectinload(Role.permissions))
                 .order_by(User.display_name)
             )
@@ -586,6 +642,7 @@ async def create_user(
     role = await _tenant_role(db, tenant_id, payload.role_id)
     await _validate_employee_scope(
         db,
+        identity=identity,
         tenant_id=tenant_id,
         role=role,
         branch_id=payload.branch_id,
@@ -646,6 +703,7 @@ async def update_user(
     ).scalar_one_or_none()
     if user is None:
         raise DomainError("user_not_found", "User not found", status_code=404)
+    _assert_user_in_scope(identity, user)
     data = payload.model_dump(exclude_unset=True)
     if user.role.code == "BUSINESS_OWNER" and any(
         field in data for field in {"role_id", "branch_id", "preparation_station_id", "is_active"}
@@ -665,6 +723,7 @@ async def update_user(
     if user.role.code in ASSIGNABLE_ROLE_PRESETS:
         await _validate_employee_scope(
             db,
+            identity=identity,
             tenant_id=tenant_id,
             role=user.role,
             branch_id=desired_branch_id,
@@ -678,7 +737,7 @@ async def update_user(
         )
     else:
         if "branch_id" in data:
-            await _tenant_branch(db, tenant_id, desired_branch_id)
+            await _tenant_branch(db, identity, desired_branch_id)
         if "preparation_station_id" in data:
             await _tenant_station(db, tenant_id, desired_branch_id, desired_station_id)
     previous_active = user.is_active
@@ -716,6 +775,7 @@ async def reset_user_password(
     ).scalar_one_or_none()
     if user is None:
         raise DomainError("user_not_found", "User not found", status_code=404)
+    _assert_user_in_scope(identity, user)
     user.password_hash = hash_password(payload.password)
     await db.execute(
         update(AuthSession)
@@ -746,6 +806,7 @@ async def set_user_pin(
     ).scalar_one_or_none()
     if user is None:
         raise DomainError("user_not_found", "User not found", status_code=404)
+    _assert_user_in_scope(identity, user)
     user.pin_hash = hash_password(payload.pin) if payload.pin else None
     add_audit_log(
         db,

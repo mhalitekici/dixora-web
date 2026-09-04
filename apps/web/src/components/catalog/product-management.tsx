@@ -7,6 +7,7 @@ import {
   Check,
   ChefHat,
   CircleOff,
+  Download,
   ImageIcon,
   Loader2,
   MoreHorizontal,
@@ -36,6 +37,7 @@ import {
   type ProductImageEditorSource,
 } from "@/components/catalog/product-image-editor";
 import { EmptyState } from "@/components/shared/empty-state";
+import { ProductTransfer } from "@/components/catalog/product-transfer";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
 import { Button } from "@/components/ui/button";
@@ -120,6 +122,20 @@ type SaveProductInput = {
   values: ProductFormValues;
   productId?: string;
   imageFile: File | null;
+};
+
+type CentreCatalogStatus = {
+  is_centre: boolean;
+  can_import: boolean;
+  imported_at: string | null;
+  source_name: string | null;
+};
+
+type CentreCatalogSyncResult = {
+  categories_created: number;
+  categories_updated: number;
+  products_created: number;
+  products_updated: number;
 };
 
 const MAX_PRODUCT_IMAGE_BYTES = 5 * 1024 * 1024;
@@ -271,8 +287,13 @@ export function ProductManagement() {
       unwrapList<Station>(await request<unknown>("/catalog/stations")),
     staleTime: 30_000,
   });
+  const centreStatusQuery = useQuery({
+    queryKey: ["catalog", "centre-status"],
+    queryFn: () => request<CentreCatalogStatus>("/catalog/centre/status"),
+    staleTime: 30_000,
+  });
 
-  const categories = categoriesQuery.data ?? [];
+  const categories = (categoriesQuery.data ?? []).filter((category) => category.is_active !== false);
   const products = useMemo(() => productsQuery.data ?? [], [productsQuery.data]);
   const stations = stationsQuery.data ?? [];
 
@@ -459,6 +480,26 @@ export function ProductManagement() {
     onError: (error) => toast.error(error instanceof Error ? error.message : "Ürün güncellenemedi."),
   });
 
+  const centreSyncMutation = useMutation({
+    mutationFn: (initialImport: boolean) =>
+      request<CentreCatalogSyncResult>(
+        initialImport ? "/catalog/centre/import" : "/catalog/centre/sync",
+        { method: "POST" },
+      ),
+    onSuccess: (result, initialImport) => {
+      toast.success(
+        initialImport ? "Merkez ürünleri şubeye getirildi." : "Merkez ürünleri güncellendi.",
+        {
+          description: `${result.categories_created} kategori ve ${result.products_created} ürün eklendi; ${result.categories_updated} kategori ve ${result.products_updated} ürün güncellendi.`,
+        },
+      );
+      void queryClient.invalidateQueries({ queryKey: ["catalog"] });
+      void invalidateProductReadModels(queryClient);
+    },
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Merkez kataloğu güncellenemedi."),
+  });
+
   const filtered = useMemo(
     () =>
       products.filter((product) => {
@@ -556,6 +597,29 @@ export function ProductManagement() {
       icon={PackageOpen}
       actions={
         <>
+          {!centreStatusQuery.data?.is_centre && centreStatusQuery.data?.can_import ? (
+            <Button
+              variant="outline"
+              className="h-10 rounded-xl"
+              disabled={centreSyncMutation.isPending}
+              onClick={() => centreSyncMutation.mutate(true)}
+            >
+              {centreSyncMutation.isPending ? <Loader2 className="animate-spin" /> : <Download />}
+              Merkezden ürünleri getir
+            </Button>
+          ) : null}
+          {!centreStatusQuery.data?.is_centre && centreStatusQuery.data?.imported_at ? (
+            <Button
+              variant="outline"
+              className="h-10 rounded-xl"
+              disabled={centreSyncMutation.isPending}
+              onClick={() => centreSyncMutation.mutate(false)}
+            >
+              <RefreshCw className={centreSyncMutation.isPending ? "animate-spin" : undefined} />
+              Merkezden güncelle
+            </Button>
+          ) : null}
+          <ProductTransfer />
           <Button
             className="h-10 rounded-xl"
             disabled={
@@ -647,6 +711,10 @@ export function ProductManagement() {
         filters={
           <>
             <Select
+              items={[
+                { value: "all", label: "Tüm kategoriler" },
+                ...categories.map((category) => ({ value: category.id, label: category.name })),
+              ]}
               value={categoryFilter}
               onValueChange={(value) => setCategoryFilter(value ?? "all")}
             >
@@ -1037,6 +1105,10 @@ export function ProductManagement() {
                 <div className="space-y-2">
                   <Label>Ürün kategorisi</Label>
                   <Select
+                    items={categories.map((category) => ({
+                      value: category.id,
+                      label: category.name,
+                    }))}
                     value={formValues.category_id}
                     onValueChange={(value) =>
                       form.setValue("category_id", value ?? "", {
@@ -1085,6 +1157,12 @@ export function ProductManagement() {
               <div className="space-y-2 sm:col-span-1">
                 <Label htmlFor="station">İstasyon</Label>
                 <Select
+                  items={[
+                    { value: "unassigned", label: "Atanmamış" },
+                    ...stations
+                      .filter((station) => station.is_active !== false)
+                      .map((station) => ({ value: station.id, label: station.name })),
+                  ]}
                   value={formValues.preparation_station_id || "unassigned"}
                   onValueChange={(value) =>
                     form.setValue(
@@ -1098,7 +1176,7 @@ export function ProductManagement() {
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="unassigned">Atanmamış</SelectItem>
-                    {stations.map((station) => (
+                    {stations.filter((station) => station.is_active !== false).map((station) => (
                       <SelectItem key={station.id} value={station.id}>
                         {station.name}
                       </SelectItem>

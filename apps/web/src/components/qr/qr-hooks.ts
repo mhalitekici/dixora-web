@@ -8,6 +8,7 @@ import {
 
 import { qrApi } from "@/components/qr/qr-api"
 import type {
+  PublicBillRequestCreate,
   QrConfigInput,
   QrRequestCreate,
   QrRequestStatus,
@@ -53,6 +54,16 @@ export function useCreatePublicQrRequest(
   return useMutation({
     mutationFn: (payload: QrRequestCreate) =>
       qrApi.createPublicRequest(businessSlug, branchSlug, payload),
+  })
+}
+
+export function useCreatePublicBillRequest(
+  businessSlug: string,
+  branchSlug: string,
+) {
+  return useMutation({
+    mutationFn: (payload: PublicBillRequestCreate) =>
+      qrApi.createPublicBillRequest(businessSlug, branchSlug, payload),
   })
 }
 

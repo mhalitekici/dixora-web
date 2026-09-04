@@ -16,7 +16,7 @@ export function LandingFooter() {
           <a href="#akis">Akış</a>
           <a href="#fiyatlandirma">Fiyatlandırma</a>
           <Link href="/login">İşletme girişi</Link>
-          <Link href="/login?mode=waiter">Garson girişi</Link>
+          <Link href="/login?mode=staff">Çalışan girişi</Link>
         </nav>
         <p>© 2026 Dixora · İşletme operasyon platformu</p>
       </div>

@@ -5,7 +5,13 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 
-from app.dependencies import DbSession, Identity, require_permissions, require_tenant
+from app.dependencies import (
+    DbSession,
+    Identity,
+    require_branch,
+    require_permissions,
+    require_tenant,
+)
 from app.models import AuditLog
 
 router = APIRouter(prefix="/audit-logs", tags=["audit"])
@@ -19,11 +25,13 @@ async def list_audit_logs(
     action: str | None = None,
     limit: int = Query(default=100, ge=1, le=250),
 ) -> list[dict[str, object]]:
-    predicates = (
-        []
-        if identity.is_super_admin
-        else [AuditLog.tenant_id == require_tenant(identity)]
-    )
+    # A platform super admin has neither business nor branch context: scoping
+    # them to one would leave the platform audit view permanently empty. Every
+    # business user stays pinned to their own branch's trail.
+    predicates = []
+    if not identity.is_super_admin:
+        predicates.append(AuditLog.tenant_id == require_tenant(identity))
+        predicates.append(AuditLog.branch_id == require_branch(identity))
     if action:
         predicates.append(AuditLog.action == action)
     rows = (

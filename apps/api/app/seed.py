@@ -219,7 +219,7 @@ async def seed_database(db: AsyncSession) -> None:
         categories[name] = await _one_or_create(
             db,
             Category,
-            {"tenant_id": tenant.id, "branch_id": None, "name": name},
+            {"tenant_id": tenant.id, "branch_id": branch.id, "name": name},
             {"sort_order": index, "is_active": True},
         )
 
@@ -253,7 +253,7 @@ async def seed_database(db: AsyncSession) -> None:
         products[name] = await _one_or_create(
             db,
             Product,
-            {"tenant_id": tenant.id, "name": name},
+            {"tenant_id": tenant.id, "branch_id": branch.id, "name": name},
             {
                 "category_id": categories[category_name].id,
                 "preparation_station_id": stations[station_code].id,

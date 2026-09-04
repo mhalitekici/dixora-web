@@ -16,8 +16,8 @@ describe("public entry links", () => {
       screen.getByRole("link", { name: "İşletme girişi" }),
     ).toHaveAttribute("href", "/login")
     expect(
-      screen.getByRole("link", { name: "Garson girişi" }),
-    ).toHaveAttribute("href", "/login?mode=waiter")
+      screen.getByRole("link", { name: "Çalışan girişi" }),
+    ).toHaveAttribute("href", "/login?mode=staff")
   })
 
   it("keeps both entry choices available in the footer", () => {
@@ -27,7 +27,7 @@ describe("public entry links", () => {
       screen.getByRole("link", { name: "İşletme girişi" }),
     ).toHaveAttribute("href", "/login")
     expect(
-      screen.getByRole("link", { name: "Garson girişi" }),
-    ).toHaveAttribute("href", "/login?mode=waiter")
+      screen.getByRole("link", { name: "Çalışan girişi" }),
+    ).toHaveAttribute("href", "/login?mode=staff")
   })
 })

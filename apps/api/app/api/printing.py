@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import secrets
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -16,6 +17,7 @@ from app.dependencies import (
     get_app_settings,
     require_branch,
     require_permissions,
+    require_record_branch,
     require_tenant,
 )
 from app.errors import DomainError
@@ -28,7 +30,7 @@ from app.models import (
     PrinterDevice,
     PrintJob,
 )
-from app.models.enums import PrintJobStatus
+from app.models.enums import OrderStatus, PaymentStatus, PrintJobStatus
 from app.schemas import (
     BridgeStatusUpdate,
     PrintBridgeCreate,
@@ -41,6 +43,11 @@ from app.schemas import (
     PrintJobOut,
 )
 from app.services.audit import add_audit_log
+from app.services.orders import (
+    load_order,
+    mark_order_bill_requested,
+    order_bill_reference,
+)
 
 router = APIRouter(prefix="/printing", tags=["printing"])
 PrintReader = Annotated[Identity, Depends(require_permissions("printing.read"))]
@@ -160,6 +167,7 @@ async def update_printer_device(
     ).scalar_one_or_none()
     if device is None:
         raise DomainError("printer_not_found", "Printer not found", status_code=404)
+    require_record_branch(identity, device.branch_id)
     data = payload.model_dump(exclude_unset=True)
     if "preparation_station_id" in data:
         await _scoped_station(
@@ -213,6 +221,7 @@ async def create_test_print_job(
     ).scalar_one_or_none()
     if device is None:
         raise DomainError("printer_not_found", "Printer not found", status_code=404)
+    require_record_branch(identity, device.branch_id)
     if not device.is_active:
         raise DomainError(
             "printer_inactive",
@@ -349,6 +358,194 @@ async def _validate_print_references(
             raise DomainError("ticket_not_found", "Ticket not found", status_code=404)
 
 
+async def _first_active_printer_id(
+    db: DbSession,
+    *,
+    tenant_id: UUID,
+    branch_id: UUID,
+    station_id: UUID | None,
+) -> UUID | None:
+    return (
+        await db.execute(
+            select(PrinterDevice.id)
+            .where(
+                PrinterDevice.tenant_id == tenant_id,
+                PrinterDevice.branch_id == branch_id,
+                PrinterDevice.is_active.is_(True),
+                PrinterDevice.preparation_station_id == station_id,
+            )
+            .order_by(PrinterDevice.created_at)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def _resolve_print_defaults(
+    db: DbSession,
+    *,
+    tenant_id: UUID,
+    branch_id: UUID,
+    payload: PrintJobCreate,
+) -> tuple[UUID | None, UUID | None]:
+    station_id = payload.preparation_station_id
+    printer_device_id = payload.printer_device_id
+    if printer_device_id is not None:
+        return station_id, printer_device_id
+    if station_id is not None:
+        return station_id, await _first_active_printer_id(
+            db,
+            tenant_id=tenant_id,
+            branch_id=branch_id,
+            station_id=station_id,
+        )
+
+    payload_type = str(payload.payload.get("type") or "").upper()
+    if payload_type == "BILL":
+        general_printer_id = await _first_active_printer_id(
+            db,
+            tenant_id=tenant_id,
+            branch_id=branch_id,
+            station_id=None,
+        )
+        if general_printer_id is not None:
+            return station_id, general_printer_id
+        return station_id, (
+            await db.execute(
+                select(PrinterDevice.id)
+                .where(
+                    PrinterDevice.tenant_id == tenant_id,
+                    PrinterDevice.branch_id == branch_id,
+                    PrinterDevice.is_active.is_(True),
+                )
+                .order_by(PrinterDevice.created_at)
+                .limit(1)
+            )
+        ).scalar_one_or_none()
+    return station_id, printer_device_id
+
+
+async def _build_bill_payload(
+    db: DbSession,
+    *,
+    identity: Identity,
+    order_id: UUID,
+    kind: str,
+) -> dict[str, object]:
+    order = await load_order(db, require_tenant(identity), order_id, lock=True)
+    if order.branch_id != identity.branch_id:
+        raise DomainError("order_not_found", "Order not found", status_code=404)
+    if kind == "ORIGINAL":
+        await mark_order_bill_requested(db, order=order)
+
+    branch = await _scoped_branch(db, tenant_id=order.tenant_id, branch_id=order.branch_id)
+    paid_total = sum(
+        (
+            payment.amount
+            for payment in order.payments
+            if payment.status == PaymentStatus.COMPLETED
+        ),
+        Decimal("0.00"),
+    )
+    remaining = max(Decimal("0.00"), order.total - paid_total)
+    issue_time = datetime.now(UTC).isoformat()
+    return {
+        "type": "BILL",
+        "stage": "CLOSING" if order.status == OrderStatus.PAID else "PRE_PAYMENT",
+        "content_type": "application/vnd.dixora.receipt+json",
+        "copies": 1,
+        "is_reprint": kind == "REPRINT",
+        "document": {
+            "title": "MUSTERI BILGI FISI",
+            "branch_name": branch.name,
+            "station_name": "KASA",
+            "order_number": order_bill_reference(order.id),
+            "table_name": order.table_name,
+            "waiter_name": identity.display_name,
+            "submitted_at": issue_time,
+            "currency": order.currency,
+            "lines": [
+                {
+                    "name": item.product_name_snapshot,
+                    "quantity": str(item.quantity),
+                    "unit_price": str(item.unit_price),
+                    "line_total": str(item.line_total),
+                    "modifiers": [
+                        (
+                            f"{modifier.quantity}x {modifier.name_snapshot}"
+                            if modifier.quantity > 1
+                            else modifier.name_snapshot
+                        )
+                        for modifier in item.modifiers
+                    ],
+                    "note": item.note,
+                }
+                for item in order.items
+            ],
+            "footer": [
+                f"Ara toplam: {order.subtotal}",
+                f"Indirim: {order.discount_total}",
+                f"Vergi: {order.tax_total}",
+                f"Toplam: {order.total}",
+                f"Odenen: {paid_total}",
+                f"Kalan: {remaining}",
+            ],
+        },
+        "receipt": {
+            "kind": kind,
+            "title": "MUSTERI BILGI FISI",
+            "business": {
+                "name": branch.name,
+                "branch": branch.name,
+                "address": branch.address,
+                "phone": branch.phone,
+            },
+            "meta": {
+                "reference": order_bill_reference(order.id),
+                "tableName": order.table_name,
+                "guestName": order.customer_name,
+                "staffName": identity.display_name,
+                "issuedAt": issue_time,
+            },
+            "lines": [
+                {
+                    "name": item.product_name_snapshot,
+                    "quantity": str(item.quantity),
+                    "unitPrice": str(item.unit_price),
+                    "lineTotal": str(item.line_total),
+                    "modifiers": [
+                        (
+                            f"{modifier.quantity}x {modifier.name_snapshot}"
+                            if modifier.quantity > 1
+                            else modifier.name_snapshot
+                        )
+                        for modifier in item.modifiers
+                    ],
+                    "note": item.note,
+                }
+                for item in order.items
+            ],
+            "totals": {
+                "subtotal": str(order.subtotal),
+                "discount": str(order.discount_total),
+                "tax": str(order.tax_total),
+                "total": str(order.total),
+                "paid": str(paid_total),
+                "remaining": str(remaining),
+            },
+            "payments": [
+                {
+                    "method": payment.method,
+                    "amount": str(payment.amount),
+                    "reference": payment.reference,
+                }
+                for payment in order.payments
+                if payment.status == PaymentStatus.COMPLETED
+            ],
+            "footerNote": "Odeme icin kasaya yoneliniz.",
+        },
+    }
+
+
 @router.post("/jobs", response_model=PrintJobOut, status_code=status.HTTP_201_CREATED)
 async def create_print_job(
     payload: PrintJobCreate,
@@ -373,10 +570,30 @@ async def create_print_job(
         branch_id=branch_id,
         payload=payload,
     )
+    job_payload = payload.payload
+    if payload.order_id is not None and str(payload.payload.get("type") or "").upper() == "BILL":
+        job_payload = await _build_bill_payload(
+            db,
+            identity=identity,
+            order_id=payload.order_id,
+            kind=payload.kind.value,
+        )
+    preparation_station_id, printer_device_id = await _resolve_print_defaults(
+        db,
+        tenant_id=tenant_id,
+        branch_id=branch_id,
+        payload=payload,
+    )
     job = PrintJob(
         tenant_id=tenant_id,
         branch_id=branch_id,
-        **payload.model_dump(),
+        preparation_station_id=preparation_station_id,
+        printer_device_id=printer_device_id,
+        order_id=payload.order_id,
+        kitchen_ticket_id=payload.kitchen_ticket_id,
+        payload=job_payload,
+        kind=payload.kind,
+        idempotency_key=payload.idempotency_key,
     )
     db.add(job)
     await db.flush()

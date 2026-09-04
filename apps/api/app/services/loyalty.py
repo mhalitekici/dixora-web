@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import re
 import secrets
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from uuid import UUID
@@ -32,6 +33,7 @@ from app.models import (
     LoyaltyReward,
     LoyaltyRule,
     Order,
+    OrderItem,
     Product,
     TableSession,
     Tenant,
@@ -1423,3 +1425,173 @@ async def reward_target_description(
         )
     ).scalar_one_or_none()
     return f"{name or 'Seçili kategori'} ikramı"
+
+
+@dataclass(frozen=True)
+class AppliedCampaign:
+    """One reward that was matched to a line and zeroed."""
+
+    redemption_code: str
+    order_item_id: UUID
+    product_name: str
+    amount: Decimal
+
+
+@dataclass(frozen=True)
+class CampaignApplication:
+    membership: LoyaltyMembership
+    program_name: str
+    applied: list[AppliedCampaign]
+    unapplied_reason: str | None
+
+
+async def _eligible_items_for_reward(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    order: Order,
+    reward: LoyaltyReward,
+    already_used: set[UUID],
+) -> list[OrderItem]:
+    """Lines this reward could be spent on, best value first.
+
+    When several lines qualify the most expensive one wins. The reward was
+    earned by the customer, so quietly picking their cheapest dessert would be
+    a worse surprise than the occasional extra lira; the cashier sees exactly
+    what was granted and can reverse it.
+    """
+    candidates: list[OrderItem] = []
+    category_cache: dict[UUID, UUID | None] = {}
+    for item in order.items:
+        if item.id in already_used:
+            continue
+        if item.status in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}:
+            continue
+        if reward.reward_product_id is not None and item.product_id != reward.reward_product_id:
+            continue
+        if reward.reward_category_id is not None:
+            if item.product_id not in category_cache:
+                category_cache[item.product_id] = (
+                    await db.execute(
+                        select(Product.category_id).where(
+                            Product.id == item.product_id,
+                            Product.tenant_id == tenant_id,
+                        )
+                    )
+                ).scalar_one_or_none()
+            if category_cache[item.product_id] != reward.reward_category_id:
+                continue
+        candidates.append(item)
+    return sorted(candidates, key=lambda item: item.unit_price, reverse=True)
+
+
+async def apply_campaigns_by_member_code(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    order: Order,
+    member_code: str,
+    idempotency_key: str,
+    identity: Identity,
+) -> CampaignApplication:
+    """The whole counter flow behind one member code.
+
+    The cashier types the customer's code at payment; everything else — finding
+    the membership, choosing which earned reward fits which line, and zeroing it
+    — happens here. Previously this was three manual calls with the cashier
+    doing the matching by eye, which is not usable with a queue waiting.
+    """
+    membership = await membership_from_code(db, tenant_id=tenant_id, code=member_code)
+    if membership is None:
+        raise DomainError(
+            "membership_not_found",
+            "Bu koda ait üyelik bulunamadı.",
+            status_code=404,
+        )
+    # Attaching first also enforces branch eligibility and order state, so an
+    # ineligible order fails before any discount is written.
+    await attach_membership_to_order(db, order=order, membership=membership)
+
+    program = (
+        await db.execute(
+            select(LoyaltyProgram).where(
+                LoyaltyProgram.id == membership.program_id,
+                LoyaltyProgram.tenant_id == tenant_id,
+            )
+        )
+    ).scalar_one()
+
+    rewards = (
+        await db.execute(
+            select(LoyaltyReward)
+            .where(
+                LoyaltyReward.tenant_id == tenant_id,
+                LoyaltyReward.membership_id == membership.id,
+                LoyaltyReward.status == LoyaltyRewardStatus.AVAILABLE,
+            )
+            .order_by(LoyaltyReward.ordinal)
+        )
+    ).scalars().all()
+
+    applied: list[AppliedCampaign] = []
+    used_items: set[UUID] = set()
+    for index, reward in enumerate(rewards):
+        if reward.expires_at is not None and as_utc(reward.expires_at) <= utcnow():
+            continue
+        candidates = await _eligible_items_for_reward(
+            db,
+            tenant_id=tenant_id,
+            order=order,
+            reward=reward,
+            already_used=used_items,
+        )
+        for item in candidates:
+            try:
+                redemption = await redeem_reward(
+                    db,
+                    tenant_id=tenant_id,
+                    redemption_code=reward.redemption_code,
+                    order=order,
+                    order_item_id=item.id,
+                    # Distinct per reward so replaying the cashier's action
+                    # returns the same result instead of double-discounting.
+                    idempotency_key=f"{idempotency_key}:{index}",
+                    identity=identity,
+                )
+            except DomainError:
+                # This line could not take the reward (already fully discounted,
+                # for instance). Try the next candidate rather than failing the
+                # whole request — the other rewards may still apply.
+                continue
+            name = (
+                await db.execute(
+                    select(Product.name).where(Product.id == item.product_id)
+                )
+            ).scalar_one_or_none() or "Ürün"
+            applied.append(
+                AppliedCampaign(
+                    redemption_code=reward.redemption_code,
+                    order_item_id=item.id,
+                    product_name=name,
+                    amount=redemption.amount,
+                )
+            )
+            used_items.add(item.id)
+            break
+
+    reason: str | None = None
+    if not applied:
+        if not rewards:
+            reason = "Bu üyeliğin kullanılabilir kampanyası yok."
+        else:
+            reason = (
+                "Kazanılan kampanya bu siparişteki ürünlere uygulanamadı. "
+                "Kampanya kapsamındaki ürünü sipariş ekleyin."
+            )
+
+    return CampaignApplication(
+        membership=membership,
+        program_name=program.name,
+        applied=applied,
+        unapplied_reason=reason,
+    )

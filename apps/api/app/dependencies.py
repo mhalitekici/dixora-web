@@ -226,3 +226,22 @@ def require_branch(identity: Identity, requested: UUID | None = None) -> UUID:
             status_code=403,
         )
     return branch_id
+
+
+def require_record_branch(identity: Identity, branch_id: UUID) -> UUID:
+    """Assert the caller may act on a record that already belongs to a branch.
+
+    `require_branch` answers "which branch is this request about", which is the
+    right question for a listing. A route that loads one record by id has to ask
+    a different one: the branch is not the caller's choice, it is a property of
+    the record they named. Without this check the tenant filter is the only thing
+    between a cashier pinned to one branch and another branch's open adisyon,
+    because both branches sit inside the same business.
+    """
+    if not identity.can_access_branch(branch_id):
+        raise DomainError(
+            "branch_forbidden",
+            "You do not have access to this branch",
+            status_code=403,
+        )
+    return branch_id

@@ -284,14 +284,14 @@ export function LoginPanel({
               {superAdmin
                 ? "Platform yönetimine giriş"
                 : isPinMode
-                  ? "Garson girişi"
+                  ? "Çalışan girişi"
                   : "İşletme girişi"}
             </h2>
             <p className="mt-2 text-sm leading-6 text-muted-foreground">
               {superAdmin
                 ? "Yalnız yetkili Dixora platform yöneticileri erişebilir."
                 : isPinMode
-                  ? "İşletme, şube ve kullanıcı kodunuzla birlikte yöneticinizin tanımladığı PIN’i girin."
+                  ? "Şube kodunuzu, kullanıcı adınızı ve yöneticinizin tanımladığı PIN’i girin. Rolünüze göre kasa veya garson paneline yönlendirilirsiniz."
                   : "İşletme kodunuz ve hesap parolanızla yönetim çalışma alanına erişin."}
             </p>
           </div>
@@ -334,7 +334,7 @@ export function LoginPanel({
                 )}
               >
                 <Smartphone className="size-4" />
-                Garson girişi
+                Çalışan girişi
               </button>
             </div>
           ) : null}

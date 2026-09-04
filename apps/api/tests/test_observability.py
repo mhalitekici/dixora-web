@@ -86,8 +86,11 @@ def test_resend_requires_an_api_key_in_every_environment() -> None:
     """Selecting a provider without its credential can never work."""
     import pytest
 
+    # The key is pinned to None rather than left to the environment: inside the
+    # deployed container a real DIXORA_RESEND_API_KEY is present, which silently
+    # satisfied the requirement and made this test assert nothing.
     with pytest.raises(Exception, match="RESEND_API_KEY"):
-        _settings(email_provider="resend")
+        _settings(email_provider="resend", resend_api_key=None)
 
 
 def test_resend_is_selected_when_configured() -> None:

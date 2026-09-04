@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from uuid import UUID
 
 from sqlalchemy import select
 
 from app.models import Role, Subscription, SubscriptionPlan
+from app.models.enums import TenantState
 from app.rbac import ensure_role
+from app.security import utcnow
 from tests.conftest import ApiContext, auth_headers, login, seeded_resources
 
 
@@ -41,6 +44,52 @@ async def test_super_admin_subscription_portfolio_uses_real_assignments(api: Api
     assert seeded["starts_at"]
 
 
+async def test_super_admin_manual_extension_adds_days_on_top_of_future_expiry(
+    api: ApiContext,
+) -> None:
+    super_admin = await login(
+        api,
+        username="superadmin@dixora.app",
+        password="Dixora!2026",
+        business=None,
+    )
+    headers = auth_headers(super_admin)
+    businesses = await api.client.get("/api/v1/businesses", headers=headers)
+    assert businesses.status_code == 200, businesses.text
+    business = next(item for item in businesses.json()["items"] if item["slug"] == "dixora-lab")
+
+    original_starts_at = utcnow() - timedelta(days=20)
+    original_ends_at = utcnow() + timedelta(days=12)
+    async with api.database.session_factory() as session:
+        subscription = (
+            await session.execute(
+                select(Subscription).where(Subscription.tenant_id == UUID(business["id"]))
+            )
+        ).scalar_one()
+        subscription.status = TenantState.ACTIVE
+        subscription.starts_at = original_starts_at
+        subscription.ends_at = original_ends_at
+        await session.commit()
+
+    extended = await api.client.post(
+        f"/api/v1/businesses/{business['id']}/reactivate",
+        headers=headers,
+        json={"extend_days": 30, "note": "Manual transfer confirmed"},
+    )
+    assert extended.status_code == 200, extended.text
+    assert extended.json()["state"] == "ACTIVE"
+
+    async with api.database.session_factory() as session:
+        refreshed = (
+            await session.execute(
+                select(Subscription).where(Subscription.tenant_id == UUID(business["id"]))
+            )
+        ).scalar_one()
+        assert refreshed.status == TenantState.ACTIVE
+        assert refreshed.starts_at == original_starts_at
+        assert refreshed.ends_at == original_ends_at + timedelta(days=30)
+
+
 async def test_role_presets_and_employee_scope_are_server_enforced(api: ApiContext) -> None:
     owner = await login(api)
     headers = auth_headers(owner)
@@ -50,6 +99,7 @@ async def test_role_presets_and_employee_scope_are_server_enforced(api: ApiConte
     assert {role["code"]: role["name"] for role in roles_response.json()} == {
         "BUSINESS_ADMIN": "Yönetici",
         "BUSINESS_MANAGER": "Müdür",
+        "CASHIER": "Kasiyer",
         "WAITER": "Garson",
     }
     branch = branches_response.json()[0]

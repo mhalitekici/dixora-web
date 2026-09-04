@@ -5,7 +5,7 @@ from decimal import Decimal
 from typing import Any, Generic, Literal, TypeVar
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from app.models.enums import (
     ApprovalStatus,
@@ -156,6 +156,8 @@ class OnboardingOut(BaseModel):
     table_count: int | None
     heard_from: str | None
     completed: bool
+    # What the answers actually configured, so the wizard can report it back.
+    applied: dict[str, Any] | None = None
 
 
 class BusinessRegistrationOut(BaseModel):
@@ -604,6 +606,7 @@ class CategoryOut(ORMModel):
     id: UUID
     tenant_id: UUID
     branch_id: UUID | None
+    source_category_id: UUID | None = None
     parent_id: UUID | None
     name: str
     description: str | None
@@ -720,6 +723,8 @@ class ProductCsvImportResult(BaseModel):
 class ProductOut(ORMModel):
     id: UUID
     tenant_id: UUID
+    branch_id: UUID | None = None
+    source_product_id: UUID | None = None
     category_id: UUID
     preparation_station_id: UUID | None
     name: str
@@ -1314,10 +1319,38 @@ class PublicMenuOut(BaseModel):
     branch: str
     context_key: str
     table_name: str | None
+    active_order: PublicActiveOrderOut | None = None
     config: PublicQrConfigOut
     categories: list[PublicMenuCategory]
     products: list[PublicMenuProduct]
     session_token: str | None = None
+
+
+class PublicActiveOrderOut(BaseModel):
+    status: OrderStatus
+    total: Decimal
+    paid_total: Decimal
+    remaining: Decimal
+
+
+class PublicBillRequestCreate(BaseModel):
+    table_token: str = Field(min_length=16, max_length=64)
+    session_token: str
+    payment_preference: Literal["CASH", "CARD", "ROOM_CHARGE"] | None = None
+    room_reference: str | None = Field(default=None, max_length=160)
+    membership_code: str | None = Field(default=None, min_length=6, max_length=32)
+
+    @model_validator(mode="after")
+    def room_charge_requires_reference(self) -> PublicBillRequestCreate:
+        if self.payment_preference == "ROOM_CHARGE" and not (self.room_reference or "").strip():
+            raise ValueError("Room reference is required for a room charge request")
+        return self
+
+
+class PublicBillRequestOut(BaseModel):
+    status: Literal["REQUESTED"]
+    order: PublicActiveOrderOut
+    requested_at: datetime
 
 
 class PublicQrOrderModifierInput(BaseModel):
@@ -1611,3 +1644,180 @@ class SalesAnalyticsOut(BaseModel):
     by_product: list[SalesAnalyticsProductBreakdownOut]
     by_category: list[SalesAnalyticsCategoryBreakdownOut]
     by_order_source: list[SalesAnalyticsOrderSourceBreakdownOut]
+
+
+class DeliveryOrderCreate(BaseModel):
+    """A delivery/takeaway order the restaurant enters itself (phone, counter)."""
+
+    channel: Literal["PHONE", "TAKEAWAY", "OWN_DELIVERY"]
+    items: list[OrderItemInput] = Field(min_length=1)
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    customer_name: str | None = Field(default=None, max_length=160)
+    customer_phone: str | None = Field(
+        default=None, pattern=r"^[0-9+()\s.-]{7,32}$", max_length=32
+    )
+    address_line: str | None = Field(default=None, max_length=500)
+    district: str | None = Field(default=None, max_length=120)
+    neighbourhood: str | None = Field(default=None, max_length=120)
+    address_note: str | None = Field(default=None, max_length=500)
+    customer_note: str | None = Field(default=None, max_length=500)
+    payment_method: Literal[
+        "ONLINE", "CASH_ON_DELIVERY", "CARD_ON_DELIVERY", "MEAL_CARD", "OTHER"
+    ] = "CASH_ON_DELIVERY"
+    payment_status: Literal[
+        "UNPAID", "PAID", "PROVIDER_COLLECTED", "REFUNDED", "PARTIALLY_REFUNDED"
+    ] = "UNPAID"
+    auto_accept: bool = True
+
+    @model_validator(mode="after")
+    def delivery_needs_an_address(self) -> DeliveryOrderCreate:
+        # Must be a model validator: a field validator never fires when the
+        # field is simply absent, so an address-less delivery slipped through.
+        if self.channel == "OWN_DELIVERY" and not (self.address_line or "").strip():
+            raise ValueError("Paket servis siparişi için adres gerekli")
+        return self
+
+
+class DeliveryAcceptRequest(BaseModel):
+    promised_minutes: int | None = Field(default=None, ge=1, le=240)
+
+
+class DeliveryRejectRequest(BaseModel):
+    reason: str = Field(min_length=2, max_length=255)
+
+
+class DeliveryStatusUpdate(BaseModel):
+    status: Literal["PREPARING", "READY", "DISPATCHED", "DELIVERED", "CANCELLED"]
+    reason: str | None = Field(default=None, max_length=255)
+
+
+class DeliveryCourierAssign(BaseModel):
+    courier_user_id: UUID | None = None
+    courier_name: str | None = Field(default=None, max_length=160)
+
+
+class DeliveryOrderItemOut(BaseModel):
+    name: str
+    quantity: Decimal
+    unit_price: Decimal
+    line_total: Decimal
+    note: str | None
+    modifiers: list[str]
+
+
+class DeliveryOrderOut(BaseModel):
+    id: UUID
+    order_id: UUID
+    branch_id: UUID
+    channel: str
+    provider: str | None
+    delivery_status: str
+    # Provider sync is reported separately from the local status on purpose: an
+    # order can be accepted here while the provider call failed.
+    sync_status: str
+    sync_error: str | None
+    external_display_id: str | None
+    customer_name: str | None
+    customer_phone: str | None
+    address_line: str | None
+    district: str | None
+    neighbourhood: str | None
+    address_note: str | None
+    customer_note: str | None
+    payment_method: str
+    payment_status: str
+    courier_name: str | None
+    promised_minutes: int | None
+    total: Decimal
+    items: list[DeliveryOrderItemOut]
+    created_at: datetime
+    accepted_at: datetime | None
+    ready_at: datetime | None
+    dispatched_at: datetime | None
+    delivered_at: datetime | None
+    cancelled_at: datetime | None
+    rejection_reason: str | None
+
+
+class DeliveryInboxCounts(BaseModel):
+    new: int
+    accepted: int
+    preparing: int
+    ready: int
+    dispatched: int
+    delivered: int
+    cancelled: int
+
+
+class OrderActivityOut(BaseModel):
+    """One line of the "who did what" feed in the admin order report."""
+
+    order_id: UUID
+    created_at: datetime
+    branch_id: UUID
+    status: str
+    source: str
+    table_name: str | None
+    # Null for QR orders — nobody on staff entered them, which is the point.
+    staff_name: str | None
+    member_code: str | None
+    delivery_channel: str | None
+    customer_name: str | None
+    total: Decimal
+
+
+class OrderActivityItemOut(BaseModel):
+    """One line of what was actually ordered, as snapshotted at the time.
+
+    Every field is the order's own snapshot, so a receipt pulled months later
+    still shows the name and price the guest paid, not today's catalog.
+    """
+
+    name: str
+    quantity: Decimal
+    unit_price: Decimal
+    discount: Decimal
+    line_total: Decimal
+    status: str
+    note: str | None
+    # Already rendered as "2x Ekstra peynir" so every surface reads the same.
+    modifiers: list[str]
+
+
+class OrderActivityPaymentOut(BaseModel):
+    """One settlement against the order: what was paid, how, and by whom."""
+
+    method: str
+    amount: Decimal
+    status: str
+    reference: str | None
+    recorded_at: datetime
+    recorded_by: str | None
+
+
+class OrderActivityDetailOut(OrderActivityOut):
+    """The full story behind one feed row: ordered, charged, paid.
+
+    Deliberately self-contained rather than pointing the client at
+    `/orders/{id}`: a report reader (an accountant, say) has `reports.read`
+    without `orders.read`, and a receipt needs the branch letterhead and the
+    money breakdown in one response.
+    """
+
+    # Short human reference — the same one printed on the bill.
+    reference: str
+    currency: str
+    business_name: str
+    branch_name: str
+    branch_address: str | None
+    branch_phone: str | None
+    submitted_at: datetime | None
+    accepted_at: datetime | None
+    paid_at: datetime | None
+    subtotal: Decimal
+    discount_total: Decimal
+    tax_total: Decimal
+    paid_total: Decimal
+    remaining: Decimal
+    items: list[OrderActivityItemOut]
+    payments: list[OrderActivityPaymentOut]

@@ -72,7 +72,7 @@ export function LoyaltyDashboard() {
     <>
       <PageHeader
         eyebrow="Müşteri ilişkileri"
-        title="Sadakat programı"
+        title="Sadakat Programı"
         description="Müdavimlerinizi anlaşılır bir ödül yolculuğuyla karşılayın; ilerlemeyi ve kullanımları tek ekrandan izleyin."
         icon={HeartHandshake}
       />

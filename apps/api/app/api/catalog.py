@@ -4,7 +4,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, Response, UploadFile, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import selectinload, with_loader_criteria
 
 from app.dependencies import (
@@ -49,12 +49,15 @@ from app.schemas import (
     StationOut,
     TranslationFieldsOut,
 )
+from app.security import utcnow
 from app.services.audit import add_audit_log
+from app.services.catalog_sync import centre_catalog_status, sync_centre_catalog
 from app.services.product_csv import (
     MAX_PRODUCT_CSV_BYTES,
     MAX_PRODUCT_XLSX_BYTES,
     ParsedProductCsvRow,
     build_product_csv_template,
+    build_product_export,
     build_product_xlsx_template,
     normalize_lookup_name,
     parse_product_import,
@@ -111,6 +114,48 @@ async def _validate_product_ids(
         )
 
 
+@router.get("/centre/status")
+async def get_centre_catalog_status(identity: CatalogReader, db: DbSession) -> dict[str, object]:
+    return await centre_catalog_status(
+        db,
+        tenant_id=require_tenant(identity),
+        branch_id=require_branch(identity),
+    )
+
+
+async def _sync_centre_catalog(
+    *, identity: Identity, db: DbSession, initial_import: bool
+) -> dict[str, int]:
+    tenant_id = require_tenant(identity)
+    branch_id = require_branch(identity)
+    outcome = await sync_centre_catalog(
+        db,
+        tenant_id=tenant_id,
+        target_branch_id=branch_id,
+        initial_import=initial_import,
+    )
+    add_audit_log(
+        db,
+        identity=identity,
+        action="catalog.centre_imported" if initial_import else "catalog.centre_synced",
+        resource_type="branch",
+        resource_id=branch_id,
+        new_value=outcome.as_dict(),
+    )
+    await db.commit()
+    return outcome.as_dict()
+
+
+@router.post("/centre/import")
+async def import_centre_catalog(identity: CatalogManager, db: DbSession) -> dict[str, int]:
+    return await _sync_centre_catalog(identity=identity, db=db, initial_import=True)
+
+
+@router.post("/centre/sync")
+async def update_from_centre_catalog(identity: CatalogManager, db: DbSession) -> dict[str, int]:
+    return await _sync_centre_catalog(identity=identity, db=db, initial_import=False)
+
+
 @router.get("/categories", response_model=Page[CategoryOut])
 async def list_categories(
     identity: CatalogReader,
@@ -120,9 +165,8 @@ async def list_categories(
     offset: int = Query(default=0, ge=0),
 ) -> Page[CategoryOut]:
     tenant_id = require_tenant(identity)
-    predicates = [Category.tenant_id == tenant_id]
-    if branch_id:
-        predicates.append(or_(Category.branch_id == branch_id, Category.branch_id.is_(None)))
+    selected_branch = require_branch(identity, branch_id)
+    predicates = [Category.tenant_id == tenant_id, Category.branch_id == selected_branch]
     total = (await db.execute(select(func.count(Category.id)).where(*predicates))).scalar_one()
     items = (
         (
@@ -152,14 +196,14 @@ async def create_category(
     db: DbSession,
 ) -> CategoryOut:
     tenant_id = require_tenant(identity)
-    branch_id = payload.branch_id
-    if branch_id is not None:
-        await _validate_branch(db, tenant_id, branch_id)
+    branch_id = require_branch(identity, payload.branch_id)
+    await _validate_branch(db, tenant_id, branch_id)
     if payload.parent_id is not None:
         parent = (
             await db.execute(
                 select(Category).where(
-                    Category.id == payload.parent_id, Category.tenant_id == tenant_id
+                    Category.id == payload.parent_id, Category.tenant_id == tenant_id,
+                    Category.branch_id == branch_id,
                 )
             )
         ).scalar_one_or_none()
@@ -200,7 +244,8 @@ async def update_category(
     category = (
         await db.execute(
             select(Category).where(
-                Category.id == category_id, Category.tenant_id == require_tenant(identity)
+                Category.id == category_id, Category.tenant_id == require_tenant(identity),
+                Category.branch_id == require_branch(identity),
             )
         )
     ).scalar_one_or_none()
@@ -231,7 +276,8 @@ async def delete_category(
     category = (
         await db.execute(
             select(Category).where(
-                Category.id == category_id, Category.tenant_id == require_tenant(identity)
+                Category.id == category_id, Category.tenant_id == require_tenant(identity),
+                Category.branch_id == require_branch(identity),
             )
         )
     ).scalar_one_or_none()
@@ -253,12 +299,22 @@ async def list_products(
     identity: CatalogReader,
     db: DbSession,
     category_id: UUID | None = None,
+    branch_id: UUID | None = None,
     search: str | None = None,
     include_inactive: bool = False,
     limit: int = Query(default=100, ge=1, le=250),
     offset: int = Query(default=0, ge=0),
 ) -> Page[ProductOut]:
-    predicates = [Product.tenant_id == require_tenant(identity)]
+    """List the catalogue, optionally narrowed to what one branch can sell.
+
+    Without `branch_id` this is the whole business, which is what the catalogue
+    screen manages. With it, products living in another branch's category drop
+    out — the same rule the QR menu and the order service apply, so a till never
+    offers a line the kitchen would refuse.
+    """
+    tenant_id = require_tenant(identity)
+    scoped = require_branch(identity, branch_id)
+    predicates = [Product.tenant_id == tenant_id, Product.branch_id == scoped]
     if category_id:
         predicates.append(Product.category_id == category_id)
     if search:
@@ -301,6 +357,30 @@ async def download_product_csv_template(identity: CatalogReader) -> Response:
     )
 
 
+@router.get("/products/export")
+async def export_products(identity: CatalogManager, db: DbSession) -> Response:
+    """The current catalogue as a workbook.
+
+    Written in the same layout as the blank template, so a file downloaded from
+    one business uploads into another through the existing importer without
+    being edited first.
+    """
+    tenant_id = require_tenant(identity)
+    content = await build_product_export(db, tenant_id=tenant_id)
+    stamp = utcnow().strftime("%Y%m%d")
+    return Response(
+        content=content,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={
+            "Content-Disposition": (
+                f'attachment; filename="dixora-urunler-{stamp}.xlsx"'
+            ),
+            "X-Content-Type-Options": "nosniff",
+            "Cache-Control": "private, no-store",
+        },
+    )
+
+
 @router.get("/products/import-template")
 async def download_product_import_template(identity: CatalogReader) -> Response:
     require_tenant(identity)
@@ -321,8 +401,17 @@ async def import_products_csv(
     db: DbSession,
     file: Annotated[UploadFile, File(description="XLSX or UTF-8 CSV product file")],
     dry_run: bool = Query(default=True),
+    update_existing: bool = Query(
+        default=False,
+        description=(
+            "Update products whose stock code already exists instead of "
+            "rejecting the row. Off by default: importing must not rewrite a "
+            "live menu unless that is what was asked for."
+        ),
+    ),
 ) -> ProductCsvImportResult:
     tenant_id = require_tenant(identity)
+    branch_id = require_branch(identity)
     filename = (file.filename or "").lower()
     content_type = (file.content_type or "").lower().split(";", 1)[0]
     allowed_content_types = {
@@ -361,6 +450,7 @@ async def import_products_csv(
             await db.execute(
                 select(Category).where(
                     Category.tenant_id == tenant_id,
+                    Category.branch_id == branch_id,
                     Category.is_active.is_(True),
                 )
             )
@@ -376,8 +466,7 @@ async def import_products_csv(
         PreparationStation.tenant_id == tenant_id,
         PreparationStation.is_active.is_(True),
     ]
-    if identity.branch_id is not None:
-        station_predicates.append(PreparationStation.branch_id == identity.branch_id)
+    station_predicates.append(PreparationStation.branch_id == branch_id)
     stations = (
         (await db.execute(select(PreparationStation).where(*station_predicates))).scalars().all()
     )
@@ -387,6 +476,26 @@ async def import_products_csv(
             station_item
         )
 
+    all_products = (
+        (
+            await db.execute(
+                select(Product).where(
+                    Product.tenant_id == tenant_id,
+                    Product.branch_id == branch_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    existing_by_sku = {
+        product.sku.casefold(): product for product in all_products if product.sku
+    }
+    # Most catalogues carry no stock codes at all, so a code-only match would
+    # quietly duplicate the whole menu on re-import. Name is the fallback key.
+    existing_by_name = {
+        product.name.strip().casefold(): product for product in all_products
+    }
     existing_skus = {
         sku.casefold()
         for sku in (
@@ -394,6 +503,7 @@ async def import_products_csv(
                 await db.execute(
                     select(Product.sku).where(
                         Product.tenant_id == tenant_id,
+                        Product.branch_id == branch_id,
                         Product.sku.is_not(None),
                     )
                 )
@@ -449,12 +559,15 @@ async def import_products_csv(
 
         if row.sku:
             normalized_sku = row.sku.casefold()
-            if normalized_sku in existing_skus:
+            if normalized_sku in existing_skus and not update_existing:
                 row_errors.append(
                     ProductCsvImportError(
                         row_number=row.row_number,
                         field="sku",
-                        message=f"'{row.sku}' SKU kodu bu işletmede zaten kullanılıyor.",
+                        message=(
+                            f"'{row.sku}' SKU kodu bu işletmede zaten kullanılıyor. "
+                            "Güncellemek için 'mevcutları güncelle' seçeneğini açın."
+                        ),
                     )
                 )
             elif normalized_sku in csv_skus:
@@ -484,8 +597,48 @@ async def import_products_csv(
     imported_rows = 0
     if not dry_run:
         for row, category, station in validated_rows:
+            target = None
+            if update_existing:
+                target = (
+                    existing_by_sku.get(row.sku.casefold())
+                    if row.sku
+                    else existing_by_name.get(row.name.strip().casefold())
+                )
+            if target is not None:
+                # Same product, new values. Anything the sheet does not carry
+                # — images, sort order, modifier links — is left alone.
+                target.category_id = category.id
+                target.preparation_station_id = station.id if station else None
+                target.name = row.name
+                target.internal_name = row.internal_name
+                target.description = row.description
+                target.selling_price = row.selling_price
+                target.cost_price = row.cost_price
+                target.tax_rate = row.tax_rate
+                target.is_active = row.is_active
+                target.is_available = row.is_available
+                target.qr_visible = row.qr_visible
+                target.waiter_visible = row.waiter_visible
+                target.preparation_minutes = row.preparation_minutes
+                target.track_inventory = row.track_inventory
+                await db.flush()
+                add_audit_log(
+                    db,
+                    identity=identity,
+                    action="catalog.product_import_updated",
+                    resource_type="product",
+                    resource_id=target.id,
+                    new_value={
+                        "name": target.name,
+                        "selling_price": str(target.selling_price),
+                    },
+                )
+                imported_rows += 1
+                continue
+
             product = Product(
                 tenant_id=tenant_id,
+                branch_id=branch_id,
                 category_id=category.id,
                 preparation_station_id=station.id if station else None,
                 name=row.name,
@@ -551,7 +704,8 @@ async def get_product(
     product = (
         await db.execute(
             select(Product).where(
-                Product.id == product_id, Product.tenant_id == require_tenant(identity)
+                Product.id == product_id, Product.tenant_id == require_tenant(identity),
+                Product.branch_id == require_branch(identity),
             )
         )
     ).scalar_one_or_none()
@@ -607,12 +761,17 @@ async def _validate_product_references(
     db: DbSession,
     *,
     tenant_id: UUID,
+    branch_id: UUID,
     category_id: UUID,
     station_id: UUID | None,
 ) -> None:
     category = (
         await db.execute(
-            select(Category.id).where(Category.id == category_id, Category.tenant_id == tenant_id)
+            select(Category.id).where(
+                Category.id == category_id,
+                Category.tenant_id == tenant_id,
+                Category.branch_id == branch_id,
+            )
         )
     ).scalar_one_or_none()
     if category is None:
@@ -623,6 +782,7 @@ async def _validate_product_references(
                 select(PreparationStation.id).where(
                     PreparationStation.id == station_id,
                     PreparationStation.tenant_id == tenant_id,
+                    PreparationStation.branch_id == branch_id,
                 )
             )
         ).scalar_one_or_none()
@@ -666,15 +826,18 @@ async def create_product(
     db: DbSession,
 ) -> ProductOut:
     tenant_id = require_tenant(identity)
+    branch_id = require_branch(identity)
     await _validate_product_references(
         db,
         tenant_id=tenant_id,
+        branch_id=branch_id,
         category_id=payload.category_id,
         station_id=payload.preparation_station_id,
     )
     await _validate_modifier_groups(db, tenant_id=tenant_id, group_ids=payload.modifier_group_ids)
     product = Product(
         tenant_id=tenant_id,
+        branch_id=branch_id,
         **payload.model_dump(exclude={"modifier_group_ids"}),
     )
     db.add(product)
@@ -707,9 +870,14 @@ async def update_product(
     db: DbSession,
 ) -> ProductOut:
     tenant_id = require_tenant(identity)
+    branch_id = require_branch(identity)
     product = (
         await db.execute(
-            select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id)
+            select(Product).where(
+                Product.id == product_id,
+                Product.tenant_id == tenant_id,
+                Product.branch_id == branch_id,
+            )
         )
     ).scalar_one_or_none()
     if product is None:
@@ -719,7 +887,7 @@ async def update_product(
     category_id = data.get("category_id", product.category_id)
     station_id = data.get("preparation_station_id", product.preparation_station_id)
     await _validate_product_references(
-        db, tenant_id=tenant_id, category_id=category_id, station_id=station_id
+        db, tenant_id=tenant_id, branch_id=branch_id, category_id=category_id, station_id=station_id
     )
     if modifier_group_ids is not None:
         await _validate_modifier_groups(db, tenant_id=tenant_id, group_ids=modifier_group_ids)
@@ -779,7 +947,8 @@ async def delete_product(
     product = (
         await db.execute(
             select(Product).where(
-                Product.id == product_id, Product.tenant_id == require_tenant(identity)
+                Product.id == product_id, Product.tenant_id == require_tenant(identity),
+                Product.branch_id == require_branch(identity),
             )
         )
     ).scalar_one_or_none()
@@ -797,10 +966,16 @@ async def delete_product(
     await db.commit()
 
 
-async def _product_for_translation(db: DbSession, tenant_id: UUID, product_id: UUID) -> Product:
+async def _product_for_translation(
+    db: DbSession, tenant_id: UUID, branch_id: UUID, product_id: UUID
+) -> Product:
     product = (
         await db.execute(
-            select(Product).where(Product.id == product_id, Product.tenant_id == tenant_id)
+            select(Product).where(
+                Product.id == product_id,
+                Product.tenant_id == tenant_id,
+                Product.branch_id == branch_id,
+            )
         )
     ).scalar_one_or_none()
     if product is None:
@@ -819,7 +994,7 @@ async def get_product_translations(
 ) -> EntityTranslationsOut:
     """Every language this business has entered for one product."""
     tenant_id = require_tenant(identity)
-    product = await _product_for_translation(db, tenant_id, product_id)
+    product = await _product_for_translation(db, tenant_id, require_branch(identity), product_id)
 
     rows = (
         (
@@ -868,7 +1043,7 @@ async def update_product_translations(
 ) -> EntityTranslationsOut:
     """Save the business's own translations. Blank values clear a translation."""
     tenant_id = require_tenant(identity)
-    product = await _product_for_translation(db, tenant_id, product_id)
+    product = await _product_for_translation(db, tenant_id, require_branch(identity), product_id)
 
     for locale, fields in payload.translations.items():
         if locale == SOURCE_LOCALE or not is_supported_locale(locale):
@@ -1321,3 +1496,4 @@ async def delete_modifier(
         new_value={"is_active": modifier.is_active},
     )
     await db.commit()
+

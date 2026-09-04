@@ -168,6 +168,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
 ASSIGNABLE_ROLE_PRESETS: dict[str, str] = {
     "BUSINESS_ADMIN": "Yönetici",
     "BUSINESS_MANAGER": "Müdür",
+    "CASHIER": "Kasiyer",
     "WAITER": "Garson",
 }
 
@@ -222,7 +223,7 @@ async def ensure_role(
 
 
 async def ensure_tenant_role_presets(db: AsyncSession, tenant_id: UUID) -> dict[str, Role]:
-    """Create or repair the four immutable employee role presets for a tenant."""
+    """Create or repair the immutable employee role presets for a tenant."""
 
     return {
         code: await ensure_role(

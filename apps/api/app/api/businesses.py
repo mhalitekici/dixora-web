@@ -1,10 +1,12 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import date, datetime, timedelta
+from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
+from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
@@ -13,7 +15,9 @@ from app.errors import DomainError
 from app.models import (
     AuthSession,
     Branch,
+    Invoice,
     Role,
+    SavedCard,
     Subscription,
     SubscriptionPlan,
     Tenant,
@@ -142,6 +146,78 @@ async def create_business(
     await db.commit()
     await db.refresh(tenant)
     return TenantOut.model_validate(tenant)
+
+
+class PlatformInvoiceOut(BaseModel):
+    """One business's bill, as the platform operator sees it."""
+
+    id: UUID
+    tenant_id: UUID
+    business_name: str
+    business_slug: str
+    number: str
+    amount: Decimal
+    currency: str
+    status: str
+    period_start: date
+    branch_count: int
+    due_at: datetime | None
+    paid_at: datetime | None
+    attempt_count: int
+    failure_reason: str | None
+    has_card: bool
+
+
+@router.get("/invoices", response_model=list[PlatformInvoiceOut])
+async def list_platform_invoices(
+    identity: PlatformAdmin,
+    db: DbSession,
+    status_filter: str | None = Query(default=None, alias="status"),
+    limit: int = Query(default=200, ge=1, le=500),
+) -> list[PlatformInvoiceOut]:
+    """Every business's invoices, newest period first.
+
+    Whether a card is on file is included: an unpaid invoice for a business
+    that never added one is a different problem from a declined card, and the
+    operator has to be able to tell them apart before chasing anyone.
+    """
+    carded = (
+        select(SavedCard.tenant_id)
+        .where(SavedCard.is_active.is_(True))
+        .distinct()
+        .subquery()
+    )
+    query = (
+        select(Invoice, Tenant.name, Tenant.slug, carded.c.tenant_id)
+        .join(Tenant, Tenant.id == Invoice.tenant_id)
+        .outerjoin(carded, carded.c.tenant_id == Invoice.tenant_id)
+        .order_by(Invoice.period_start.desc(), Tenant.name)
+        .limit(limit)
+    )
+    if status_filter:
+        query = query.where(Invoice.status == status_filter.upper())
+
+    rows = (await db.execute(query)).all()
+    return [
+        PlatformInvoiceOut(
+            id=invoice.id,
+            tenant_id=invoice.tenant_id,
+            business_name=name,
+            business_slug=slug,
+            number=invoice.number,
+            amount=invoice.amount,
+            currency=invoice.currency,
+            status=invoice.status,
+            period_start=invoice.period_start,
+            branch_count=invoice.branch_count,
+            due_at=invoice.due_at,
+            paid_at=invoice.paid_at,
+            attempt_count=invoice.attempt_count,
+            failure_reason=invoice.failure_reason,
+            has_card=card_tenant is not None,
+        )
+        for invoice, name, slug, card_tenant in rows
+    ]
 
 
 @router.get("/{business_id}", response_model=TenantOut)
@@ -332,7 +408,7 @@ async def reactivate_business(
     identity: PlatformAdmin,
     db: DbSession,
 ) -> TenantOut:
-    """Manually reactivate (or extend) a business's membership.
+    """Manually reactivate or extend a business's membership.
 
     This is the only path back to ACTIVE once a trial expires or a business
     is suspended for non-payment — a deliberate platform-admin action taken
@@ -348,12 +424,20 @@ async def reactivate_business(
 
     previous_state = tenant.state.value
     now = utcnow()
+    previous_ends_at = subscription.ends_at if subscription else None
+    extension_base = (
+        subscription.ends_at
+        if subscription is not None and subscription.ends_at and subscription.ends_at > now
+        else now
+    )
+    valid_until = extension_base + timedelta(days=payload.extend_days)
     tenant.state = TenantState.ACTIVE
     tenant.is_active = True
     if subscription is not None:
         subscription.status = TenantState.ACTIVE
-        subscription.starts_at = now
-        subscription.ends_at = now + timedelta(days=payload.extend_days)
+        if subscription.starts_at > now:
+            subscription.starts_at = now
+        subscription.ends_at = valid_until
 
     add_audit_log(
         db,
@@ -366,7 +450,8 @@ async def reactivate_business(
         new_value={
             "state": tenant.state.value,
             "extended_days": payload.extend_days,
-            "valid_until": (now + timedelta(days=payload.extend_days)).isoformat(),
+            "previous_valid_until": previous_ends_at.isoformat() if previous_ends_at else None,
+            "valid_until": valid_until.isoformat(),
         },
         reason=payload.note,
     )
@@ -457,3 +542,4 @@ async def business_overview(
         next_payment_at=subscription.ends_at if subscription else None,
         trial_ends_at=trial_ends_at,
     )
+

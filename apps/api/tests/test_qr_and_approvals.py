@@ -114,6 +114,42 @@ async def test_qr_request_requires_staff_approval_then_uses_unified_order_engine
     headers = auth_headers(owner)
     resources = await seeded_resources(api, headers)
     table = resources["tables"][2]
+    program = await api.client.put(
+        "/api/v1/loyalty/program",
+        headers=headers,
+        json={
+            "name": "Dixora Loyalty",
+            "is_active": True,
+            "show_on_qr": True,
+            "campaign_type": "VISIT_COUNT",
+            "threshold": 5,
+            "branch_ids": [table["branch_id"]],
+            "reward_product_id": resources["burger"]["id"],
+            "minimum_order_amount": "1.00",
+            "allow_multiple_same_day": True,
+            "reward_same_order": False,
+        },
+    )
+    assert program.status_code == 200, program.text
+    enrollment_started = await api.client.post(
+        "/api/v1/loyalty/public/dixora-lab/merkez/email-enrollments/start",
+        json={
+            "first_name": "Test",
+            "last_name": "Customer",
+            "email": "qr-bill@example.com",
+            "consent_accepted": True,
+        },
+    )
+    assert enrollment_started.status_code == 201, enrollment_started.text
+    enrollment_confirmed = await api.client.post(
+        "/api/v1/loyalty/public/dixora-lab/merkez/email-enrollments/confirm",
+        json={
+            "verification_id": enrollment_started.json()["verification_id"],
+            "code": enrollment_started.json()["development_code"],
+        },
+    )
+    assert enrollment_confirmed.status_code == 200, enrollment_confirmed.text
+    membership_code = enrollment_confirmed.json()["member_code"]
     menu = await api.client.get(
         "/api/v1/qr/public/dixora-lab/merkez",
         params={"table_token": table["qr_token"]},
@@ -134,6 +170,7 @@ async def test_qr_request_requires_staff_approval_then_uses_unified_order_engine
     )
     assert public_burger["id"].startswith("p_")
     assert public_burger["category_id"].startswith("c_")
+    assert menu_payload["active_order"] is None
     assert "tenant_id" not in menu_payload["config"]
     assert "branch_id" not in menu_payload["config"]
     assert "tenant_id" not in menu_payload["categories"][0]
@@ -179,6 +216,37 @@ async def test_qr_request_requires_staff_approval_then_uses_unified_order_engine
     assert order.status_code == 200
     assert order.json()["source"] == "QR"
     assert order.json()["status"] == "ACCEPTED"
+
+    refreshed_menu = await api.client.get(
+        "/api/v1/qr/public/dixora-lab/merkez",
+        params={"table_token": table["qr_token"]},
+    )
+    assert refreshed_menu.status_code == 200, refreshed_menu.text
+    assert refreshed_menu.json()["active_order"]["status"] == "ACCEPTED"
+
+    bill_request = await api.client.post(
+        "/api/v1/qr/public/dixora-lab/merkez/bill-request",
+        json={
+            "table_token": table["qr_token"],
+            "session_token": refreshed_menu.json()["session_token"],
+            "payment_preference": "ROOM_CHARGE",
+            "room_reference": "214",
+            "membership_code": membership_code,
+        },
+    )
+    assert bill_request.status_code == 201, bill_request.text
+    assert bill_request.json()["status"] == "REQUESTED"
+    assert bill_request.json()["order"]["status"] == "BILL_REQUESTED"
+
+    order_after_bill = await api.client.get(f"/api/v1/orders/{order_id}", headers=headers)
+    assert order_after_bill.status_code == 200, order_after_bill.text
+    assert order_after_bill.json()["status"] == "BILL_REQUESTED"
+    loyalty_context = await api.client.get(
+        f"/api/v1/loyalty/orders/{order_id}/context",
+        headers=headers,
+    )
+    assert loyalty_context.status_code == 200, loyalty_context.text
+    assert loyalty_context.json()["membership_code"] == membership_code
 
 
 async def test_qr_request_pending_quota_allows_replay_but_rejects_a_fourth_request(

@@ -5,6 +5,7 @@ import {
   readAuthCookies,
 } from "@/lib/server/auth-cookies"
 import { backendFetch } from "@/lib/server/backend"
+import { clientAddressHeaders } from "@/lib/server/client-address"
 import { mutationOriginError } from "@/lib/server/request-security"
 
 export const runtime = "nodejs"
@@ -33,6 +34,7 @@ export async function POST(request: NextRequest): Promise<Response> {
         headers: {
           accept: "application/json",
           "content-type": "application/json",
+          ...clientAddressHeaders(request),
           ...(accessToken
             ? { authorization: `Bearer ${accessToken}` }
             : {}),

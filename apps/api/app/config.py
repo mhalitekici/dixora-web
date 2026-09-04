@@ -80,6 +80,13 @@ class Settings(BaseSettings):
     smtp_use_ssl: bool = False
     smtp_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
     resend_api_key: SecretStr | None = None
+
+    # Payment provider. Sandbox by default so a misconfigured deployment
+    # cannot accidentally charge a real card.
+    payment_provider: Literal["none", "iyzico"] = "none"
+    iyzico_api_key: SecretStr | None = None
+    iyzico_secret_key: SecretStr | None = None
+    iyzico_base_url: str = "sandbox-api.iyzipay.com"
     email_timeout_seconds: float = Field(default=15.0, ge=1.0, le=120.0)
     cors_origins: list[str] = ["http://localhost:3000"]
     print_bridge_key: SecretStr = Field(default=SecretStr("development-print-bridge"))
@@ -98,6 +105,10 @@ class Settings(BaseSettings):
     media_max_pixels: int = Field(default=36_000_000, ge=4096, le=100_000_000)
     auto_create_schema: bool = False
     dev_seed_enabled: bool = False
+    # Swagger/ReDoc/openapi.json. Always available outside production; opt-in
+    # there, so a deployment can turn them back on deliberately rather than by
+    # forgetting to turn them off.
+    expose_api_docs: bool = False
     log_level: str = "INFO"
     sql_echo: bool = False
 

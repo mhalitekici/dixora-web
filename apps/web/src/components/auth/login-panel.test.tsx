@@ -64,7 +64,7 @@ describe("LoginPanel", () => {
     const user = userEvent.setup()
     render(<LoginPanel />)
 
-    await user.click(screen.getByRole("tab", { name: "Garson girişi" }))
+    await user.click(screen.getByRole("tab", { name: "Çalışan girişi" }))
     const pin = screen.getByLabelText("PIN")
     await user.clear(pin)
     await user.type(pin, "12")
@@ -93,10 +93,10 @@ describe("LoginPanel", () => {
     )
 
     expect(
-      screen.getByRole("heading", { name: "Garson girişi" }),
+      screen.getByRole("heading", { name: "Çalışan girişi" }),
     ).toBeVisible()
     expect(
-      screen.getByRole("tab", { name: "Garson girişi" }),
+      screen.getByRole("tab", { name: "Çalışan girişi" }),
     ).toHaveAttribute("aria-selected", "true")
     expect(screen.getByText("Bu cihazda ilk giriş mi?")).toBeVisible()
     expect(screen.getByLabelText("İşletme kodu")).toHaveValue(

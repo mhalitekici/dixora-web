@@ -37,6 +37,9 @@ class Category(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     branch_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("branches.id", ondelete="CASCADE"), nullable=True, index=True
     )
+    source_category_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("categories.id", ondelete="SET NULL"), nullable=True, index=True
+    )
     parent_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("categories.id", ondelete="SET NULL"), nullable=True
     )
@@ -70,13 +73,19 @@ class PreparationStation(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 class Product(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "products"
     __table_args__ = (
-        UniqueConstraint("tenant_id", "sku", name="uq_product_tenant_sku"),
+        UniqueConstraint("tenant_id", "branch_id", "sku", name="uq_product_branch_sku"),
         CheckConstraint("selling_price >= 0", name="selling_price_nonnegative"),
         CheckConstraint("cost_price >= 0", name="cost_price_nonnegative"),
     )
 
     tenant_id: Mapped[UUID] = mapped_column(
         ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    branch_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("branches.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+    source_product_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("products.id", ondelete="SET NULL"), nullable=True, index=True
     )
     category_id: Mapped[UUID] = mapped_column(
         ForeignKey("categories.id", ondelete="RESTRICT"), nullable=False, index=True

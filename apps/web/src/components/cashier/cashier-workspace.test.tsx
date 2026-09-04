@@ -228,3 +228,71 @@ describe("CashierWorkspace", () => {
     expect(screen.getByText("Reddet")).toBeInTheDocument()
   })
 })
+
+describe("CashierWorkspace floor summary", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it("shows what is still to be collected across open tables", async () => {
+    vi.stubGlobal("fetch", vi.fn(routeFetchWithOrder))
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(<CashierWorkspace />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      ),
+    })
+
+    const label = await screen.findByText("Tahsil edilecek")
+    // Scoped to the strip: the same amount also appears on the card and in the
+    // payment panel, so a bare text query would be ambiguous.
+    // 260.00 on the floor, nothing paid yet.
+    expect(label.parentElement).toHaveTextContent("₺260,00")
+    expect(screen.getByText("Açık hesap")).toBeVisible()
+  })
+
+  it("puts a dwell timer on an occupied table", async () => {
+    vi.stubGlobal("fetch", vi.fn(routeFetchWithOrder))
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(<CashierWorkspace />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      ),
+    })
+
+    // The order was opened just now, so the card reads a fresh duration
+    // rather than showing nothing at all.
+    expect(await screen.findByText("0dk")).toBeVisible()
+  })
+})
+
+describe("CashierWorkspace table states", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it("tells a ready table apart from one that is merely occupied", async () => {
+    // The fixture table is PREPARING; it must not read as a generic "Dolu",
+    // or the cashier cannot see which table actually needs them.
+    vi.stubGlobal("fetch", vi.fn(routeFetchWithOrder))
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(<CashierWorkspace />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+      ),
+    })
+
+    // Scoped to the card: "Dolu" also exists as a filter chip, so a bare
+    // negative query would be testing the wrong element.
+    const label = await screen.findByText("Hazırlanıyor")
+    const card = label.closest("button")
+    expect(card).toHaveTextContent("B1")
+    expect(card).not.toHaveTextContent("Dolu")
+  })
+})

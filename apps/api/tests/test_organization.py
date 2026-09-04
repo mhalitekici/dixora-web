@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from uuid import uuid4
+
 from tests.conftest import ApiContext, auth_headers, login
 
 
@@ -100,3 +102,40 @@ async def test_owner_can_update_safe_business_settings_but_not_platform_state(
     )
     assert forbidden.status_code == 403, forbidden.text
     assert forbidden.json()["error"]["code"] == "platform_fields_forbidden"
+
+
+async def test_cashier_is_assignable_when_adding_an_employee(
+    api: ApiContext,
+) -> None:
+    """A till operator could not be created: CASHIER was missing from the
+    assignable presets, so the admin form offered no such option."""
+    headers = auth_headers(await login(api))
+    response = await api.client.get("/api/v1/roles", headers=headers)
+    assert response.status_code == 200, response.text
+    codes = {role["code"] for role in response.json()}
+    assert {"BUSINESS_MANAGER", "CASHIER", "WAITER"} <= codes
+
+
+async def test_an_employee_can_be_created_as_a_cashier(api: ApiContext) -> None:
+    headers = auth_headers(await login(api))
+    roles = (await api.client.get("/api/v1/roles", headers=headers)).json()
+    cashier_role = next(role for role in roles if role["code"] == "CASHIER")
+    branches = (await api.client.get("/api/v1/branches", headers=headers)).json()
+
+    created = await api.client.post(
+        "/api/v1/users",
+        headers=headers,
+        json={
+            "username": f"kasa{uuid4().hex[:6]}",
+            "display_name": "Kasa Halit",
+            "role_id": cashier_role["id"],
+            "branch_id": branches[0]["id"],
+            "temporary_password": "Kasa-Guvenli!2026",
+        },
+    )
+    assert created.status_code == 201, created.text
+    # `role` carries the code, which is what drives routing and permissions.
+    assert created.json()["role"] == "CASHIER"
+    assert created.json()["role_id"] == cashier_role["id"]
+    # The human-facing name is repaired to Turkish for the admin dropdown.
+    assert cashier_role["name"] == "Kasiyer"

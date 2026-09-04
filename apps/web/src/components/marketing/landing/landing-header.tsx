@@ -30,10 +30,10 @@ export function LandingHeader() {
           </Link>
           <Link
             className={styles.loginLink}
-            href="/login?mode=waiter"
-            aria-label="Garson girişi"
+            href="/login?mode=staff"
+            aria-label="Çalışan girişi"
           >
-            <span className={styles.loginLong}>Garson girişi</span>
+            <span className={styles.loginLong}>Çalışan girişi</span>
             <span className={styles.loginShort}>Garson</span>
           </Link>
           <a className={styles.headerCta} href="#kayit">

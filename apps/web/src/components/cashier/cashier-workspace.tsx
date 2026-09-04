@@ -32,7 +32,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -43,6 +43,11 @@ import {
 import type { QrRequestDto } from "@/components/qr/types";
 import { EmptyState } from "@/components/shared/empty-state";
 import { StatusBadge } from "@/components/shared/status-badge";
+import {
+  dwellMinutes,
+  dwellUrgency,
+  formatDwell,
+} from "@/components/cashier/table-dwell";
 import { StaffLoyaltyPanel } from "@/components/loyalty/staff-loyalty-panel";
 import { Button } from "@/components/ui/button";
 import {
@@ -97,6 +102,7 @@ type Product = {
   category_id: string;
   selling_price: string | number;
   is_available: boolean;
+  image_url?: string | null;
 };
 type OrderItemModifier = {
   id: string;
@@ -128,6 +134,12 @@ type HotelRoomSummary = {
   guest_name: string | null;
   folio_reference: string | null;
 };
+const dwellTone: Record<ReturnType<typeof dwellUrgency>, string> = {
+  fresh: "bg-muted text-muted-foreground",
+  settled: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  long: "bg-rose-500/15 text-rose-700 dark:text-rose-300",
+};
+
 type Order = {
   id: string;
   table_id?: string | null;
@@ -141,6 +153,7 @@ type Order = {
   total: string | number;
   items: OrderItem[];
   payments: Payment[];
+  created_at?: string;
 };
 type ApprovalRequest = {
   id: string;
@@ -289,18 +302,20 @@ const tableState: Record<string, TableStateMeta> = {
     dot: "bg-blue-500",
   },
   PREPARING: {
-    label: "Dolu",
-    tone: "info",
-    card: "border-blue-300/70 bg-blue-50 hover:border-blue-400 dark:border-blue-500/25 dark:bg-blue-500/10",
-    badge: "bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-300",
-    dot: "bg-blue-500",
+    label: "Hazırlanıyor",
+    tone: "warning",
+    card: "border-amber-300/70 bg-amber-50 hover:border-amber-400 dark:border-amber-500/25 dark:bg-amber-500/10",
+    badge: "bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200",
+    dot: "bg-amber-500",
   },
   READY: {
-    label: "Dolu",
-    tone: "info",
-    card: "border-blue-300/70 bg-blue-50 hover:border-blue-400 dark:border-blue-500/25 dark:bg-blue-500/10",
-    badge: "bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-300",
-    dot: "bg-blue-500",
+    label: "Hazır",
+    tone: "success",
+    card: "border-teal-400 bg-teal-50 hover:border-teal-500 dark:border-teal-500/35 dark:bg-teal-500/12",
+    badge: "bg-teal-100 text-teal-900 dark:bg-teal-500/25 dark:text-teal-200",
+    dot: "bg-teal-500",
+    // Food is sitting on the pass; this is the one that needs a person.
+    pulse: true,
   },
   BILL_REQUESTED: {
     label: "Hesap İstendi",
@@ -398,6 +413,13 @@ export function CashierWorkspace() {
   const [selectedArea, setSelectedArea] = useState("all");
   const [selectedTableId, setSelectedTableId] = useState("");
   const [tableSearch, setTableSearch] = useState("");
+  // Drives the dwell timers. Ticking locally keeps them moving without
+  // refetching every table once a minute.
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 30_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const [dialog, setDialog] = useState<
     | "products"
     | "payment"
@@ -511,6 +533,18 @@ export function CashierWorkspace() {
     setSoundPreference: setAlertSoundEnabled,
   } = useAlertChime(qrPendingRequests.length, !qrRequestsQuery.isLoading);
   const billRequestedCount = orders.filter((order) => order.status === "BILL_REQUESTED").length;
+  // The two numbers a cashier is asked for all evening: how much is still on
+  // the floor, and how long the oldest table has been sitting.
+  const outstandingTotal = orders.reduce((sum, order) => {
+    const collected = order.payments
+      .filter((payment) => payment.status === "COMPLETED")
+      .reduce((paid, payment) => paid + Number(payment.amount), 0);
+    return sum + Math.max(0, Number(order.total) - collected);
+  }, 0);
+  const longestDwell = orders.reduce((longest, order) => {
+    const minutes = dwellMinutes(order.created_at, now);
+    return minutes !== null && minutes > longest ? minutes : longest;
+  }, 0);
   const pendingApprovals = approvalsQuery.data ?? [];
 
   // Counts drive the status chips, so the till can jump straight to the tables
@@ -904,11 +938,11 @@ export function CashierWorkspace() {
     },
     onSuccess: (_, kind) => {
       toast.success(
-        kind === "ORIGINAL" ? "Hesap fişi yazdırılıyor" : "Yeniden baskı kuyruğa alındı",
+        kind === "ORIGINAL" ? "Müşteri bilgi fişi yazdırılıyor" : "Yeniden baskı kuyruğa alındı",
         {
           description:
             kind === "ORIGINAL"
-              ? "Fiş ilk kez ORIGINAL olarak basılıyor."
+              ? "Ödeme öncesi müşteri fişi yazıcı kuyruğuna alındı."
               : "Fiş REPRINT olarak denetim kaydına yazıldı.",
         },
       );
@@ -982,6 +1016,42 @@ export function CashierWorkspace() {
     <div className="flex min-h-[calc(100dvh-4rem)] flex-col bg-muted/25">
       {guestLabelDialog}
       <div className="flex flex-wrap items-center gap-2 border-b bg-card px-4 py-2.5">
+        <div className="flex items-center gap-3 rounded-xl border bg-muted/40 px-3 py-1.5">
+          <span className="flex flex-col leading-tight">
+            <span className="text-[0.6rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              Açık hesap
+            </span>
+            <span className="text-sm font-bold tabular-nums">{orders.length}</span>
+          </span>
+          <span className="h-7 w-px bg-border" aria-hidden="true" />
+          <span className="flex flex-col leading-tight">
+            <span className="text-[0.6rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+              Tahsil edilecek
+            </span>
+            <span className="text-sm font-bold tabular-nums">
+              {currency.format(outstandingTotal)}
+            </span>
+          </span>
+          {longestDwell > 0 ? (
+            <>
+              <span className="h-7 w-px bg-border" aria-hidden="true" />
+              <span className="flex flex-col leading-tight">
+                <span className="text-[0.6rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+                  En uzun masa
+                </span>
+                <span
+                  className={cn(
+                    "text-sm font-bold tabular-nums",
+                    dwellUrgency(longestDwell) === "long" &&
+                      "text-rose-600 dark:text-rose-400",
+                  )}
+                >
+                  {formatDwell(longestDwell)}
+                </span>
+              </span>
+            </>
+          ) : null}
+        </div>
         {shiftQuery.data ? (
           <Link
             href="/cashier/shift"
@@ -1094,7 +1164,7 @@ export function CashierWorkspace() {
         </div>
       ) : null}
       <div className="grid flex-1 xl:grid-cols-[280px_minmax(0,1fr)_350px]">
-      <aside className="border-r bg-card xl:min-h-[calc(100dvh-4rem)]">
+      <aside className="border-r bg-muted/30 xl:min-h-[calc(100dvh-4rem)]">
         <div className="border-b p-3">
           <div className="mb-3 flex items-center justify-between">
             <div>
@@ -1168,11 +1238,12 @@ export function CashierWorkspace() {
           ))}
         </div>
         <ScrollArea className="h-[320px] xl:h-[calc(100dvh-15.4rem)]">
-          <div className="grid grid-cols-2 gap-2 p-2 xl:grid-cols-1">
+          <div className="grid grid-cols-2 gap-2.5 p-3 xl:grid-cols-1">
             {filteredTables.map((table) => {
               const meta = tableState[table.state] ?? tableState.AVAILABLE;
               const order = selectCurrentTableOrder(orders, table);
               const hasQrRequest = qrPendingTableIds.has(table.id);
+              const dwell = order ? dwellMinutes(order.created_at, now) : null;
               return (
                 <button
                   type="button"
@@ -1181,9 +1252,10 @@ export function CashierWorkspace() {
                   {...labelProps(table)}
                   title="Sağ tık: misafir adı ekle"
                   className={cn(
-                    "relative flex min-h-15 items-center gap-2.5 rounded-xl border-2 p-2 text-left transition-colors",
+                    "relative flex min-h-16 items-center gap-2.5 overflow-hidden rounded-2xl border-2 p-2.5 text-left shadow-sm transition-all hover:shadow-md active:scale-[0.99]",
                     meta.card,
-                    selectedTableId === table.id && "border-primary ring-2 ring-primary/20",
+                    selectedTableId === table.id &&
+                      "border-primary shadow-md ring-2 ring-primary/25",
                   )}
                 >
                   {hasQrRequest ? (
@@ -1196,7 +1268,7 @@ export function CashierWorkspace() {
                   ) : null}
                   <span
                     className={cn(
-                      "flex size-9 shrink-0 items-center justify-center rounded-lg text-sm font-bold",
+                      "flex size-10 shrink-0 items-center justify-center rounded-lg text-base font-bold",
                       meta.badge,
                     )}
                   >
@@ -1216,8 +1288,20 @@ export function CashierWorkspace() {
                         {table.guest_label}
                       </span>
                     ) : null}
-                    <span className="mt-0.5 block truncate text-[0.68rem] font-medium text-muted-foreground">
-                      {order ? currency.format(Number(order.total)) : `${table.capacity} kişilik`}
+                    <span className="mt-0.5 flex items-baseline gap-1.5">
+                      <span className="truncate text-[0.72rem] font-bold tabular-nums text-foreground">
+                        {order ? currency.format(Number(order.total)) : `${table.capacity} kişilik`}
+                      </span>
+                      {dwell !== null ? (
+                        <span
+                          className={cn(
+                            "shrink-0 rounded px-1 text-[0.62rem] font-semibold tabular-nums",
+                            dwellTone[dwellUrgency(dwell)],
+                          )}
+                        >
+                          {formatDwell(dwell)}
+                        </span>
+                      ) : null}
                     </span>
                   </span>
                   <ChevronRight className="hidden size-4 text-muted-foreground xl:block" />
@@ -1228,7 +1312,7 @@ export function CashierWorkspace() {
         </ScrollArea>
       </aside>
 
-      <section className="min-w-0 border-r bg-background">
+      <section className="min-w-0 border-r bg-muted/15">
         <header className="flex min-h-16 items-center gap-3 border-b bg-card px-4">
           <span className="flex size-10 items-center justify-center rounded-xl bg-brand-soft text-lg font-bold text-brand">
             {selectedTable?.name ?? "—"}
@@ -1267,7 +1351,7 @@ export function CashierWorkspace() {
             {selectedOrder?.items?.length ? (
               <div className="space-y-2">
                 {selectedOrder.items.map((item) => (
-                  <article key={item.id} className="flex items-start gap-3 rounded-xl border bg-card p-3">
+                  <article key={item.id} className="flex items-start gap-3 rounded-2xl border bg-card p-3 shadow-sm">
                     <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted text-xs font-bold">
                       {Number(item.quantity)}×
                     </span>
@@ -1444,7 +1528,7 @@ export function CashierWorkspace() {
             ) : (
               <Printer />
             )}
-            Fiş yazdır
+            Bilgi fişi
           </Button>
           <Button
             variant="outline"
@@ -1709,12 +1793,27 @@ export function CashierWorkspace() {
                 key={product.id}
                 disabled={productMutation.isPending}
                 onClick={() => productMutation.mutate(product)}
-                className="flex min-h-28 flex-col rounded-xl border p-3 text-left transition-colors hover:border-brand/25 hover:bg-brand-soft/40 disabled:opacity-50"
+                className="group relative flex min-h-36 flex-col overflow-hidden rounded-xl border bg-card text-left transition-colors hover:border-brand/35 hover:bg-brand-soft/40 disabled:opacity-50"
               >
-                <span className="line-clamp-2 text-sm font-semibold">{product.name}</span>
-                <span className="mt-auto flex w-full items-center justify-between pt-3">
-                  <span className="text-xs font-bold">{currency.format(Number(product.selling_price))}</span>
-                  <Plus className="size-4 text-brand" />
+                <span className="relative flex h-24 w-full items-center justify-center overflow-hidden bg-muted/55">
+                  {product.image_url ? (
+                    // Product media may come from tenant object storage.
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img
+                      src={product.image_url}
+                      alt=""
+                      className="size-full object-cover transition-transform duration-200 group-hover:scale-105"
+                    />
+                  ) : (
+                    <ReceiptText className="size-7 text-muted-foreground/60" />
+                  )}
+                </span>
+                <span className="flex min-h-14 flex-col p-2.5">
+                  <span className="line-clamp-1 text-sm font-semibold">{product.name}</span>
+                  <span className="mt-auto flex w-full items-center justify-between pt-1.5">
+                    <span className="text-xs font-bold">{currency.format(Number(product.selling_price))}</span>
+                    <Plus className="size-4 text-brand" />
+                  </span>
                 </span>
               </button>
             ))}

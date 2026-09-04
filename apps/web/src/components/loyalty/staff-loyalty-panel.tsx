@@ -35,6 +35,12 @@ type StaffLoyaltyPanelProps = {
   onChanged?: () => void
 }
 
+const money = new Intl.NumberFormat("tr-TR", {
+  style: "currency",
+  currency: "TRY",
+  minimumFractionDigits: 2,
+})
+
 export function StaffLoyaltyPanel({
   orderId,
   items,
@@ -72,23 +78,44 @@ export function StaffLoyaltyPanel({
     onChanged?.()
   }
 
-  const attachMutation = useMutation({
+  // One action for the whole counter flow: bind the member and grant every
+  // campaign they have earned. Choosing which line a treat covers is the
+  // server's job — the cashier has a queue waiting, not a puzzle to solve.
+  const applyMutation = useMutation({
     mutationFn: async () => {
       if (!orderId) throw new Error("Önce açık bir sipariş seçin.")
       const code = membershipCode.trim().toUpperCase()
       if (code.length < MIN_MEMBER_CODE_LENGTH)
         throw new Error("Geçerli üyelik kodunu girin.")
-      return loyaltyApi.attachMembership(orderId, code)
+      return loyaltyApi.applyMemberCode(orderId, {
+        member_code: code,
+        idempotency_key: `campaign:${orderId}:${code}`,
+      })
     },
     onSuccess: async (result) => {
       setMembershipCode("")
-      toast.success("Sadakat üyeliği siparişe bağlandı", {
-        description: `${result.program_name} · ${result.membership_code}`,
-      })
+      if (result.applied.length > 0) {
+        toast.success(
+          result.applied.length === 1
+            ? `${result.applied[0].product_name} ikram edildi`
+            : `${result.applied.length} kampanya uygulandı`,
+          {
+            description: `${result.program_name} · ${money.format(
+              Number(result.total_discount),
+            )} indirim`,
+          },
+        )
+      } else {
+        // A valid code that grants nothing still has to be explained, or the
+        // cashier is left arguing with the customer.
+        toast.info("Üyelik bağlandı, kampanya uygulanmadı", {
+          description: result.unapplied_reason ?? undefined,
+        })
+      }
       await refresh()
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Üyelik bağlanamadı."),
+      toast.error(error instanceof Error ? error.message : "Kod uygulanamadı."),
   })
 
   const redeemMutation = useMutation({
@@ -115,7 +142,7 @@ export function StaffLoyaltyPanel({
   })
 
   const context = contextQuery.data
-  const busy = attachMutation.isPending || redeemMutation.isPending
+  const busy = applyMutation.isPending || redeemMutation.isPending
 
   return (
     <section className="rounded-2xl border bg-card p-3" aria-labelledby={`loyalty-${orderId ?? "empty"}`}>
@@ -125,12 +152,12 @@ export function StaffLoyaltyPanel({
         </span>
         <div className="min-w-0 flex-1">
           <h3 id={`loyalty-${orderId ?? "empty"}`} className="text-xs font-semibold">
-            Sadakat üyeliği
+            Sadakat ve kampanya
           </h3>
           <p className="mt-0.5 text-[0.65rem] leading-4 text-muted-foreground">
             {context?.membership_code
               ? `${context.program_name ?? "Program"} · ${context.membership_code}`
-              : "Müşterinin üyelik kodunu siparişe bağlayın."}
+              : "Müşterinin kodunu girin; kazandığı kampanyalar otomatik uygulanır."}
           </p>
         </div>
         {contextQuery.isFetching ? <Loader2 className="size-4 animate-spin text-muted-foreground" /> : null}
@@ -164,12 +191,12 @@ export function StaffLoyaltyPanel({
           className="mt-3 flex gap-2"
           onSubmit={(event) => {
             event.preventDefault()
-            attachMutation.mutate()
+            applyMutation.mutate()
           }}
         >
           <div className="min-w-0 flex-1">
             <Label htmlFor={`membership-code-${orderId}`} className="sr-only">
-              Üyelik kodu
+              Üyelik / kampanya kodu
             </Label>
             <Input
               id={`membership-code-${orderId}`}
@@ -177,7 +204,7 @@ export function StaffLoyaltyPanel({
               onChange={(event) => setMembershipCode(event.target.value.toUpperCase())}
               autoComplete="off"
               maxLength={32}
-              placeholder="Üyelik kodu"
+              placeholder="Üyelik / kampanya kodu"
               className="h-9 rounded-xl font-mono text-xs uppercase"
               disabled={disabled || busy}
             />
@@ -190,8 +217,8 @@ export function StaffLoyaltyPanel({
               disabled || busy || membershipCode.trim().length < MIN_MEMBER_CODE_LENGTH
             }
           >
-            {attachMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
-            Bağla
+            {applyMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
+            Uygula
           </Button>
           <Button
             type="button"

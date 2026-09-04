@@ -13,6 +13,7 @@ from app.dependencies import (
     Identity,
     require_branch,
     require_permissions,
+    require_record_branch,
     require_tenant,
 )
 from app.errors import DomainError
@@ -204,6 +205,7 @@ async def update_ticket_status(
     ).scalar_one_or_none()
     if ticket is None:
         raise DomainError("ticket_not_found", "Kitchen ticket not found", status_code=404)
+    require_record_branch(identity, ticket.branch_id)
     if payload.status == ticket.status:
         return (await _hydrate_tickets(db, [ticket]))[0]
     if payload.status not in TRANSITIONS[ticket.status]:

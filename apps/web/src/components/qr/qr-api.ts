@@ -3,6 +3,8 @@ import { api } from "@/lib/api"
 import type {
   DiningTableDto,
   PageDto,
+  PublicBillRequestCreate,
+  PublicBillRequestDto,
   PublicQrRequestDto,
   PublicQrMenuDto,
   QrConfigDto,
@@ -38,6 +40,19 @@ export const qrApi = {
   ): Promise<PublicQrRequestDto> {
     return api.post<PublicQrRequestDto>(
       `qr/public/${segment(businessSlug)}/${segment(branchSlug)}/requests`,
+      payload,
+      { signal },
+    )
+  },
+
+  createPublicBillRequest(
+    businessSlug: string,
+    branchSlug: string,
+    payload: PublicBillRequestCreate,
+    signal?: AbortSignal,
+  ): Promise<PublicBillRequestDto> {
+    return api.post<PublicBillRequestDto>(
+      `qr/public/${segment(businessSlug)}/${segment(branchSlug)}/bill-request`,
       payload,
       { signal },
     )

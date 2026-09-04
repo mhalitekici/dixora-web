@@ -44,9 +44,9 @@ const faqs: Faq[] = [
       "Admin › Çalışanlar ekranından yeni çalışan ekleyebilir, rol atayabilirsiniz. Roller yetkileri belirler: Yönetici, Müdür, Garson ve Kasiyer farklı ekranlara erişir. Çalışan ayrılırsa hesabı silmek yerine pasife almanız, geçmiş kayıtların bütünlüğü açısından önerilir.",
   },
   {
-    question: "Sadakat programı nasıl çalışır?",
+    question: "Sadakat ve kampanya nasıl çalışır?",
     answer:
-      "Admin › Sadakat Programı ekranından kural tanımlarsınız (örn. belirli sayıda ziyaret veya ürün alımı sonrası ödül). Müşteri telefon numarasıyla kaydolur; kasiyer siparişe üyeliği bağladığında ilerleme otomatik işlenir ve ödül hak edildiğinde kullanılabilir hâle gelir.",
+      "Admin › Sadakat ve Kampanya ekranından kural tanımlarsınız (örn. belirli sayıda ziyaret veya ürün alımı sonrası ödül). Müşteri telefon numarasıyla kaydolur; kasiyer siparişe üyeliği bağladığında ilerleme otomatik işlenir ve ödül hak edildiğinde kullanılabilir hâle gelir.",
   },
   {
     question: "Şube nasıl değiştiririm?",
