@@ -1319,10 +1319,38 @@ class PublicMenuOut(BaseModel):
     branch: str
     context_key: str
     table_name: str | None
+    active_order: PublicActiveOrderOut | None = None
     config: PublicQrConfigOut
     categories: list[PublicMenuCategory]
     products: list[PublicMenuProduct]
     session_token: str | None = None
+
+
+class PublicActiveOrderOut(BaseModel):
+    status: OrderStatus
+    total: Decimal
+    paid_total: Decimal
+    remaining: Decimal
+
+
+class PublicBillRequestCreate(BaseModel):
+    table_token: str = Field(min_length=16, max_length=64)
+    session_token: str
+    payment_preference: Literal["CASH", "CARD", "ROOM_CHARGE"] | None = None
+    room_reference: str | None = Field(default=None, max_length=160)
+    membership_code: str | None = Field(default=None, min_length=6, max_length=32)
+
+    @model_validator(mode="after")
+    def room_charge_requires_reference(self) -> PublicBillRequestCreate:
+        if self.payment_preference == "ROOM_CHARGE" and not (self.room_reference or "").strip():
+            raise ValueError("Room reference is required for a room charge request")
+        return self
+
+
+class PublicBillRequestOut(BaseModel):
+    status: Literal["REQUESTED"]
+    order: PublicActiveOrderOut
+    requested_at: datetime
 
 
 class PublicQrOrderModifierInput(BaseModel):
@@ -1736,3 +1764,60 @@ class OrderActivityOut(BaseModel):
     delivery_channel: str | None
     customer_name: str | None
     total: Decimal
+
+
+class OrderActivityItemOut(BaseModel):
+    """One line of what was actually ordered, as snapshotted at the time.
+
+    Every field is the order's own snapshot, so a receipt pulled months later
+    still shows the name and price the guest paid, not today's catalog.
+    """
+
+    name: str
+    quantity: Decimal
+    unit_price: Decimal
+    discount: Decimal
+    line_total: Decimal
+    status: str
+    note: str | None
+    # Already rendered as "2x Ekstra peynir" so every surface reads the same.
+    modifiers: list[str]
+
+
+class OrderActivityPaymentOut(BaseModel):
+    """One settlement against the order: what was paid, how, and by whom."""
+
+    method: str
+    amount: Decimal
+    status: str
+    reference: str | None
+    recorded_at: datetime
+    recorded_by: str | None
+
+
+class OrderActivityDetailOut(OrderActivityOut):
+    """The full story behind one feed row: ordered, charged, paid.
+
+    Deliberately self-contained rather than pointing the client at
+    `/orders/{id}`: a report reader (an accountant, say) has `reports.read`
+    without `orders.read`, and a receipt needs the branch letterhead and the
+    money breakdown in one response.
+    """
+
+    # Short human reference — the same one printed on the bill.
+    reference: str
+    currency: str
+    business_name: str
+    branch_name: str
+    branch_address: str | None
+    branch_phone: str | None
+    submitted_at: datetime | None
+    accepted_at: datetime | None
+    paid_at: datetime | None
+    subtotal: Decimal
+    discount_total: Decimal
+    tax_total: Decimal
+    paid_total: Decimal
+    remaining: Decimal
+    items: list[OrderActivityItemOut]
+    payments: list[OrderActivityPaymentOut]

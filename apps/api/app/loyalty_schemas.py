@@ -277,6 +277,10 @@ class LoyaltyEnrollmentStart(BaseModel):
     birth_date: date | None = None
 
 
+class PublicLoyaltyEmailEnrollmentStart(LoyaltyEnrollmentStart):
+    consent_accepted: Literal[True]
+
+
 class LoyaltyEnrollmentStartOut(BaseModel):
     verification_id: UUID
     email: str

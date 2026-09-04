@@ -15,10 +15,12 @@ from app.dependencies import (
     Identity,
     require_branch,
     require_permissions,
+    require_record_branch,
     require_tenant,
 )
 from app.errors import DomainError
 from app.models import (
+    Branch,
     Category,
     DeliveryOrder,
     DiningTable,
@@ -29,6 +31,7 @@ from app.models import (
     Payment,
     Product,
     TableSession,
+    Tenant,
     User,
 )
 from app.models.enums import (
@@ -39,7 +42,10 @@ from app.models.enums import (
     PaymentStatus,
 )
 from app.schemas import (
+    OrderActivityDetailOut,
+    OrderActivityItemOut,
     OrderActivityOut,
+    OrderActivityPaymentOut,
     SalesAnalyticsCategoryBreakdownOut,
     SalesAnalyticsOrderSourceBreakdownOut,
     SalesAnalyticsOut,
@@ -48,6 +54,7 @@ from app.schemas import (
     SalesSummaryOut,
 )
 from app.security import as_utc
+from app.services.orders import load_order, order_bill_reference
 
 
 def _naive(value: datetime) -> datetime:
@@ -489,3 +496,141 @@ async def order_activity(
         )
         for row in rows
     ]
+
+
+@router.get("/order-activity/{order_id}", response_model=OrderActivityDetailOut)
+async def order_activity_detail(
+    order_id: UUID,
+    identity: ReportReader,
+    db: DbSession,
+) -> OrderActivityDetailOut:
+    """The full story behind one feed row: ordered, charged, paid.
+
+    The feed answers "who put this through"; this answers "what for". It
+    carries the item snapshots, the money breakdown and every settlement, so a
+    manager can read the order back — or reprint its receipt — without leaving
+    the report and without `orders.read`.
+    """
+    tenant_id = require_tenant(identity)
+    order = await load_order(db, tenant_id, order_id)
+    # The branch here is a property of the order, not the caller's choice.
+    require_record_branch(identity, order.branch_id)
+
+    staff = aliased(User)
+    attribution = (
+        await db.execute(
+            select(
+                Tenant.name.label("business_name"),
+                Branch.name.label("branch_name"),
+                Branch.address.label("branch_address"),
+                Branch.phone.label("branch_phone"),
+                staff.display_name.label("staff_name"),
+                LoyaltyMembership.lookup_code.label("member_code"),
+                DeliveryOrder.channel.label("delivery_channel"),
+                DeliveryOrder.customer_name.label("delivery_customer"),
+            )
+            .select_from(Order)
+            .join(Tenant, Tenant.id == Order.tenant_id)
+            .join(Branch, Branch.id == Order.branch_id)
+            .outerjoin(staff, staff.id == Order.created_by_user_id)
+            .outerjoin(
+                LoyaltyMembership,
+                LoyaltyMembership.id == Order.loyalty_membership_id,
+            )
+            .outerjoin(DeliveryOrder, DeliveryOrder.order_id == Order.id)
+            .where(Order.id == order.id)
+        )
+    ).one()
+
+    # Only completed money counts as paid; a failed attempt still belongs on the
+    # list, so it is reported with its status rather than dropped.
+    paid_total = sum(
+        (
+            payment.amount
+            for payment in order.payments
+            if payment.status == PaymentStatus.COMPLETED
+        ),
+        ZERO_MONEY,
+    )
+    recorder_ids = {
+        payment.recorded_by_user_id
+        for payment in order.payments
+        if payment.recorded_by_user_id is not None
+    }
+    recorders = (
+        {
+            user_id: display_name
+            for user_id, display_name in (
+                await db.execute(
+                    select(User.id, User.display_name).where(User.id.in_(recorder_ids))
+                )
+            ).all()
+        }
+        if recorder_ids
+        else {}
+    )
+
+    return OrderActivityDetailOut(
+        order_id=order.id,
+        reference=order_bill_reference(order.id),
+        created_at=order.created_at,
+        branch_id=order.branch_id,
+        status=OrderStatus(order.status).value,
+        source=OrderSource(order.source).value,
+        table_name=order.table_name,
+        staff_name=attribution.staff_name,
+        member_code=attribution.member_code,
+        delivery_channel=(
+            DeliveryChannel(attribution.delivery_channel).value
+            if attribution.delivery_channel
+            else None
+        ),
+        # A dine-in order names its guest on the order itself; a package order
+        # carries the customer on the delivery row.
+        customer_name=attribution.delivery_customer or order.customer_name,
+        currency=order.currency,
+        business_name=attribution.business_name,
+        branch_name=attribution.branch_name,
+        branch_address=attribution.branch_address,
+        branch_phone=attribution.branch_phone,
+        submitted_at=order.submitted_at,
+        accepted_at=order.accepted_at,
+        paid_at=order.paid_at,
+        subtotal=order.subtotal,
+        discount_total=order.discount_total,
+        tax_total=order.tax_total,
+        total=order.total,
+        paid_total=_money(paid_total),
+        remaining=_money(max(ZERO_MONEY, order.total - paid_total)),
+        items=[
+            OrderActivityItemOut(
+                name=item.product_name_snapshot,
+                quantity=item.quantity,
+                unit_price=item.unit_price,
+                discount=item.discount_snapshot,
+                line_total=item.line_total,
+                status=OrderItemStatus(item.status).value,
+                note=item.note,
+                modifiers=[
+                    (
+                        f"{modifier.quantity}x {modifier.name_snapshot}"
+                        if modifier.quantity > 1
+                        else modifier.name_snapshot
+                    )
+                    for modifier in item.modifiers
+                ],
+            )
+            for item in order.items
+        ],
+        payments=[
+            OrderActivityPaymentOut(
+                method=payment.method,
+                amount=payment.amount,
+                status=PaymentStatus(payment.status).value,
+                reference=payment.reference,
+                recorded_at=payment.created_at,
+                recorded_by=recorders.get(payment.recorded_by_user_id),
+            )
+            for payment in sorted(order.payments, key=lambda row: row.created_at)
+        ],
+    )

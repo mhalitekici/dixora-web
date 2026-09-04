@@ -408,7 +408,7 @@ async def reactivate_business(
     identity: PlatformAdmin,
     db: DbSession,
 ) -> TenantOut:
-    """Manually reactivate (or extend) a business's membership.
+    """Manually reactivate or extend a business's membership.
 
     This is the only path back to ACTIVE once a trial expires or a business
     is suspended for non-payment — a deliberate platform-admin action taken
@@ -424,12 +424,20 @@ async def reactivate_business(
 
     previous_state = tenant.state.value
     now = utcnow()
+    previous_ends_at = subscription.ends_at if subscription else None
+    extension_base = (
+        subscription.ends_at
+        if subscription is not None and subscription.ends_at and subscription.ends_at > now
+        else now
+    )
+    valid_until = extension_base + timedelta(days=payload.extend_days)
     tenant.state = TenantState.ACTIVE
     tenant.is_active = True
     if subscription is not None:
         subscription.status = TenantState.ACTIVE
-        subscription.starts_at = now
-        subscription.ends_at = now + timedelta(days=payload.extend_days)
+        if subscription.starts_at > now:
+            subscription.starts_at = now
+        subscription.ends_at = valid_until
 
     add_audit_log(
         db,
@@ -442,7 +450,8 @@ async def reactivate_business(
         new_value={
             "state": tenant.state.value,
             "extended_days": payload.extend_days,
-            "valid_until": (now + timedelta(days=payload.extend_days)).isoformat(),
+            "previous_valid_until": previous_ends_at.isoformat() if previous_ends_at else None,
+            "valid_until": valid_until.isoformat(),
         },
         reason=payload.note,
     )

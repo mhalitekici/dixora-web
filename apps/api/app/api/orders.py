@@ -16,14 +16,13 @@ from app.dependencies import (
     require_tenant,
 )
 from app.errors import DomainError
-from app.models import DiningTable, Order, OrderItem, Payment, TableSession, User
+from app.models import Order, OrderItem, Payment, TableSession, User
 from app.models.enums import (
     ApprovalStatus,
     ApprovalType,
     OrderSource,
     OrderStatus,
     PaymentStatus,
-    TableState,
 )
 from app.schemas import (
     AmountCheckSplitOut,
@@ -57,6 +56,7 @@ from app.services.orders import (
     create_order,
     list_approval_requests,
     load_order,
+    mark_order_bill_requested,
     merge_table_order,
     plan_amount_split,
     reject_cancellation,
@@ -444,25 +444,7 @@ async def request_bill(
     db: DbSession,
 ) -> OrderOut:
     order = await _scoped_order(identity, db, order_id, lock=True)
-    if order.status not in {
-        OrderStatus.ACCEPTED,
-        OrderStatus.PREPARING,
-        OrderStatus.PARTIALLY_READY,
-        OrderStatus.READY,
-        OrderStatus.SERVED,
-    }:
-        raise DomainError(
-            "invalid_order_transition", "Bill cannot be requested now", status_code=409
-        )
-    order.status = OrderStatus.BILL_REQUESTED
-    order.version += 1
-    if order.table_session_id:
-        table_session = await db.get(TableSession, order.table_session_id)
-        if table_session:
-            table = await db.get(DiningTable, table_session.table_id)
-            if table:
-                table.state = TableState.BILL_REQUESTED
-                table.version += 1
+    await mark_order_bill_requested(db, order=order)
     add_audit_log(
         db,
         identity=identity,

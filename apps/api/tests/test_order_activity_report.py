@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import uuid4
 
 from tests.conftest import ApiContext, auth_headers, login, seeded_resources
@@ -156,3 +157,65 @@ async def test_an_offset_aware_bound_is_normalised(api: ApiContext) -> None:
     )
     assert response.status_code == 200, response.text
     assert created.json()["id"] in {row["order_id"] for row in response.json()}
+
+
+async def test_the_detail_reports_what_was_ordered_and_what_was_paid(
+    api: ApiContext,
+) -> None:
+    """A feed row must open into the receipt behind it, money included."""
+    headers = auth_headers(await login(api))
+    resources = await seeded_resources(api, headers)
+    created = await api.client.post(
+        "/api/v1/orders",
+        headers=headers,
+        json={
+            "table_id": resources["tables"][0]["id"],
+            "items": [{"product_id": resources["burger"]["id"], "quantity": "2"}],
+            "idempotency_key": f"activity-detail-{uuid4().hex}",
+            "auto_accept": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    order = created.json()
+    part = (Decimal(order["total"]) / 2).quantize(Decimal("0.01"))
+    paid = await api.client.post(
+        f"/api/v1/orders/{order['id']}/payments",
+        headers=headers,
+        json={
+            "method": "CARD",
+            "amount": str(part),
+            "idempotency_key": f"activity-detail-pay-{uuid4().hex}",
+            "reference": "POS-7788",
+        },
+    )
+    assert paid.status_code == 201, paid.text
+
+    response = await api.client.get(
+        f"/api/v1/reports/order-activity/{order['id']}", headers=headers
+    )
+    assert response.status_code == 200, response.text
+    detail = response.json()
+
+    assert detail["reference"].startswith("AD-")
+    assert detail["table_name"] == resources["tables"][0]["name"]
+    assert detail["staff_name"]
+    assert detail["branch_name"]
+    assert [item["name"] for item in detail["items"]] == ["Classic Burger"]
+    assert Decimal(detail["items"][0]["quantity"]) == Decimal("2")
+    # The receipt has to balance without the client doing arithmetic.
+    assert Decimal(detail["paid_total"]) == part
+    assert Decimal(detail["remaining"]) == Decimal(order["total"]) - part
+    assert detail["payments"][0]["method"] == "CARD"
+    assert detail["payments"][0]["reference"] == "POS-7788"
+    assert detail["payments"][0]["recorded_by"]
+
+
+async def test_the_detail_refuses_an_order_from_another_business(
+    api: ApiContext,
+) -> None:
+    """An order id is guessable; the tenant check is what keeps it private."""
+    headers = auth_headers(await login(api))
+    response = await api.client.get(
+        f"/api/v1/reports/order-activity/{uuid4()}", headers=headers
+    )
+    assert response.status_code == 404, response.text

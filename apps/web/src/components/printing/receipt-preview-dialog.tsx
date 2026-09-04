@@ -31,6 +31,7 @@ export function ReceiptPreviewDialog({
   onQueue,
   queueing,
   queueLabel = "Yazıcıya gönder",
+  queueOptions,
   confirmSlot,
 }: {
   open: boolean;
@@ -41,6 +42,8 @@ export function ReceiptPreviewDialog({
   onQueue?: () => void;
   queueing?: boolean;
   queueLabel?: string;
+  /** Routing choices for the queued job, e.g. which station prints it. */
+  queueOptions?: React.ReactNode;
   confirmSlot?: React.ReactNode;
 }) {
   return (
@@ -57,6 +60,10 @@ export function ReceiptPreviewDialog({
         <div className="rounded-xl border bg-white p-2 shadow-inner" data-receipt-frame>
           {doc ? <ThermalReceipt document={doc} printTarget /> : null}
         </div>
+
+        {queueOptions ? (
+          <div data-print-hidden="true">{queueOptions}</div>
+        ) : null}
 
         <DialogFooter data-print-hidden="true">
           <Button variant="outline" onClick={() => onOpenChange(false)}>

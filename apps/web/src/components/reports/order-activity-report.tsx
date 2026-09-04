@@ -1,10 +1,15 @@
 "use client"
 
 import { useQuery } from "@tanstack/react-query"
-import { ScrollText } from "lucide-react"
-import Link from "next/link"
+import { Eye, ScrollText } from "lucide-react"
 import { useState } from "react"
 
+import { OrderActivityDetailDialog } from "@/components/reports/order-activity-detail"
+import {
+  CHANNEL_LABELS,
+  SOURCE_LABELS,
+  STATUS_LABELS,
+} from "@/components/reports/order-activity-labels"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
 import { api } from "@/lib/api"
@@ -22,37 +27,6 @@ type OrderActivity = {
   delivery_channel: string | null
   customer_name: string | null
   total: string
-}
-
-const SOURCE_LABELS: Record<string, string> = {
-  WAITER: "Garson",
-  CASHIER: "Kasiyer",
-  QR: "QR Menü",
-  TAKEAWAY: "Gel-Al",
-  DELIVERY: "Paket",
-  KIOSK: "Kiosk",
-  API: "Entegrasyon",
-}
-
-const CHANNEL_LABELS: Record<string, string> = {
-  PHONE: "Telefon",
-  TAKEAWAY: "Gel-Al",
-  OWN_DELIVERY: "Kendi Kurye",
-  MARKETPLACE: "Platform",
-}
-
-const STATUS_LABELS: Record<string, string> = {
-  DRAFT: "Taslak",
-  PENDING_APPROVAL: "Onay bekliyor",
-  ACCEPTED: "Kabul edildi",
-  PREPARING: "Hazırlanıyor",
-  PARTIALLY_READY: "Kısmen hazır",
-  READY: "Hazır",
-  SERVED: "Servis edildi",
-  BILL_REQUESTED: "Hesap istendi",
-  PAID: "Ödendi",
-  CANCELLED: "İptal",
-  VOIDED: "İptal",
 }
 
 const SOURCE_FILTERS = [
@@ -100,6 +74,7 @@ export function OrderActivityReport() {
   const [source, setSource] = useState("all")
   const [from, setFrom] = useState(() => isoDate(-6))
   const [to, setTo] = useState(() => isoDate())
+  const [openOrderId, setOpenOrderId] = useState<string | null>(null)
 
   const activityQuery = useQuery({
     queryKey: ["reports", "order-activity", from, to],
@@ -125,7 +100,7 @@ export function OrderActivityReport() {
       <PageHeader
         eyebrow="Raporlar"
         title="Sipariş Hareketleri"
-        description="Hangi sipariş ne zaman, hangi kanaldan ve kim tarafından girildi. Saate tıklayarak sipariş detayına gidin."
+        description="Hangi sipariş ne zaman, hangi kanaldan ve kim tarafından girildi. Göz ikonuyla siparişin geçmişini açın, fişini istediğiniz istasyondan yazdırın."
         icon={ScrollText}
       />
 
@@ -226,18 +201,20 @@ export function OrderActivityReport() {
                 <th className="px-3 py-2 font-semibold">Sadakat</th>
                 <th className="px-3 py-2 font-semibold">Durum</th>
                 <th className="px-3 py-2 text-right font-semibold">Tutar</th>
+                <th className="w-12 px-3 py-2 text-right font-semibold">
+                  <span className="sr-only">Detay</span>
+                </th>
               </tr>
             </thead>
             <tbody className="divide-y">
               {rows.map((row) => (
-                <tr key={row.order_id} className="hover:bg-muted/30">
+                <tr
+                  key={row.order_id}
+                  className="cursor-pointer hover:bg-muted/30"
+                  onClick={() => setOpenOrderId(row.order_id)}
+                >
                   <td className="whitespace-nowrap px-3 py-2 tabular-nums text-muted-foreground">
-                    <Link
-                      href={`/admin/orders?order=${row.order_id}`}
-                      className="underline-offset-2 hover:text-foreground hover:underline"
-                    >
-                      {time.format(new Date(row.created_at))}
-                    </Link>
+                    {time.format(new Date(row.created_at))}
                   </td>
                   <td className="px-3 py-2">
                     <span className="font-medium">
@@ -278,12 +255,33 @@ export function OrderActivityReport() {
                   <td className="px-3 py-2 text-right font-semibold tabular-nums">
                     {money.format(Number(row.total))}
                   </td>
+                  <td className="px-3 py-2 text-right">
+                    {/* The row is the hit area; this button is the keyboard
+                        path and the visible affordance. */}
+                    <button
+                      type="button"
+                      onClick={() => setOpenOrderId(row.order_id)}
+                      title="Sipariş geçmişini ve fişini görüntüle"
+                      className="inline-flex size-8 items-center justify-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+                    >
+                      <Eye className="size-4" />
+                      <span className="sr-only">
+                        {time.format(new Date(row.created_at))} siparişinin
+                        detayını aç
+                      </span>
+                    </button>
+                  </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
       )}
+
+      <OrderActivityDetailDialog
+        orderId={openOrderId}
+        onClose={() => setOpenOrderId(null)}
+      />
     </div>
   )
 }

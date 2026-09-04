@@ -38,6 +38,13 @@ export interface PublicQrConfigDto {
   allergens_visible: boolean
 }
 
+export interface PublicActiveOrderDto {
+  status: string
+  total: string
+  paid_total: string
+  remaining: string
+}
+
 export interface QrCategoryDto {
   id: string
   name: string
@@ -79,6 +86,7 @@ export interface PublicQrMenuDto {
   branch: string
   context_key: string
   table_name: string | null
+  active_order: PublicActiveOrderDto | null
   config: PublicQrConfigDto
   categories: QrCategoryDto[]
   products: QrProductDto[]
@@ -123,6 +131,20 @@ export interface PublicQrRequestDto {
   status: QrRequestStatus
   expires_at: string
   created_at: string
+}
+
+export interface PublicBillRequestCreate {
+  table_token: string
+  session_token: string
+  payment_preference?: "CASH" | "CARD" | "ROOM_CHARGE" | null
+  room_reference?: string | null
+  membership_code?: string | null
+}
+
+export interface PublicBillRequestDto {
+  status: "REQUESTED"
+  order: PublicActiveOrderDto
+  requested_at: string
 }
 
 export interface DiningTableDto {

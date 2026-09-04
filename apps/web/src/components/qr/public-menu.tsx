@@ -12,8 +12,10 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { toast } from "sonner"
 
 import { CartDrawer } from "@/components/qr/cart-drawer"
+import { BillRequestDrawer } from "@/components/qr/bill-request-drawer"
 import { QrBrandIntro } from "@/components/qr/qr-brand-intro"
 import {
+  useCreatePublicBillRequest,
   useCreatePublicQrRequest,
   usePublicQrMenu,
 } from "@/components/qr/qr-hooks"
@@ -48,11 +50,13 @@ export function PublicMenu({
   const [locale, setLocale] = useQrLocale()
   const menuQuery = usePublicQrMenu(businessSlug, branchSlug, tableToken, locale)
   const createRequest = useCreatePublicQrRequest(businessSlug, branchSlug)
+  const createBillRequest = useCreatePublicBillRequest(businessSlug, branchSlug)
   const [search, setSearch] = useState("")
   const [categoryId, setCategoryId] = useState<string | null>(null)
   const [selectedProduct, setSelectedProduct] =
     useState<QrProductDto | null>(null)
   const [cartOpen, setCartOpen] = useState(false)
+  const [billRequestOpen, setBillRequestOpen] = useState(false)
   const [submittedRequest, setSubmittedRequest] =
     useState<PublicQrRequestDto | null>(null)
   const idempotencyKeyRef = useRef<string | null>(null)
@@ -62,6 +66,12 @@ export function PublicMenu({
   const setCartContext = useCartStore((state) => state.setContext)
   const cartCount = useCartStore(selectCartItemCount)
   const menu = menuQuery.data
+  const activeOrder = menu?.active_order ?? null
+  const isTableMenu = Boolean(tableToken && menu?.session_token)
+  const billAlreadyRequested =
+    activeOrder?.status === "BILL_REQUESTED" ||
+    activeOrder?.status === "PAYMENT_PENDING"
+  const canRequestBill = Boolean(activeOrder && !billAlreadyRequested)
 
   useEffect(() => {
     if (menu) {
@@ -182,6 +192,39 @@ export function PublicMenu({
     }
   }
 
+  async function requestBill(input: {
+    payment_preference: "CASH" | "CARD" | "ROOM_CHARGE"
+    room_reference: string | null
+    membership_code: string | null
+  }) {
+    if (!tableToken || !menu?.session_token || !activeOrder) {
+      return
+    }
+
+    try {
+      await createBillRequest.mutateAsync({
+        table_token: tableToken,
+        session_token: menu.session_token,
+        ...input,
+      })
+      await menuQuery.refetch()
+      toast.success(translate(locale, "request_bill_success"))
+    } catch (error) {
+      if (
+        error instanceof ApiError &&
+        ["qr_session_expired", "invalid_qr_session"].includes(error.code)
+      ) {
+        await menuQuery.refetch()
+      }
+      toast.error(translate(locale, "request_bill_failed"), {
+        description:
+          error instanceof Error
+            ? error.message
+            : translate(locale, "request_bill_failed_desc"),
+      })
+    }
+  }
+
   return (
     <div style={style} className="min-h-dvh bg-background text-foreground">
       <QrBrandIntro
@@ -288,6 +331,39 @@ export function PublicMenu({
           </Button>
         </div>
       ) : null}
+
+      {isTableMenu ? (
+        <div className={cn(
+          "fixed inset-x-3 z-40 mx-auto max-w-lg",
+          cartCount > 0 ? "bottom-20" : "bottom-4",
+        )}>
+          <Button
+            type="button"
+            className="h-14 w-full rounded-xl bg-[var(--qr-primary)] px-5 text-base font-bold text-[var(--qr-on-primary)] shadow-lg shadow-black/15 hover:opacity-90"
+            disabled={!canRequestBill}
+            onClick={() => setBillRequestOpen(true)}
+          >
+            {billAlreadyRequested
+              ? "Hesap talebi alındı"
+              : activeOrder
+                ? "Hesabı iste"
+                : "Önce sipariş verin"}
+          </Button>
+        </div>
+      ) : null}
+
+      <BillRequestDrawer
+        open={billRequestOpen}
+        onOpenChange={setBillRequestOpen}
+        businessSlug={businessSlug}
+        branchSlug={branchSlug}
+        total={activeOrder ? new Intl.NumberFormat(locale === "tr" ? "tr-TR" : locale === "ru" ? "ru-RU" : "en-US", {
+          style: "currency",
+          currency: menu.config.currency,
+        }).format(Number(activeOrder.remaining)) : "-"}
+        submitting={createBillRequest.isPending}
+        onSubmit={requestBill}
+      />
 
       {selectedProduct ? (
         <ProductDrawer

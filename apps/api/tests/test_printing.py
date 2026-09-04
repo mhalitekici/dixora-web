@@ -99,6 +99,13 @@ async def test_bill_print_original_is_idempotent_and_reprint_is_distinct(
     first = await api.client.post("/api/v1/printing/jobs", json=original_payload, headers=headers)
     assert first.status_code == 201, first.text
     assert first.json()["kind"] == "ORIGINAL"
+    assert first.json()["printer_device_id"] is not None
+    assert first.json()["payload"]["content_type"] == "application/vnd.dixora.receipt+json"
+    assert first.json()["payload"]["document"]["title"] == "MUSTERI BILGI FISI"
+
+    order_after_first_print = await api.client.get(f"/api/v1/orders/{order['id']}", headers=headers)
+    assert order_after_first_print.status_code == 200, order_after_first_print.text
+    assert order_after_first_print.json()["status"] == "BILL_REQUESTED"
 
     # A second click before the bridge has processed it must not create a
     # duplicate ORIGINAL job — same deterministic idempotency key replays.

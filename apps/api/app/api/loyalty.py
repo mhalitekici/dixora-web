@@ -50,6 +50,7 @@ from app.loyalty_schemas import (
     LoyaltyRuleOut,
     LoyaltyVerificationOut,
     LoyaltyVerificationStart,
+    PublicLoyaltyEmailEnrollmentStart,
 )
 from app.models import (
     Branch,
@@ -1311,6 +1312,148 @@ async def reverse_order_progress(
         order_id=order.id,
         reversed_programs=count,
         reversed_progress=progress,
+    )
+
+
+@router.post(
+    "/public/{business_slug}/{branch_slug}/email-enrollments/start",
+    response_model=LoyaltyEnrollmentStartOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def start_public_email_enrollment(
+    business_slug: str,
+    branch_slug: str,
+    payload: PublicLoyaltyEmailEnrollmentStart,
+    db: DbSession,
+    settings: Settings = Depends(get_app_settings),
+) -> LoyaltyEnrollmentStartOut:
+    tenant, branch = await _public_context(db, business_slug, branch_slug)
+    program = await active_program_for_branch(
+        db,
+        tenant_id=tenant.id,
+        branch_id=branch.id,
+        require_qr_visibility=True,
+    )
+    if program is None:
+        raise DomainError(
+            "loyalty_program_unavailable",
+            "Bu şubede QR menü için aktif bir sadakat programı yok.",
+            status_code=409,
+        )
+    started = await start_email_enrollment(
+        db,
+        settings,
+        tenant=tenant,
+        branch_id=branch.id,
+        program=program,
+        email=payload.email,
+        first_name=payload.first_name,
+        last_name=payload.last_name,
+        birth_date=payload.birth_date,
+        started_by_user_id=None,
+    )
+    add_audit_log(
+        db,
+        identity=None,
+        tenant_id=tenant.id,
+        branch_id=branch.id,
+        action="loyalty.public_email_enrollment_started",
+        resource_type="loyalty_email_verification",
+        resource_id=started.verification_id,
+    )
+    await db.commit()
+    return LoyaltyEnrollmentStartOut(
+        verification_id=started.verification_id,
+        email=started.email,
+        expires_in_seconds=started.expires_in_seconds,
+        development_code=started.development_code,
+    )
+
+
+@router.post(
+    "/public/{business_slug}/{branch_slug}/email-enrollments/confirm",
+    response_model=LoyaltyEnrollmentConfirmOut,
+)
+async def confirm_public_email_enrollment(
+    business_slug: str,
+    branch_slug: str,
+    payload: LoyaltyEnrollmentConfirm,
+    db: DbSession,
+    settings: Settings = Depends(get_app_settings),
+) -> LoyaltyEnrollmentConfirmOut:
+    tenant, branch = await _public_context(db, business_slug, branch_slug)
+    customer, verification = await confirm_email_enrollment(
+        db,
+        settings,
+        tenant=tenant,
+        verification_id=payload.verification_id,
+        code=payload.code,
+    )
+    if verification.branch_id != branch.id:
+        raise DomainError(
+            "loyalty_verification_not_found", "Doğrulama bulunamadı.", status_code=404
+        )
+    program = (
+        await db.execute(
+            select(LoyaltyProgram)
+            .where(
+                LoyaltyProgram.id == verification.program_id,
+                LoyaltyProgram.tenant_id == tenant.id,
+            )
+            .options(selectinload(LoyaltyProgram.rule))
+        )
+    ).scalar_one_or_none()
+    if program is None or not program.show_on_qr:
+        raise DomainError(
+            "loyalty_program_unavailable", "Sadakat programı kullanılamıyor.", status_code=409
+        )
+    membership, _token = await ensure_membership(
+        db,
+        program=program,
+        branch_id=branch.id,
+        customer=customer,
+        consent_text_version=CONSENT_VERSION,
+        referral_code=None,
+    )
+    progress = await membership_progress(
+        db,
+        tenant_id=tenant.id,
+        membership_id=membership.id,
+        program_id=program.id,
+    )
+    target = program.rule.threshold if program.rule else 0
+    card_sent = True
+    try:
+        await send_membership_card(
+            settings,
+            tenant=tenant,
+            program=program,
+            customer=customer,
+            member_code=membership.lookup_code,
+            progress_target=target,
+        )
+    except Exception:
+        logger.warning("loyalty.public_card_email_failed", exc_info=True)
+        card_sent = False
+    add_audit_log(
+        db,
+        identity=None,
+        tenant_id=tenant.id,
+        branch_id=branch.id,
+        action="loyalty.public_email_enrollment_completed",
+        resource_type="loyalty_membership",
+        resource_id=membership.id,
+        new_value={"member_code": membership.lookup_code},
+    )
+    await db.commit()
+    return LoyaltyEnrollmentConfirmOut(
+        member_code=membership.lookup_code,
+        display_name=customer.display_name,
+        email=customer.email_normalized or "",
+        program_name=program.name,
+        progress=progress,
+        progress_target=target,
+        card_email_sent=card_sent,
     )
 
 

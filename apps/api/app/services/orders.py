@@ -171,6 +171,15 @@ async def branch_station_map(
     return resolved
 
 
+def order_bill_reference(order_id: UUID) -> str:
+    """The short reference a guest reads off the bill, never a raw UUID.
+
+    Printed receipts and the admin order feed must agree on it, so both go
+    through here rather than formatting the id themselves.
+    """
+    return f"AD-{str(order_id).split('-')[0].upper()}"
+
+
 async def load_order(
     db: AsyncSession,
     tenant_id: UUID,
@@ -966,6 +975,38 @@ async def accept_order(
     return order
 
 
+async def mark_order_bill_requested(db: AsyncSession, *, order: Order) -> Order:
+    """Move an in-service order into the bill-requested stage exactly once."""
+
+    if order.status in {OrderStatus.BILL_REQUESTED, OrderStatus.PAYMENT_PENDING}:
+        return order
+    if order.status in {OrderStatus.CANCELLED, OrderStatus.VOIDED, OrderStatus.PAID}:
+        raise DomainError(
+            "invalid_order_transition", "Bill cannot be requested now", status_code=409
+        )
+    if order.status not in {
+        OrderStatus.ACCEPTED,
+        OrderStatus.PREPARING,
+        OrderStatus.PARTIALLY_READY,
+        OrderStatus.READY,
+        OrderStatus.SERVED,
+    }:
+        raise DomainError(
+            "invalid_order_transition", "Bill cannot be requested now", status_code=409
+        )
+    order.status = OrderStatus.BILL_REQUESTED
+    order.version += 1
+    if order.table_session_id:
+        table_session = await db.get(TableSession, order.table_session_id)
+        if table_session:
+            table = await db.get(DiningTable, table_session.table_id)
+            if table:
+                table.state = TableState.BILL_REQUESTED
+                table.version += 1
+    await db.flush()
+    return order
+
+
 async def add_payment(
     db: AsyncSession,
     *,
@@ -1054,6 +1095,13 @@ async def add_payment(
         )
     else:
         order.status = OrderStatus.PAYMENT_PENDING
+        if order.table_session_id:
+            table_session = await db.get(TableSession, order.table_session_id)
+            if table_session and table_session.status == TableSessionStatus.OPEN:
+                table = await db.get(DiningTable, table_session.table_id)
+                if table:
+                    table.state = TableState.PAYMENT_PENDING
+                    table.version += 1
     order.version += 1
     return payment
 

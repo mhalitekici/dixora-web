@@ -938,11 +938,11 @@ export function CashierWorkspace() {
     },
     onSuccess: (_, kind) => {
       toast.success(
-        kind === "ORIGINAL" ? "Hesap fişi yazdırılıyor" : "Yeniden baskı kuyruğa alındı",
+        kind === "ORIGINAL" ? "Müşteri bilgi fişi yazdırılıyor" : "Yeniden baskı kuyruğa alındı",
         {
           description:
             kind === "ORIGINAL"
-              ? "Fiş ilk kez ORIGINAL olarak basılıyor."
+              ? "Ödeme öncesi müşteri fişi yazıcı kuyruğuna alındı."
               : "Fiş REPRINT olarak denetim kaydına yazıldı.",
         },
       );
@@ -1528,7 +1528,7 @@ export function CashierWorkspace() {
             ) : (
               <Printer />
             )}
-            Fiş yazdır
+            Bilgi fişi
           </Button>
           <Button
             variant="outline"

@@ -12,6 +12,7 @@ import {
   MessageSquareText,
   Minus,
   Plus,
+  Printer,
   ReceiptText,
   RefreshCw,
   Search,
@@ -274,6 +275,32 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
       void queryClient.invalidateQueries({ queryKey: ["waiter", "table", tableId] });
     },
     onError: (error) => toast.error(error instanceof Error ? error.message : "Hesap talebi iletilemedi."),
+  });
+
+  const printBillMutation = useMutation({
+    mutationFn: () => {
+      if (!order) throw new Error("Canlı sipariş verisi bulunamadı.");
+      return api(`/printing/jobs`, {
+        method: "POST",
+        body: JSON.stringify({
+          order_id: order.id,
+          payload: {
+            type: "BILL",
+            order_id: order.id,
+          },
+          kind: "ORIGINAL",
+          idempotency_key: `bill-original:${order.id}`,
+        }),
+      });
+    },
+    onSuccess: async () => {
+      toast.success("Müşteri bilgi fişi yazıcı kuyruğuna alındı");
+      await queryClient.invalidateQueries({ queryKey: ["waiter", "table", tableId] });
+    },
+    onError: (error) =>
+      toast.error(
+        error instanceof Error ? error.message : "Fiş yazdırılamadı.",
+      ),
   });
 
   const cancellationMutation = useMutation({
@@ -615,15 +642,26 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
             </p>
           </div>
           {order ? (
-            <Button
-              variant="outline"
-              className="h-10 rounded-xl"
-              disabled={billMutation.isPending}
-              onClick={() => billMutation.mutate()}
-            >
-              {billMutation.isPending ? <Loader2 className="animate-spin" /> : <ReceiptText />}
-              <span className="hidden sm:inline">Hesap iste</span>
-            </Button>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                className="h-10 rounded-xl"
+                disabled={billMutation.isPending}
+                onClick={() => billMutation.mutate()}
+              >
+                {billMutation.isPending ? <Loader2 className="animate-spin" /> : <ReceiptText />}
+                <span className="hidden sm:inline">Hesap iste</span>
+              </Button>
+              <Button
+                variant="outline"
+                className="h-10 rounded-xl"
+                disabled={printBillMutation.isPending}
+                onClick={() => printBillMutation.mutate()}
+              >
+                {printBillMutation.isPending ? <Loader2 className="animate-spin" /> : <Printer />}
+                <span className="hidden sm:inline">Bilgi fişi</span>
+              </Button>
+            </div>
           ) : (
             <div className="relative hidden sm:block">
               <UserRound className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />

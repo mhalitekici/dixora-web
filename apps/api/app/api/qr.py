@@ -3,6 +3,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 from datetime import UTC, timedelta
+from decimal import Decimal
 from typing import Annotated
 from uuid import UUID, uuid4
 
@@ -29,17 +30,29 @@ from app.models import (
     LoyaltyMembership,
     Modifier,
     ModifierGroup,
+    Order,
     Product,
     ProductModifierGroup,
     QrMenuConfig,
     QrOrderRequest,
+    TableSession,
     Tenant,
 )
-from app.models.enums import OrderSource, QrOrderMode, QrRequestStatus
+from app.models.enums import (
+    OrderSource,
+    OrderStatus,
+    PaymentStatus,
+    QrOrderMode,
+    QrRequestStatus,
+    TableSessionStatus,
+)
 from app.schemas import (
     OrderCreate,
     OrderItemInput,
     OrderModifierInput,
+    PublicActiveOrderOut,
+    PublicBillRequestCreate,
+    PublicBillRequestOut,
     PublicBranchOut,
     PublicMenuCategory,
     PublicMenuModifier,
@@ -55,8 +68,12 @@ from app.schemas import (
 )
 from app.security import utcnow
 from app.services.audit import add_audit_log
-from app.services.loyalty import attach_membership_to_order, membership_from_token
-from app.services.orders import create_order
+from app.services.loyalty import (
+    attach_membership_to_order,
+    membership_from_code,
+    membership_from_token,
+)
+from app.services.orders import create_order, load_order, mark_order_bill_requested
 from app.services.product_images import safe_public_image_url
 from app.services.public_refs import public_reference
 from app.services.qr_config import new_qr_menu_config
@@ -118,6 +135,53 @@ def _public_qr_request_out(
         status=qr_request.status,
         expires_at=qr_request.expires_at,
         created_at=qr_request.created_at,
+    )
+
+
+async def _active_table_order(
+    db: DbSession,
+    *,
+    tenant_id: UUID,
+    branch_id: UUID,
+    table_id: UUID,
+    lock: bool = False,
+) -> Order | None:
+    statement = (
+        select(Order)
+        .join(TableSession, TableSession.id == Order.table_session_id)
+        .where(
+            Order.tenant_id == tenant_id,
+            Order.branch_id == branch_id,
+            TableSession.tenant_id == tenant_id,
+            TableSession.table_id == table_id,
+            TableSession.status == TableSessionStatus.OPEN,
+            Order.status.notin_([OrderStatus.PAID, OrderStatus.CANCELLED, OrderStatus.VOIDED]),
+        )
+        .options(selectinload(Order.payments))
+        .order_by(Order.created_at.desc())
+        .limit(1)
+    )
+    if lock:
+        statement = statement.with_for_update()
+    return (await db.execute(statement)).scalar_one_or_none()
+
+
+def _public_active_order_out(order: Order | None) -> PublicActiveOrderOut | None:
+    if order is None:
+        return None
+    paid_total = sum(
+        (
+            payment.amount
+            for payment in order.payments
+            if payment.status == PaymentStatus.COMPLETED
+        ),
+        Decimal("0.00"),
+    )
+    return PublicActiveOrderOut(
+        status=order.status,
+        total=order.total,
+        paid_total=paid_total,
+        remaining=max(Decimal("0.00"), order.total - paid_total),
     )
 
 
@@ -286,6 +350,7 @@ async def public_menu(
     tenant, branch, config = await _public_context(db, business_slug, branch_slug)
     table: DiningTable | None = None
     session_token: str | None = None
+    active_order: PublicActiveOrderOut | None = None
     if table_token:
         table = (
             await db.execute(
@@ -305,6 +370,14 @@ async def public_menu(
             branch_id=branch.id,
             table_id=table.id,
             table_token=table.qr_token,
+        )
+        active_order = _public_active_order_out(
+            await _active_table_order(
+                db,
+                tenant_id=tenant.id,
+                branch_id=branch.id,
+                table_id=table.id,
+            )
         )
     categories = (
         (
@@ -429,6 +502,7 @@ async def public_menu(
         branch=branch.name,
         context_key=f"{tenant.slug}:{branch.slug}",
         table_name=table.name if table else None,
+        active_order=active_order,
         config=PublicQrConfigOut(
             menu_name=config.menu_name,
             order_mode=config.order_mode,
@@ -760,6 +834,110 @@ async def create_public_qr_request(
         },
     )
     return _public_qr_request_out(settings, qr_request)
+
+
+@router.post(
+    "/public/{business_slug}/{branch_slug}/bill-request",
+    response_model=PublicBillRequestOut,
+    status_code=status.HTTP_201_CREATED,
+)
+async def create_public_bill_request(
+    business_slug: str,
+    branch_slug: str,
+    payload: PublicBillRequestCreate,
+    request: Request,
+    db: DbSession,
+    settings: Settings = Depends(get_app_settings),
+) -> PublicBillRequestOut:
+    tenant, branch, _ = await _public_context(db, business_slug, branch_slug)
+    claims = _decode_qr_session(settings, payload.session_token)
+    table = (
+        await db.execute(
+            select(DiningTable).where(
+                DiningTable.tenant_id == tenant.id,
+                DiningTable.branch_id == branch.id,
+                DiningTable.qr_token == payload.table_token,
+                DiningTable.is_active.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    if table is None:
+        raise DomainError("table_not_found", "Table QR code is invalid", status_code=404)
+    expected_context = _qr_session_context_hash(
+        settings,
+        tenant_id=tenant.id,
+        branch_id=branch.id,
+        table_id=table.id,
+        table_token=payload.table_token,
+    )
+    supplied_context = claims.get("context_hash")
+    if not isinstance(supplied_context, str) or not hmac.compare_digest(
+        supplied_context, expected_context
+    ):
+        raise DomainError(
+            "invalid_qr_session", "QR session context is invalid", status_code=401
+        )
+    active_order = await _active_table_order(
+        db,
+        tenant_id=tenant.id,
+        branch_id=branch.id,
+        table_id=table.id,
+        lock=True,
+    )
+    if active_order is None:
+        raise DomainError(
+            "active_order_not_found", "No active order for this table", status_code=409
+        )
+    order = await load_order(db, tenant.id, active_order.id, lock=True)
+    membership_code = payload.membership_code.strip().upper() if payload.membership_code else None
+    if membership_code is not None:
+        membership = await membership_from_code(
+            db,
+            tenant_id=tenant.id,
+            code=membership_code,
+        )
+        if membership is None:
+            raise DomainError("membership_not_found", "Üyelik kodu bulunamadı.", status_code=404)
+        await attach_membership_to_order(db, order=order, membership=membership)
+    await mark_order_bill_requested(db, order=order)
+    requested_at = utcnow()
+    add_audit_log(
+        db,
+        identity=None,
+        tenant_id=tenant.id,
+        branch_id=branch.id,
+        action="qr.bill_requested",
+        resource_type="order",
+        resource_id=order.id,
+        new_value={
+            "table_id": str(table.id),
+            "status": order.status.value,
+            "payment_preference": payload.payment_preference,
+            "room_reference": payload.room_reference.strip() if payload.room_reference else None,
+            "membership_code": membership_code,
+        },
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    await db.commit()
+    await request.app.state.realtime.broadcast(
+        tenant.id,
+        branch.id,
+        {
+            "type": "qr.bill_requested",
+            "table_id": str(table.id),
+            "order_id": str(order.id),
+            "status": order.status.value,
+            "payment_preference": payload.payment_preference,
+            "room_reference": payload.room_reference.strip() if payload.room_reference else None,
+            "membership_code": membership_code,
+        },
+    )
+    return PublicBillRequestOut(
+        status="REQUESTED",
+        order=_public_active_order_out(order),
+        requested_at=requested_at,
+    )
 
 
 @router.get("/config", response_model=QrConfigOut)
