@@ -54,10 +54,7 @@ export function QrCodeList() {
   const [search, setSearch] = useState("")
   const [businessSlug, setBusinessSlug] = useState(defaultBusinessSlug)
   const [branchSlug, setBranchSlug] = useState("")
-  const appUrl = (configuredAppUrl ?? "http://localhost:3000").replace(
-    /\/+$/,
-    "",
-  )
+  const appUrl = resolveAppUrl(configuredAppUrl)
   const normalizedSearch = search.trim().toLocaleLowerCase("tr-TR")
 
   const effectiveBusinessSlug =
@@ -431,7 +428,22 @@ function QrCodeCard({
   )
 }
 
-function buildMenuUrl(
+/**
+ * The origin the printed codes point at.
+ *
+ * `NEXT_PUBLIC_APP_URL` is inlined by `next build`, so an image built without
+ * it carries the localhost fallback into production and every QR code leads
+ * nowhere. Compose passes the value as a build argument to prevent that; the
+ * fallback stays for `next dev`, where there is no build step to bake one in.
+ *
+ * An empty string counts as absent: compose renders an unset variable as one,
+ * and treating it as configured would produce a scheme-less "/m/..." link.
+ */
+export function resolveAppUrl(configured: string | undefined): string {
+  return (configured || "http://localhost:3000").replace(/\/+$/, "")
+}
+
+export function buildMenuUrl(
   appUrl: string,
   businessSlug: string,
   branchSlug: string,
