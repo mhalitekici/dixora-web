@@ -15,12 +15,12 @@ from uuid import UUID
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.dependencies import Identity
 from app.errors import DomainError
 from app.models import (
     Campaign,
     CampaignApplication,
     CampaignBranch,
+    Category,
     Discount,
     Order,
     OrderItem,
@@ -34,7 +34,7 @@ from app.models.enums import (
     OrderStatus,
     PaymentStatus,
 )
-from app.security import utcnow
+from app.security import as_utc, utcnow
 
 logger = logging.getLogger(__name__)
 
@@ -125,10 +125,13 @@ def validate_definition(
 def is_live(campaign: Campaign) -> bool:
     if not campaign.is_active:
         return False
-    now = utcnow().replace(tzinfo=None)
-    if campaign.starts_at is not None and campaign.starts_at > now:
+    # Stored datetimes come back UTC-aware (see `UTCDateTime`), so stripping the
+    # timezone off `now` raised TypeError against any campaign the owner gave a
+    # start or end date — every window campaign failed to evaluate at all.
+    now = utcnow()
+    if campaign.starts_at is not None and as_utc(campaign.starts_at) > now:
         return False
-    if campaign.ends_at is not None and campaign.ends_at <= now:
+    if campaign.ends_at is not None and as_utc(campaign.ends_at) <= now:
         return False
     return True
 
@@ -216,12 +219,86 @@ async def active_campaigns_for_branch(
     return [campaign for campaign in campaigns if is_live(campaign)]
 
 
+def _payment_started(order: Order) -> bool:
+    return any(payment.status == PaymentStatus.COMPLETED for payment in order.payments)
+
+
+def is_campaignable(order: Order) -> bool:
+    """Whether campaigns may still be granted on this bill.
+
+    The same two conditions `apply_campaigns_to_order` raises on. Callers that
+    evaluate opportunistically — a customer attaching a member code from the QR
+    menu, say — ask first rather than catching a 409, so a bill that is already
+    being paid still completes its own request instead of failing outright.
+    """
+    return order.status in DISCOUNTABLE_STATUSES and not _payment_started(order)
+
+
+async def _label(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    product_id: UUID | None,
+    category_id: UUID | None,
+) -> str:
+    if product_id is not None:
+        name = (
+            await db.execute(
+                select(Product.name).where(
+                    Product.id == product_id, Product.tenant_id == tenant_id
+                )
+            )
+        ).scalar_one_or_none()
+        return name or "ürün"
+    if category_id is not None:
+        name = (
+            await db.execute(
+                select(Category.name).where(
+                    Category.id == category_id, Category.tenant_id == tenant_id
+                )
+            )
+        ).scalar_one_or_none()
+        return f"{name} kategorisi" if name else "kategori"
+    return "ürün"
+
+
+async def campaign_summary(
+    db: AsyncSession, *, tenant_id: UUID, campaign: Campaign
+) -> str:
+    """One sentence describing the offer, phrased the same everywhere.
+
+    Lives here rather than in the admin router because the QR menu shows the
+    same sentence to customers; two copies would drift and advertise an offer
+    in wording the till does not recognise.
+    """
+    buy = await _label(
+        db,
+        tenant_id=tenant_id,
+        product_id=campaign.buy_product_id,
+        category_id=campaign.buy_category_id,
+    )
+    target = await _label(
+        db,
+        tenant_id=tenant_id,
+        product_id=campaign.reward_product_id,
+        category_id=campaign.reward_category_id,
+    )
+    condition = (
+        f"{campaign.buy_quantity} {buy}" if campaign.buy_quantity > 1 else f"{buy}"
+    )
+    if campaign.reward_kind == CampaignRewardKind.FREE_ITEM:
+        return f"{condition} alana {target} ikram"
+    if campaign.reward_kind == CampaignRewardKind.PERCENT:
+        return f"{condition} alana {target} %{campaign.reward_value:g} indirim"
+    return f"{condition} alana {target} {campaign.reward_value:g} TL indirim"
+
+
 async def apply_campaigns_to_order(
     db: AsyncSession,
     *,
     tenant_id: UUID,
     order: Order,
-    identity: Identity,
+    actor_user_id: UUID | None,
     has_membership: bool,
 ) -> CampaignOutcome:
     """Grant every campaign this basket qualifies for.
@@ -235,7 +312,7 @@ async def apply_campaigns_to_order(
             "Kampanya yalnızca açık bir hesaba uygulanabilir.",
             status_code=409,
         )
-    if any(payment.status == PaymentStatus.COMPLETED for payment in order.payments):
+    if _payment_started(order):
         raise DomainError(
             "campaign_after_payment_started",
             "Kampanya, ödeme alınmaya başlamadan önce uygulanmalıdır.",
@@ -339,8 +416,8 @@ async def apply_campaigns_to_order(
                 branch_id=order.branch_id,
                 order_id=order.id,
                 order_item_id=target.id,
-                requested_by_user_id=identity.user_id,
-                approved_by_user_id=identity.user_id,
+                requested_by_user_id=actor_user_id,
+                approved_by_user_id=actor_user_id,
                 kind=DiscountKind.FIXED,
                 value=amount,
                 amount=amount,

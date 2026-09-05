@@ -75,6 +75,15 @@ describe("queryKeysForRealtimeEvent", () => {
     );
   });
 
+  it("refreshes the till when a guest asks for the bill", () => {
+    // Entering a member code with the bill request applies a campaign, so the
+    // amount the cashier is about to charge changes. The till reads it from
+    // ["cashier", "orders"]; without that root the screen keeps the old total.
+    expect(queryKeysForRealtimeEvent("qr.bill_requested")).toEqual(
+      expect.arrayContaining([["cashier"], ["orders"], ["tables"]]),
+    );
+  });
+
   it("refetches every authoritative root after a reconnect", () => {
     expect(queryKeysForRealtimeEvent("connection.ready")).toEqual(
       expect.arrayContaining([

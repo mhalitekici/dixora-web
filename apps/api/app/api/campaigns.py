@@ -22,65 +22,17 @@ from app.errors import DomainError
 from app.models import Branch, Campaign, CampaignBranch, Category, Product
 from app.models.enums import CampaignAudience, CampaignRewardKind
 from app.services.audit import add_audit_log
-from app.services.campaigns import apply_campaigns_to_order, validate_definition
+from app.services.campaigns import (
+    apply_campaigns_to_order,
+    campaign_summary,
+    validate_definition,
+)
 from app.services.orders import load_order
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
 
 CampaignManager = Annotated[Identity, Depends(require_permissions("loyalty.manage"))]
 CampaignApplier = Annotated[Identity, Depends(require_permissions("loyalty.redeem"))]
-
-
-async def _label(
-    db: DbSession,
-    *,
-    tenant_id: UUID,
-    product_id: UUID | None,
-    category_id: UUID | None,
-) -> str:
-    if product_id is not None:
-        name = (
-            await db.execute(
-                select(Product.name).where(
-                    Product.id == product_id, Product.tenant_id == tenant_id
-                )
-            )
-        ).scalar_one_or_none()
-        return name or "ürün"
-    if category_id is not None:
-        name = (
-            await db.execute(
-                select(Category.name).where(
-                    Category.id == category_id, Category.tenant_id == tenant_id
-                )
-            )
-        ).scalar_one_or_none()
-        return f"{name} kategorisi" if name else "kategori"
-    return "ürün"
-
-
-async def _summary(db: DbSession, *, tenant_id: UUID, campaign: Campaign) -> str:
-    """One sentence describing the offer, phrased the same everywhere."""
-    buy = await _label(
-        db,
-        tenant_id=tenant_id,
-        product_id=campaign.buy_product_id,
-        category_id=campaign.buy_category_id,
-    )
-    target = await _label(
-        db,
-        tenant_id=tenant_id,
-        product_id=campaign.reward_product_id,
-        category_id=campaign.reward_category_id,
-    )
-    condition = (
-        f"{campaign.buy_quantity} {buy}" if campaign.buy_quantity > 1 else f"{buy}"
-    )
-    if campaign.reward_kind == CampaignRewardKind.FREE_ITEM:
-        return f"{condition} alana {target} ikram"
-    if campaign.reward_kind == CampaignRewardKind.PERCENT:
-        return f"{condition} alana {target} %{campaign.reward_value:g} indirim"
-    return f"{condition} alana {target} {campaign.reward_value:g} TL indirim"
 
 
 async def _output(db: DbSession, *, tenant_id: UUID, campaign: Campaign) -> CampaignOut:
@@ -104,7 +56,7 @@ async def _output(db: DbSession, *, tenant_id: UUID, campaign: Campaign) -> Camp
         starts_at=campaign.starts_at,
         ends_at=campaign.ends_at,
         version=campaign.version,
-        summary=await _summary(db, tenant_id=tenant_id, campaign=campaign),
+        summary=await campaign_summary(db, tenant_id=tenant_id, campaign=campaign),
     )
 
 
@@ -348,7 +300,7 @@ async def apply_to_order(
         db,
         tenant_id=tenant_id,
         order=order,
-        identity=identity,
+        actor_user_id=identity.user_id,
         has_membership=order.loyalty_membership_id is not None,
     )
     if outcome.granted:

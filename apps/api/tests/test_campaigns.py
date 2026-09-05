@@ -117,6 +117,16 @@ async def _attach_member(api: ApiContext, ctx: dict[str, Any], order_id: str) ->
     assert attached.status_code == 200, attached.text
 
 
+async def _order_state(
+    api: ApiContext, ctx: dict[str, Any], order_id: str
+) -> dict[str, Any]:
+    response = await api.client.get(
+        f"/api/v1/orders/{order_id}", headers=ctx["headers"]
+    )
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
 async def test_owner_writes_a_buy_this_get_that_offer(api: ApiContext) -> None:
     ctx = await _context(api)
     created = await _campaign(api, ctx)
@@ -140,15 +150,19 @@ async def test_a_qualifying_basket_gets_the_treat_for_free(api: ApiContext) -> N
     )
     before = Decimal(order["total"])
 
+    # Attaching the member is what unlocks the offer, so the treat is already
+    # free by the time anyone opens the bill — no second action at the till.
     await _attach_member(api, ctx, order["id"])
+    state = await _order_state(api, ctx, order["id"])
+    assert Decimal(state["discount_total"]) == Decimal(ctx["dessert"]["selling_price"])
+    assert Decimal(state["total"]) == before - Decimal(ctx["dessert"]["selling_price"])
+
+    # Applying again is the cashier tapping a button that is now a no-op.
     response = await _apply(api, ctx, order["id"])
     assert response.status_code == 201, response.text
     body = response.json()
-    assert len(body["granted"]) == 1
-    assert body["granted"][0]["product_name"] == ctx["dessert"]["name"]
-    assert Decimal(body["order_total"]) == before - Decimal(
-        ctx["dessert"]["selling_price"]
-    )
+    assert body["granted"] == []
+    assert Decimal(body["order_total"]) == Decimal(state["total"])
 
 
 async def test_several_campaigns_run_at_once(api: ApiContext) -> None:
@@ -178,11 +192,17 @@ async def test_several_campaigns_run_at_once(api: ApiContext) -> None:
             {"product_id": ctx["dessert"]["id"], "quantity": "1"},
         ],
     )
+    before = Decimal(order["total"])
     await _attach_member(api, ctx, order["id"])
+    # Both offers fire on the one attach, not one per cashier action.
+    state = await _order_state(api, ctx, order["id"])
+    assert Decimal(state["discount_total"]) > Decimal("0")
+    assert Decimal(state["total"]) < before
+
+    # Nothing is left for a manual apply to grant.
     response = await _apply(api, ctx, order["id"])
     assert response.status_code == 201, response.text
-    names = {grant["campaign_name"] for grant in response.json()["granted"]}
-    assert names == {"Kahve Alana Tatlı", "Tatlı Alana %50 Kahve"}
+    assert response.json()["granted"] == []
 
 
 async def test_applying_twice_does_not_stack_the_same_offer(api: ApiContext) -> None:

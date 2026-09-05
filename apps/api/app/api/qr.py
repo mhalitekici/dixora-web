@@ -39,6 +39,7 @@ from app.models import (
     Tenant,
 )
 from app.models.enums import (
+    CampaignAudience,
     OrderSource,
     OrderStatus,
     PaymentStatus,
@@ -54,6 +55,7 @@ from app.schemas import (
     PublicBillRequestCreate,
     PublicBillRequestOut,
     PublicBranchOut,
+    PublicCampaignOut,
     PublicMenuCategory,
     PublicMenuModifier,
     PublicMenuModifierGroup,
@@ -68,6 +70,12 @@ from app.schemas import (
 )
 from app.security import utcnow
 from app.services.audit import add_audit_log
+from app.services.campaigns import (
+    active_campaigns_for_branch,
+    apply_campaigns_to_order,
+    campaign_summary,
+    is_campaignable,
+)
 from app.services.loyalty import (
     attach_membership_to_order,
     membership_from_code,
@@ -333,6 +341,45 @@ async def public_branches(
         .all()
     )
     return [PublicBranchOut(name=branch.name, slug=branch.slug) for branch in branches]
+
+
+@router.get(
+    "/public/{business_slug}/{branch_slug}/campaigns",
+    response_model=list[PublicCampaignOut],
+)
+async def public_campaigns(
+    business_slug: str,
+    branch_slug: str,
+    db: DbSession,
+    response: Response,
+) -> list[PublicCampaignOut]:
+    """The offers running at this branch right now, for the QR menu to show.
+
+    A separate request rather than a field on the menu: a customer who cannot
+    load the offers must still be able to read the menu and order, so this is
+    allowed to fail on its own. The admin listing stays behind `loyalty.manage`
+    — this returns only what is live at this one branch, and only the fields a
+    customer needs, so no other branch's or business's offer can surface here.
+    """
+    response.headers["Cache-Control"] = "private, no-store"
+    tenant, branch, _ = await _public_context(db, business_slug, branch_slug)
+    campaigns = await active_campaigns_for_branch(
+        db, tenant_id=tenant.id, branch_id=branch.id
+    )
+    return [
+        PublicCampaignOut(
+            id=campaign.id,
+            name=campaign.name,
+            description=campaign.description,
+            summary=await campaign_summary(
+                db, tenant_id=tenant.id, campaign=campaign
+            ),
+            audience=CampaignAudience(campaign.audience),
+            starts_at=campaign.starts_at,
+            ends_at=campaign.ends_at,
+        )
+        for campaign in campaigns
+    ]
 
 
 @router.get("/public/{business_slug}/{branch_slug}", response_model=PublicMenuOut)
@@ -889,6 +936,7 @@ async def create_public_bill_request(
             "active_order_not_found", "No active order for this table", status_code=409
         )
     order = await load_order(db, tenant.id, active_order.id, lock=True)
+    granted_campaigns = 0
     membership_code = payload.membership_code.strip().upper() if payload.membership_code else None
     if membership_code is not None:
         membership = await membership_from_code(
@@ -899,6 +947,21 @@ async def create_public_bill_request(
         if membership is None:
             raise DomainError("membership_not_found", "Üyelik kodu bulunamadı.", status_code=404)
         await attach_membership_to_order(db, order=order, membership=membership)
+        # The guest ordered before identifying themselves, so a members-only
+        # offer was skipped when those lines were added. Re-evaluating here is
+        # the only chance to honour it: the till never asked for the code, and
+        # by the time the cashier opens the bill the treat must already be free.
+        # Which lines it touches is decided by the engine, never by this
+        # request — the customer sends a membership code, never a discount.
+        if is_campaignable(order):
+            campaign_outcome = await apply_campaigns_to_order(
+                db,
+                tenant_id=tenant.id,
+                order=order,
+                actor_user_id=None,
+                has_membership=True,
+            )
+            granted_campaigns = len(campaign_outcome.granted)
     await mark_order_bill_requested(db, order=order)
     requested_at = utcnow()
     add_audit_log(
@@ -915,6 +978,7 @@ async def create_public_bill_request(
             "payment_preference": payload.payment_preference,
             "room_reference": payload.room_reference.strip() if payload.room_reference else None,
             "membership_code": membership_code,
+            "campaigns_granted": granted_campaigns,
         },
         ip_address=request.client.host if request.client else None,
         user_agent=request.headers.get("user-agent"),
@@ -931,6 +995,7 @@ async def create_public_bill_request(
             "payment_preference": payload.payment_preference,
             "room_reference": payload.room_reference.strip() if payload.room_reference else None,
             "membership_code": membership_code,
+            "campaigns_granted": granted_campaigns,
         },
     )
     return PublicBillRequestOut(

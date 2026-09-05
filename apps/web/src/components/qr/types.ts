@@ -81,6 +81,16 @@ export interface QrProductDto {
   modifier_groups?: QrModifierGroupDto[]
 }
 
+export interface PublicCampaignDto {
+  id: string
+  name: string
+  description: string | null
+  summary: string
+  audience: "EVERYONE" | "MEMBERS_ONLY"
+  starts_at: string | null
+  ends_at: string | null
+}
+
 export interface PublicQrMenuDto {
   business: string
   branch: string

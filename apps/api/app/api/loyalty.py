@@ -70,7 +70,7 @@ from app.models.base import utcnow
 from app.models.enums import LoyaltyRewardStatus, TenantState
 from app.security import as_utc
 from app.services.audit import add_audit_log
-from app.services.campaigns import apply_campaigns_to_order
+from app.services.campaigns import apply_campaigns_to_order, is_campaignable
 from app.services.loyalty import (
     CONSENT_VERSION,
     active_program_for_branch,
@@ -1006,6 +1006,20 @@ async def attach_membership(
     if membership is None:
         raise DomainError("membership_not_found", "Üyelik bulunamadı.", status_code=404)
     await attach_membership_to_order(db, order=order, membership=membership)
+    # The bill may already hold lines a members-only campaign was withheld from,
+    # so the offer is re-evaluated the moment the member becomes known. Without
+    # this the till would have to be told to apply campaigns as a second action,
+    # and a cashier who did not know to do so would charge for the treat.
+    granted = 0
+    if is_campaignable(order):
+        outcome = await apply_campaigns_to_order(
+            db,
+            tenant_id=tenant_id,
+            order=order,
+            actor_user_id=identity.user_id,
+            has_membership=True,
+        )
+        granted = len(outcome.granted)
     program = await db.get(LoyaltyProgram, membership.program_id)
     assert program is not None
     add_audit_log(
@@ -1015,9 +1029,10 @@ async def attach_membership(
         resource_type="order",
         resource_id=order.id,
         branch_id=order.branch_id,
-        new_value={"program_id": str(program.id)},
+        new_value={"program_id": str(program.id), "campaigns_granted": granted},
     )
     await db.commit()
+    await db.refresh(order)
     return LoyaltyMembershipAttachOut(
         order_id=order.id,
         membership_code=membership.lookup_code,
@@ -1060,7 +1075,7 @@ async def apply_member_code(
         db,
         tenant_id=tenant_id,
         order=order,
-        identity=identity,
+        actor_user_id=identity.user_id,
         has_membership=True,
     )
     add_audit_log(
