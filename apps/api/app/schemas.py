@@ -10,6 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from app.models.enums import (
     ApprovalStatus,
     ApprovalType,
+    CampaignAudience,
     DiscountKind,
     HotelRoomStatus,
     KitchenTicketStatus,
@@ -1324,6 +1325,23 @@ class PublicMenuOut(BaseModel):
     categories: list[PublicMenuCategory]
     products: list[PublicMenuProduct]
     session_token: str | None = None
+
+
+class PublicCampaignOut(BaseModel):
+    """A live offer, as a customer standing at the table may see it.
+
+    Deliberately narrower than `CampaignOut`: the conditions, the product ids
+    and the owner's configuration stay on the admin side. A customer needs to
+    know the offer exists and whether membership is required, nothing more.
+    """
+
+    id: UUID
+    name: str
+    description: str | None
+    summary: str
+    audience: CampaignAudience
+    starts_at: datetime | None
+    ends_at: datetime | None
 
 
 class PublicActiveOrderOut(BaseModel):

@@ -80,6 +80,9 @@ type QrTranslationKey =
   | "request_bill_failed_desc"
   | "bill_already_requested"
   | "bill_request_no_active_order"
+  | "campaigns_title"
+  | "campaign_members_only"
+  | "campaign_label"
 
 const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
   tr: {
@@ -156,6 +159,9 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     request_bill_failed_desc: "Lütfen bağlantınızı kontrol edip tekrar deneyin.",
     bill_already_requested: "Hesap talebiniz alındı. Personel ödemeniz için fişi hazırlıyor.",
     bill_request_no_active_order: "Hesap isteyebilmek için bu masada aktif bir sipariş olmalıdır.",
+    campaigns_title: "Kampanyalar",
+    campaign_members_only: "Üyelere özel",
+    campaign_label: "Kampanya",
   },
   en: {
     search_placeholder: "Search the menu",
@@ -230,6 +236,9 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     request_bill_failed_desc: "Please check your connection and try again.",
     bill_already_requested: "Your bill request is already in progress. Staff are preparing it for payment.",
     bill_request_no_active_order: "An active order is required before you can request the bill.",
+    campaigns_title: "Offers",
+    campaign_members_only: "Members only",
+    campaign_label: "Offer",
   },
   ru: {
     search_placeholder: "Поиск по меню",
@@ -305,6 +314,9 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     request_bill_failed_desc: "Проверьте соединение и попробуйте снова.",
     bill_already_requested: "Запрос на счёт уже принят. Персонал готовит чек к оплате.",
     bill_request_no_active_order: "Сначала нужно оформить активный заказ на этом столе.",
+    campaigns_title: "Акции",
+    campaign_members_only: "Только для участников",
+    campaign_label: "Акция",
   },
 }
 

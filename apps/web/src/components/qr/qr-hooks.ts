@@ -47,6 +47,26 @@ export function usePublicQrMenu(
   })
 }
 
+/**
+ * The offers running at this branch, for the menu to advertise.
+ *
+ * Deliberately independent of the menu query: a guest who cannot load the
+ * offers must still be able to read the menu and order, so this failing is
+ * allowed to render nothing rather than take the page down with it.
+ */
+export function usePublicQrCampaigns(businessSlug: string, branchSlug: string) {
+  return useQuery({
+    queryKey: [
+      ...queryKeys.qrMenu.publicMenu(businessSlug, branchSlug),
+      "campaigns",
+    ],
+    queryFn: ({ signal }) =>
+      qrApi.publicCampaigns(businessSlug, branchSlug, signal),
+    retry: false,
+    staleTime: 60_000,
+  })
+}
+
 export function useCreatePublicQrRequest(
   businessSlug: string,
   branchSlug: string,

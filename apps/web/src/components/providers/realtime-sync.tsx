@@ -183,6 +183,11 @@ export function queryKeysForRealtimeEvent(type = ""): readonly QueryKey[] {
       ["orders"],
       ["tables"],
       ["waiter"],
+      // A guest asking for the bill can change what the till owes: entering a
+      // member code applies a campaign, and the cashier reads the total from
+      // ["cashier", "orders"]. Without this the discount lands server-side and
+      // the screen keeps showing the old price until something else refreshes.
+      ["cashier"],
       ["dashboard"],
       ["admin-operations", "qr-requests"],
       ["admin-operations", "orders"],

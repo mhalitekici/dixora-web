@@ -4,6 +4,7 @@ import type {
   DiningTableDto,
   PageDto,
   PublicBillRequestCreate,
+  PublicCampaignDto,
   PublicBillRequestDto,
   PublicQrRequestDto,
   PublicQrMenuDto,
@@ -29,6 +30,17 @@ export const qrApi = {
         search: { table_token: tableToken || undefined, lang: lang || undefined },
         signal,
       },
+    )
+  },
+
+  publicCampaigns(
+    businessSlug: string,
+    branchSlug: string,
+    signal?: AbortSignal,
+  ): Promise<PublicCampaignDto[]> {
+    return api.get<PublicCampaignDto[]>(
+      `qr/public/${segment(businessSlug)}/${segment(branchSlug)}/campaigns`,
+      { signal },
     )
   },
 

@@ -14,6 +14,7 @@ import { toast } from "sonner"
 import { CartDrawer } from "@/components/qr/cart-drawer"
 import { BillRequestDrawer } from "@/components/qr/bill-request-drawer"
 import { QrBrandIntro } from "@/components/qr/qr-brand-intro"
+import { QrCampaignBanner } from "@/components/qr/qr-campaign-banner"
 import {
   useCreatePublicBillRequest,
   useCreatePublicQrRequest,
@@ -236,6 +237,12 @@ export function PublicMenu({
       <PublicMenuHeader menu={menu} locale={locale} onLocaleChange={setLocale} />
 
       <main className="mx-auto max-w-4xl px-4 pb-32 pt-6 sm:px-8 sm:pt-8">
+        <QrCampaignBanner
+          businessSlug={businessSlug}
+          branchSlug={branchSlug}
+          locale={locale}
+        />
+
         {!orderingEnabled ? (
           <div className="mb-6 flex gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3.5 text-sm text-amber-900 dark:text-amber-200">
             <UtensilsCrossed className="mt-0.5 size-5 shrink-0 text-[var(--qr-primary)]" />
