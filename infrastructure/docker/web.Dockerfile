@@ -18,6 +18,11 @@ ARG NEXT_PUBLIC_WS_URL=ws://localhost:8000/api/v1/ws
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 ARG NEXT_PUBLIC_ENABLE_PIN_LOGIN=false
 ENV NEXT_PUBLIC_ENABLE_PIN_LOGIN=$NEXT_PUBLIC_ENABLE_PIN_LOGIN
+# The origin printed into QR menu links and the canonical URL in page metadata,
+# the sitemap and robots.txt. Absent here it is not merely missing at runtime:
+# `next build` inlines the fallback, so the image ships localhost links.
+ARG NEXT_PUBLIC_APP_URL=http://localhost:3000
+ENV NEXT_PUBLIC_APP_URL=$NEXT_PUBLIC_APP_URL
 
 COPY apps/web ./apps/web
 COPY packages ./packages
