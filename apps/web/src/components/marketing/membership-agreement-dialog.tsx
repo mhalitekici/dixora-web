@@ -2,6 +2,7 @@
 
 import { FileText } from "lucide-react";
 
+import { LegalSections } from "@/components/legal/legal-sections";
 import {
   MEMBERSHIP_AGREEMENT_SECTIONS,
   MEMBERSHIP_AGREEMENT_TITLE,
@@ -35,7 +36,7 @@ export function MembershipAgreementDialog({
           />
         }
       >
-        Üyelik Sözleşmesi&apos;ni okuyun
+        Üyelik ve SaaS Hizmet Sözleşmesi
       </DialogTrigger>
       <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
@@ -48,18 +49,19 @@ export function MembershipAgreementDialog({
             onaylamanız, bu sözleşmeyi kabul ettiğiniz anlamına gelir.
           </DialogDescription>
         </DialogHeader>
-        <div className="space-y-5 text-sm leading-6 text-muted-foreground">
-          {MEMBERSHIP_AGREEMENT_SECTIONS.map((section) => (
-            <section key={section.heading}>
-              <h3 className="mb-1.5 font-semibold text-foreground">{section.heading}</h3>
-              {section.paragraphs.map((paragraph, index) => (
-                <p key={index} className="mb-2 last:mb-0">
-                  {paragraph}
-                </p>
-              ))}
-            </section>
-          ))}
-        </div>
+        <LegalSections sections={MEMBERSHIP_AGREEMENT_SECTIONS} />
+        <p className="text-xs text-muted-foreground">
+          Sözleşmenin tam metnini ayrı bir sayfada okumak isterseniz{" "}
+          <a
+            href="/uyelik-sozlesmesi"
+            target="_blank"
+            rel="noreferrer"
+            className="font-medium text-foreground underline underline-offset-2 hover:text-brand"
+          >
+            buraya
+          </a>{" "}
+          bakabilirsiniz.
+        </p>
         <DialogClose render={<Button type="button" variant="outline" className="mt-2 w-full" />}>
           Kapat
         </DialogClose>

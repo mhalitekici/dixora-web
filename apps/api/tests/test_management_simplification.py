@@ -181,6 +181,7 @@ async def test_employee_station_is_tenant_and_branch_scoped(api: ApiContext) -> 
             "phone": "+90 555 000 11 22",
             "password": "ScopeOwner!2026",
             "terms_accepted": True,
+            "privacy_notice_acknowledged": True,
         },
     )
     assert registration.status_code == 201, registration.text

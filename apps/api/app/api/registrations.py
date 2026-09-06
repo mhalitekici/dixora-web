@@ -234,6 +234,7 @@ async def _provision_business(
         display_name=payload.owner_name,
         phone=payload.phone,
         password_hash=payload.password_hash,
+        marketing_consent=payload.marketing_consent,
     )
     db.add(owner)
     db.add(
@@ -261,6 +262,9 @@ async def _provision_business(
             "trial_days": TRIAL_DAYS,
             "terms_accepted": True,
             "contract_version": payload.contract_version,
+            "privacy_notice_acknowledged": True,
+            "privacy_notice_version": payload.privacy_notice_version,
+            "marketing_consent": payload.marketing_consent,
         },
         reason="public_self_service",
         ip_address=ip_address,
@@ -318,6 +322,8 @@ async def start_registration(
         # Hashed now so a pending signup never holds a plaintext password.
         password_hash=hash_password(payload.password),
         contract_version=payload.contract_version,
+        privacy_notice_version=payload.privacy_notice_version,
+        marketing_consent=payload.marketing_consent,
         code_hash=hash_code(code),
         ip_address=ip_address,
         expires_at=utcnow() + timedelta(minutes=REGISTRATION_CODE_TTL_MINUTES),

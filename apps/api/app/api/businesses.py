@@ -10,7 +10,15 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, update
 from sqlalchemy.orm import selectinload
 
-from app.dependencies import CurrentIdentity, DbSession, Identity, require_permissions
+from app.api.media import MediaStorageDependency
+from app.config import Settings
+from app.dependencies import (
+    CurrentIdentity,
+    DbSession,
+    Identity,
+    get_app_settings,
+    require_permissions,
+)
 from app.errors import DomainError
 from app.models import (
     AuthSession,
@@ -30,6 +38,8 @@ from app.schemas import (
     AdminPasswordResetOut,
     AdminPasswordResetRequest,
     BusinessCreate,
+    BusinessDeleteOut,
+    BusinessDeleteRequest,
     BusinessOverviewOut,
     BusinessReactivateRequest,
     BusinessUpdate,
@@ -40,9 +50,38 @@ from app.schemas import (
 from app.security import hash_password, utcnow
 from app.services.audit import add_audit_log
 from app.services.pricing import branch_pricing_for_tenant
+from app.services.tenant_deletion import (
+    collect_tenant_media_keys,
+    delete_tenant_records,
+    purge_tenant_media,
+)
 
 router = APIRouter(prefix="/businesses", tags=["businesses"])
 PlatformAdmin = Annotated[Identity, Depends(require_permissions("platform.businesses.manage"))]
+
+
+async def require_super_admin(identity: CurrentIdentity) -> Identity:
+    """Strictly the platform operator — not merely somebody holding the permission.
+
+    `require_permissions` deliberately lets a granted permission stand in for
+    super-admin, which is right for everything else on this router. Erasing a
+    business is not reversible, so it is pinned to the flag on the account
+    itself: a tenant role can never be minted with it.
+
+    Belonging to no business is part of the test, not a redundancy. Platform
+    accounts have no tenant by construction, so an account that has one is not
+    the platform operator whatever its flag says.
+    """
+    if not identity.is_super_admin or identity.tenant_id is not None:
+        raise DomainError(
+            "permission_denied",
+            "Only a platform administrator can delete a business",
+            status_code=403,
+        )
+    return identity
+
+
+SuperAdmin = Annotated[Identity, Depends(require_super_admin)]
 
 
 @router.get("", response_model=Page[TenantOut])
@@ -289,6 +328,72 @@ async def update_business(
     await db.commit()
     await db.refresh(tenant)
     return TenantOut.model_validate(tenant)
+
+
+@router.delete("/{business_id}", response_model=BusinessDeleteOut)
+async def delete_business(
+    business_id: UUID,
+    payload: BusinessDeleteRequest,
+    identity: SuperAdmin,
+    db: DbSession,
+    storage: MediaStorageDependency,
+    settings: Annotated[Settings, Depends(get_app_settings)],
+) -> BusinessDeleteOut:
+    """Erase a business and every record that belongs to it. Irreversible.
+
+    Three things guard it. The route is pinned to a real platform account, not
+    to the `platform.businesses.manage` permission, so no tenant role can reach
+    it however it is configured. The caller has to repeat the business name back
+    exactly, which turns a stale or guessed id in a URL into a 400 rather than a
+    deletion. And the whole cleanup runs in one transaction, so a failure part
+    of the way through leaves the business untouched.
+
+    The audit entry is written with no tenant of its own — a tenant-scoped row
+    would be deleted along with everything else, erasing the record of who did
+    this and why.
+    """
+    tenant = await db.get(Tenant, business_id)
+    if tenant is None:
+        raise DomainError("business_not_found", "Business not found", status_code=404)
+
+    if payload.confirm_name.strip() != tenant.name.strip():
+        raise DomainError(
+            "confirmation_mismatch",
+            "The confirmation text does not match the business name",
+            status_code=400,
+        )
+
+    name, slug = tenant.name, tenant.slug
+    media_keys = await collect_tenant_media_keys(db, settings, business_id)
+
+    add_audit_log(
+        db,
+        identity=identity,
+        tenant_id=None,
+        branch_id=None,
+        action="business.deleted",
+        resource_type="tenant",
+        resource_id=business_id,
+        previous_value={
+            "name": name,
+            "slug": slug,
+            "state": tenant.state.value,
+            "is_active": tenant.is_active,
+        },
+        new_value={"deleted": True},
+        reason=payload.reason,
+    )
+    # Flushed before the sweep so the audit row is written while `audit_logs`
+    # still exists to hold it; it carries no tenant, so the sweep leaves it be.
+    await db.flush()
+
+    deleted_rows = await delete_tenant_records(db, business_id)
+    await db.commit()
+
+    await purge_tenant_media(storage, media_keys)
+    return BusinessDeleteOut(
+        id=business_id, name=name, slug=slug, deleted_rows=deleted_rows
+    )
 
 
 @router.get("/{business_id}/users", response_model=list[BusinessUserOut])

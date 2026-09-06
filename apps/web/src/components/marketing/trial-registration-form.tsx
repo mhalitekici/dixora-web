@@ -17,14 +17,15 @@ import {
 } from "react-hook-form";
 import { z } from "zod";
 
+import { KVKK_NOTICE_VERSION } from "@/components/legal/documents/kvkk-notice";
 import { MembershipAgreementDialog } from "@/components/marketing/membership-agreement-dialog";
 import { MEMBERSHIP_AGREEMENT_VERSION } from "@/components/marketing/membership-agreement";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import {
-  ADDITIONAL_BRANCH_PRICE_LABEL,
-  BASE_MONTHLY_PRICE_LABEL,
+  ADDITIONAL_BRANCH_PRICE_LABEL_VAT_INCLUSIVE,
+  BASE_MONTHLY_PRICE_LABEL_VAT_INCLUSIVE,
 } from "@/lib/pricing";
 
 const registrationSchema = z.object({
@@ -47,7 +48,18 @@ const registrationSchema = z.object({
   password: z.string().min(10, "Parola en az 10 karakter olmalı.").max(256),
   terms_accepted: z
     .boolean()
-    .refine((value) => value, "Koşulları kabul etmeniz gerekiyor."),
+    .refine(
+      (value) => value,
+      "Üyelik ve SaaS Hizmet Sözleşmesi'ni kabul etmeniz gerekiyor.",
+    ),
+  privacy_notice_acknowledged: z
+    .boolean()
+    .refine(
+      (value) => value,
+      "KVKK Aydınlatma Metni'ni okuduğunuzu onaylamanız gerekiyor.",
+    ),
+  // Opt-in, unticked by default, and never required to complete signup.
+  marketing_consent: z.boolean(),
 });
 
 type RegistrationValues = z.infer<typeof registrationSchema>;
@@ -81,6 +93,8 @@ const fieldIds = {
   phone: "trial-phone",
   password: "trial-password",
   terms_accepted: "trial-terms",
+  privacy_notice_acknowledged: "trial-privacy-notice",
+  marketing_consent: "trial-marketing-consent",
 } as const;
 
 export function TrialRegistrationForm() {
@@ -132,6 +146,8 @@ export function TrialRegistrationForm() {
       phone: "",
       password: "",
       terms_accepted: false,
+      privacy_notice_acknowledged: false,
+      marketing_consent: false,
     },
   });
 
@@ -144,6 +160,7 @@ export function TrialRegistrationForm() {
         body: JSON.stringify({
           ...values,
           contract_version: MEMBERSHIP_AGREEMENT_VERSION,
+          privacy_notice_version: KVKK_NOTICE_VERSION,
         }),
       });
       const body = (await response.json().catch(() => null)) as
@@ -428,11 +445,12 @@ export function TrialRegistrationForm() {
           {...form.register("terms_accepted")}
         />
         <span>
-          <MembershipAgreementDialog /> ve gizlilik koşullarını okudum, kabul
-          ediyorum. 30 günlük deneme sonunda devam etmek istersem Standard
-          paketin 1 şube dahil aylık {BASE_MONTHLY_PRICE_LABEL} (KDV hariç),
-          her ek aktif şubenin ise aylık {ADDITIONAL_BRANCH_PRICE_LABEL} (KDV
-          hariç) olduğunu biliyorum.
+          <MembershipAgreementDialog />
+          &apos;ni okudum ve kabul ediyorum. 30 günlük deneme sonunda devam
+          etmek istersem Standard paketin{" "}
+          {BASE_MONTHLY_PRICE_LABEL_VAT_INCLUSIVE} / ay tutarında olduğunu, 1
+          şube dahil bu ücrete her ek aktif şube için ayrıca{" "}
+          {ADDITIONAL_BRANCH_PRICE_LABEL_VAT_INCLUSIVE} eklendiğini biliyorum.
         </span>
       </label>
       {errors.terms_accepted ? (
@@ -444,6 +462,60 @@ export function TrialRegistrationForm() {
           {errors.terms_accepted.message}
         </p>
       ) : null}
+
+      <label
+        htmlFor={fieldIds.privacy_notice_acknowledged}
+        className="flex cursor-pointer items-start gap-3 border bg-white/70 p-3 text-xs leading-5 text-muted-foreground"
+      >
+        <input
+          id={fieldIds.privacy_notice_acknowledged}
+          type="checkbox"
+          aria-invalid={Boolean(errors.privacy_notice_acknowledged)}
+          aria-describedby={errorId(
+            fieldIds.privacy_notice_acknowledged,
+            errors.privacy_notice_acknowledged?.message,
+          )}
+          className="mt-0.5 size-4 shrink-0 accent-brand"
+          {...form.register("privacy_notice_acknowledged")}
+        />
+        <span>
+          <a
+            href="/kvkk-aydinlatma-metni"
+            target="_blank"
+            rel="noreferrer"
+            className="font-semibold text-foreground underline underline-offset-2 hover:text-brand"
+          >
+            KVKK Aydınlatma Metni
+          </a>
+          &apos;ni okudum.
+        </span>
+      </label>
+      {errors.privacy_notice_acknowledged ? (
+        <p
+          id={fieldIds.privacy_notice_acknowledged + "-error"}
+          role="alert"
+          className="text-xs text-destructive"
+        >
+          {errors.privacy_notice_acknowledged.message}
+        </p>
+      ) : null}
+
+      <label
+        htmlFor={fieldIds.marketing_consent}
+        className="flex cursor-pointer items-start gap-3 border bg-white/70 p-3 text-xs leading-5 text-muted-foreground"
+      >
+        <input
+          id={fieldIds.marketing_consent}
+          type="checkbox"
+          className="mt-0.5 size-4 shrink-0 accent-brand"
+          {...form.register("marketing_consent")}
+        />
+        <span>
+          Dixora tarafından kampanya, duyuru ve tanıtım amaçlı ticari
+          elektronik ileti gönderilmesine izin veriyorum. (İsteğe bağlıdır;
+          işletme hesabı açmak için gerekli değildir.)
+        </span>
+      </label>
 
       <div aria-live="assertive" aria-atomic="true">
         {serverError ? (
@@ -471,7 +543,7 @@ export function TrialRegistrationForm() {
           : "30 gün ücretsiz başla"}
       </Button>
       <p className="text-center text-xs text-muted-foreground">
-        Kredi kartı gerekmez · Kurulum ücreti yoktur
+        Kurulum ücreti yoktur
       </p>
     </form>
   );

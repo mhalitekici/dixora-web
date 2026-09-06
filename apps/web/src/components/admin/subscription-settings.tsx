@@ -49,7 +49,7 @@ export function SubscriptionSettings() {
       <div className="grid gap-3 lg:grid-cols-3">
         <div className="rounded-2xl border bg-card p-5 lg:col-span-2">
           <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-            Aylık tutar
+            Aylık tutar (KDV dahil)
           </p>
           <p className="mt-2 text-4xl font-bold tabular-nums tracking-tight">
             {money(pricing?.monthly_total)}

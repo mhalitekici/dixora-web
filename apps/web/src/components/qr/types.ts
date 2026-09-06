@@ -1,3 +1,5 @@
+import type { ManagedThemeMode } from "@/stores/managed-theme-store"
+
 export type QrOrderMode =
   | "MENU_ONLY"
   | "WAITER_APPROVAL"
@@ -36,6 +38,12 @@ export interface PublicQrConfigDto {
   currency: string
   customer_notes_enabled: boolean
   allergens_visible: boolean
+  /**
+   * Business-wide, not per branch. The menu shell has already applied this from
+   * its own uncached request by the time this payload lands — it is carried here
+   * so the theme in the data and the theme on screen can never disagree.
+   */
+  theme_mode: ManagedThemeMode
 }
 
 export interface PublicActiveOrderDto {

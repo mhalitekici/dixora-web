@@ -184,7 +184,12 @@ export const adminApi = {
     }),
   updateBusiness: (
     id: string,
-    input: { name: string; default_currency: string; prevent_negative_stock: boolean },
+    input: {
+      name: string;
+      default_currency: string;
+      prevent_negative_stock: boolean;
+      theme_mode: Tenant["theme_mode"];
+    },
   ) =>
     api.patch<Tenant>(`businesses/${id}`, input),
   branches: (signal?: AbortSignal) => api.get<Branch[]>("branches", { signal }),

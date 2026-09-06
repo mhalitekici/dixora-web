@@ -1,8 +1,8 @@
 import { ArrowRight, Check } from "lucide-react";
 
 import {
-  ADDITIONAL_BRANCH_PRICE_LABEL,
-  BASE_MONTHLY_PRICE_LABEL,
+  ADDITIONAL_BRANCH_PRICE_LABEL_VAT_INCLUSIVE,
+  BASE_MONTHLY_PRICE_LABEL_VAT_INCLUSIVE,
 } from "@/lib/pricing";
 
 import styles from "./landing.module.css";
@@ -32,7 +32,7 @@ export function PricingSection() {
           <span className={styles.trialUnit}>GÜN</span>
           <h2 id="pricing-title">İşletmenizde ücretsiz deneyin.</h2>
           <p>
-            Kredi kartı vermeden tüm Standard modüllerini kullanın. Deneme
+            Tüm Standard modüllerini 30 gün boyunca ücretsiz kullanın. Deneme
             sonunda devam edip etmeyeceğinize siz karar verin.
           </p>
         </div>
@@ -50,7 +50,7 @@ export function PricingSection() {
           <div className={styles.receiptPrice}>
             <span>Deneme sonrasında</span>
             <p>
-              <strong>{BASE_MONTHLY_PRICE_LABEL}</strong>
+              <strong>{BASE_MONTHLY_PRICE_LABEL_VAT_INCLUSIVE}</strong>
               <small>/ ay</small>
             </p>
           </div>
@@ -66,13 +66,13 @@ export function PricingSection() {
 
           <div className={styles.receiptTotal}>
             <span>Aylık toplam (1 şube)</span>
-            <strong>{BASE_MONTHLY_PRICE_LABEL}</strong>
+            <strong>{BASE_MONTHLY_PRICE_LABEL_VAT_INCLUSIVE}</strong>
           </div>
           <p className={styles.receiptNote}>
             Deneme sonunda devam etmek isterseniz Standard paket aylık olarak
             sunulur. Fiyata 1 şube dahildir; açtığınız her ek şube için aylık{" "}
-            {ADDITIONAL_BRANCH_PRICE_LABEL} eklenir. Kapattığınız (arşivlediğiniz)
-            şubeler ücretlendirilmez.
+            {ADDITIONAL_BRANCH_PRICE_LABEL_VAT_INCLUSIVE} eklenir. Kapattığınız
+            (arşivlediğiniz) şubeler ücretlendirilmez.
           </p>
           <a className={styles.receiptCta} href="#kayit">
             Ücretsiz kullanmaya başla

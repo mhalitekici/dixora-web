@@ -1,7 +1,7 @@
 import { ArrowDown, ArrowRight, Check } from "lucide-react";
 
 import { OperationsStage } from "./operations-stage";
-import { BASE_MONTHLY_PRICE_LABEL } from "@/lib/pricing";
+import { BASE_MONTHLY_PRICE_LABEL_VAT_INCLUSIVE } from "@/lib/pricing";
 
 import styles from "./landing.module.css";
 
@@ -36,15 +36,12 @@ export function HeroSection() {
 
           <div className={styles.heroPromise} aria-label="Deneme koşulları">
             <span>
-              <Check aria-hidden="true" /> Kredi kartı gerekmez
-            </span>
-            <span>
               <Check aria-hidden="true" /> Kurulum ücreti yok
             </span>
           </div>
           <p className={styles.heroPrice}>
             30 gün ücretsiz <span aria-hidden="true">·</span> Sonrasında{" "}
-            <strong>{BASE_MONTHLY_PRICE_LABEL} / ay</strong>
+            <strong>{BASE_MONTHLY_PRICE_LABEL_VAT_INCLUSIVE} / ay</strong>
           </p>
         </div>
 

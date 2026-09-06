@@ -126,7 +126,17 @@ function normalizeTenant(value: unknown): TenantSummary | null {
       "default_currency",
       "defaultCurrency",
     ),
+    themeMode: readThemeMode(record),
   }
+}
+
+function readThemeMode(
+  record: Record<string, unknown>,
+): TenantSummary["themeMode"] {
+  const value = readString(record, "theme_mode", "themeMode")
+  return value === "LIGHT" || value === "DARK" || value === "SYSTEM"
+    ? value
+    : undefined
 }
 
 function normalizeBranch(value: unknown): BranchSummary | null {

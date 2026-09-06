@@ -49,6 +49,31 @@ export async function setBusinessLifecycle(
   return api.patch<PlatformBusiness>(`businesses/${businessId}`, body)
 }
 
+export interface BusinessDeletionResult {
+  id: string
+  name: string
+  slug: string
+  deleted_rows: Record<string, number>
+}
+
+/**
+ * Erase a business and everything under it. There is no undo.
+ *
+ * `confirmName` is checked again on the server, so this is a real guard rather
+ * than a dialog formality: a stale id in a URL cannot delete anything on its
+ * own. The route is also restricted to genuine platform accounts there — hiding
+ * the button is a courtesy, not the control.
+ */
+export async function deleteBusiness(
+  businessId: string,
+  input: { confirmName: string; reason?: string },
+): Promise<BusinessDeletionResult> {
+  return api.delete<BusinessDeletionResult>(`businesses/${businessId}`, {
+    confirm_name: input.confirmName,
+    reason: input.reason?.trim() || null,
+  })
+}
+
 export async function reactivateBusiness(
   businessId: string,
   input: { extendDays: number; note?: string },

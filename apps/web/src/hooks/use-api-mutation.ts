@@ -65,7 +65,9 @@ export function useApiMutation<
         case "PATCH":
           return api.patch<TData>(resolvedPath, payload, request)
         case "DELETE":
-          return api.delete<TData>(resolvedPath, request)
+          // No body: every caller here identifies the record in the path, and
+          // handing them one would start sending their `variables` as JSON.
+          return api.delete<TData>(resolvedPath, undefined, request)
       }
     },
     onSuccess: async (
