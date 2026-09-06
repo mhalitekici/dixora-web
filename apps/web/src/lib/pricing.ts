@@ -32,3 +32,15 @@ export function monthlyTotal(activeBranches: number): number {
 
 export const BASE_MONTHLY_PRICE_LABEL = formatPrice(BASE_MONTHLY_PRICE);
 export const ADDITIONAL_BRANCH_PRICE_LABEL = formatPrice(ADDITIONAL_BRANCH_PRICE);
+
+/**
+ * VAT-inclusive price labels for customer-facing copy.
+ *
+ * Dixora's published consumer prices are tax-inclusive (KDV dahil) — there is
+ * no separate ex-VAT figure shown anywhere in the product. Every surface that
+ * states a price to a prospect or a business owner uses these, so the "KDV
+ * dahil" qualifier is never typed out ad hoc and never drifts out of sync with
+ * the number next to it.
+ */
+export const BASE_MONTHLY_PRICE_LABEL_VAT_INCLUSIVE = `${BASE_MONTHLY_PRICE_LABEL} (KDV dahil)`;
+export const ADDITIONAL_BRANCH_PRICE_LABEL_VAT_INCLUSIVE = `${ADDITIONAL_BRANCH_PRICE_LABEL} (KDV dahil)`;

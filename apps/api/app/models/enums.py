@@ -28,6 +28,18 @@ class TenantState(StrEnum):
     ARCHIVED = "ARCHIVED"
 
 
+class ThemeMode(StrEnum):
+    """Which colour scheme a business pins for its guest and staff screens.
+
+    SYSTEM keeps the historical behaviour — the device's `prefers-color-scheme`
+    decides — and is therefore the default for every existing business.
+    """
+
+    LIGHT = "LIGHT"
+    DARK = "DARK"
+    SYSTEM = "SYSTEM"
+
+
 class TableState(StrEnum):
     AVAILABLE = "AVAILABLE"
     OCCUPIED = "OCCUPIED"

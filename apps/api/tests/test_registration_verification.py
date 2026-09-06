@@ -19,6 +19,9 @@ SIGNUP = {
     "password": "Str0ng-Signup-Pass!",
     "terms_accepted": True,
     "contract_version": "2026-08-09-v2",
+    "privacy_notice_acknowledged": True,
+    "privacy_notice_version": "2026-08-09-v1",
+    "marketing_consent": False,
 }
 
 

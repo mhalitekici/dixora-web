@@ -24,6 +24,7 @@ from app.models.enums import (
     StockMovementType,
     TableState,
     TenantState,
+    ThemeMode,
 )
 
 
@@ -70,6 +71,14 @@ class BusinessRegistrationRequest(BaseModel):
     password: str = Field(min_length=10, max_length=256)
     terms_accepted: Literal[True]
     contract_version: str = Field(default="unknown", max_length=40)
+    # KVKK aydınlatma metni is a notice, not a consent, but the applicant still
+    # has to actively acknowledge having read it — kept as its own required
+    # field so it can never be satisfied by ticking the membership agreement.
+    privacy_notice_acknowledged: Literal[True]
+    privacy_notice_version: str = Field(default="unknown", max_length=40)
+    # Opt-in only. Absent from a request defaults to False rather than being
+    # required, and is never inferred from the other two acceptances.
+    marketing_consent: bool = False
 
 
 class BusinessRegistrationStartOut(BaseModel):
@@ -209,6 +218,9 @@ class TenantSessionSummary(BaseModel):
     state: TenantState
     is_active: bool
     default_currency: str
+    # Staff phone screens read this straight off the session so they can pin the
+    # colour scheme without a second round trip.
+    theme_mode: ThemeMode = ThemeMode.SYSTEM
 
 
 class BranchSessionSummary(BaseModel):
@@ -487,6 +499,26 @@ class BusinessUpdate(BaseModel):
         pattern=r"^[A-Z]{3}$",
     )
     prevent_negative_stock: bool | None = None
+    theme_mode: ThemeMode | None = None
+
+
+class BusinessDeleteRequest(BaseModel):
+    """Confirmation for an irreversible delete.
+
+    `confirm_name` must repeat the business's own name exactly. The check is
+    enforced on the server as well as in the dialog: a mistyped or stale id in a
+    URL must not be enough to erase a business.
+    """
+
+    confirm_name: str = Field(min_length=1, max_length=160)
+    reason: str | None = Field(default=None, max_length=500)
+
+
+class BusinessDeleteOut(BaseModel):
+    id: UUID
+    name: str
+    slug: str
+    deleted_rows: dict[str, int]
 
 
 class BusinessReactivateRequest(BaseModel):
@@ -503,6 +535,7 @@ class TenantOut(ORMModel):
     is_active: bool
     default_currency: str
     prevent_negative_stock: bool
+    theme_mode: ThemeMode
     created_at: datetime
 
 
@@ -1273,6 +1306,14 @@ class PublicQrConfigOut(BaseModel):
     currency: str
     customer_notes_enabled: bool
     allergens_visible: bool
+    # Business-wide, not per branch: one guest-facing look for the whole brand.
+    theme_mode: ThemeMode
+
+
+class PublicAppearanceOut(BaseModel):
+    """The one thing the QR menu shell must know before it paints anything."""
+
+    theme_mode: ThemeMode
 
 
 class PublicMenuCategory(BaseModel):

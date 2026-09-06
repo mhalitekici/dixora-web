@@ -27,6 +27,9 @@ const registrationSchema = z.object({
   password: z.string().min(10).max(256),
   terms_accepted: z.literal(true),
   contract_version: z.string().trim().min(1).max(40).default("unknown"),
+  privacy_notice_acknowledged: z.literal(true),
+  privacy_notice_version: z.string().trim().min(1).max(40).default("unknown"),
+  marketing_consent: z.boolean().default(false),
 });
 
 export async function POST(request: NextRequest): Promise<Response> {

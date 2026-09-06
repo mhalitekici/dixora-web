@@ -8,7 +8,7 @@ from sqlalchemy import JSON, Boolean, ForeignKey, Index, String, UniqueConstrain
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
-from app.models.enums import TenantState, enum_column
+from app.models.enums import TenantState, ThemeMode, enum_column
 
 if TYPE_CHECKING:
     from app.models.catalog import PreparationStation
@@ -29,6 +29,15 @@ class Tenant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     prevent_negative_stock: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     default_currency: Mapped[str] = mapped_column(String(3), default="TRY", nullable=False)
+    # Applies to the guest-facing QR menu and the staff phone screens only; the
+    # back-office keeps its own per-user toggle. SYSTEM is what every business
+    # did before this column existed, so it stays the default.
+    theme_mode: Mapped[ThemeMode] = mapped_column(
+        enum_column(ThemeMode, "theme_mode"),
+        default=ThemeMode.SYSTEM,
+        server_default=ThemeMode.SYSTEM.value,
+        nullable=False,
+    )
 
     branches: Mapped[list[Branch]] = relationship(back_populates="tenant")
     users: Mapped[list[User]] = relationship(back_populates="tenant")
@@ -152,6 +161,13 @@ class User(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     pin_hash: Mapped[str | None] = mapped_column(String(512), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     is_super_admin: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    # Ticari elektronik ileti izni (opt-in). Recorded once at signup from the
+    # registration form's optional marketing checkbox; nothing in this codebase
+    # sends campaign email today — this column only makes the durable "did this
+    # person agree" fact queryable for whenever that exists.
+    marketing_consent: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     last_login_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
     tenant: Mapped[Tenant | None] = relationship(back_populates="users")
@@ -251,7 +267,18 @@ class BusinessRegistrationVerification(UUIDPrimaryKeyMixin, TimestampMixin, Base
     email: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     phone: Mapped[str] = mapped_column(String(32), nullable=False)
     password_hash: Mapped[str] = mapped_column(String(512), nullable=False)
+    # Which published revision of the binding contract this signup accepted.
     contract_version: Mapped[str] = mapped_column(String(40), nullable=False)
+    # Separate from `contract_version`: the KVKK aydınlatma metni is a notice,
+    # not a consent, but which revision the applicant saw is still worth
+    # keeping alongside the rest of the acceptance record.
+    privacy_notice_version: Mapped[str] = mapped_column(
+        String(40), nullable=False, default="unknown", server_default="unknown"
+    )
+    # Opt-in only, unticked by default on the form. Never required for signup.
+    marketing_consent: Mapped[bool] = mapped_column(
+        Boolean, default=False, server_default="false", nullable=False
+    )
     code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     attempts: Mapped[int] = mapped_column(default=0, nullable=False)
     ip_address: Mapped[str | None] = mapped_column(String(64), nullable=True)

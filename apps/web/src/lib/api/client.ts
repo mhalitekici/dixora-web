@@ -75,9 +75,10 @@ export const api = {
 
   delete<T>(
     path: string,
+    body?: unknown,
     options: Omit<ApiRequestOptions, "method" | "body"> = {},
   ): Promise<T> {
-    return apiRequest<T>(path, { ...options, method: "DELETE" })
+    return apiRequest<T>(path, { ...options, body, method: "DELETE" })
   },
 }
 

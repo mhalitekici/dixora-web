@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 
 import {
   ADDITIONAL_BRANCH_PRICE,
+  ADDITIONAL_BRANCH_PRICE_LABEL_VAT_INCLUSIVE,
   BASE_MONTHLY_PRICE,
+  BASE_MONTHLY_PRICE_LABEL_VAT_INCLUSIVE,
   INCLUDED_BRANCHES,
   monthlyTotal,
 } from "./pricing";
@@ -29,6 +31,15 @@ describe("subscription pricing", () => {
       ADDITIONAL_BRANCH_PRICE,
     );
   });
+
+  it("states every customer-facing price as VAT-inclusive", () => {
+    // Dixora's published consumer prices are gross (KDV dahil); nothing in the
+    // codebase shows a separate ex-VAT figure.
+    expect(BASE_MONTHLY_PRICE_LABEL_VAT_INCLUSIVE).toContain("KDV dahil");
+    expect(ADDITIONAL_BRANCH_PRICE_LABEL_VAT_INCLUSIVE).toContain("KDV dahil");
+    expect(BASE_MONTHLY_PRICE_LABEL_VAT_INCLUSIVE).not.toContain("KDV hariç");
+    expect(ADDITIONAL_BRANCH_PRICE_LABEL_VAT_INCLUSIVE).not.toContain("KDV hariç");
+  });
 });
 
 describe("membership agreement", () => {
@@ -49,5 +60,20 @@ describe("membership agreement", () => {
 
   it("carries a version so older acceptances stay distinguishable", () => {
     expect(MEMBERSHIP_AGREEMENT_VERSION).toMatch(/^\d{4}-\d{2}-\d{2}-v\d+$/);
+  });
+
+  it("states prices as VAT-inclusive", () => {
+    expect(text).toContain("KDV dahil");
+    expect(text).not.toContain("KDV hariç");
+  });
+
+  it("never markets signup as not requiring a card", () => {
+    // The contract legitimately discusses card payments in its billing clause
+    // (Dixora will not auto-charge a card without consent) — that is not the
+    // "no card required" marketing claim this checks for.
+    const lower = text.toLocaleLowerCase("tr");
+    expect(lower).not.toContain("kredi kartı gerekmez");
+    expect(lower).not.toContain("kredi kartı gerektirmez");
+    expect(lower).not.toContain("kart bilgisi gerekmez");
   });
 });

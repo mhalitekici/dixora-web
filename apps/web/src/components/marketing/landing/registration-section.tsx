@@ -1,11 +1,10 @@
-import { Check, Clock3, CreditCard, ShieldCheck } from "lucide-react";
+import { Check, Clock3, ShieldCheck } from "lucide-react";
 
 import { TrialRegistrationForm } from "@/components/marketing/trial-registration-form";
 
 import styles from "./landing.module.css";
 
 const assurances = [
-  { icon: CreditCard, label: "Kredi kartı gerekmez" },
   { icon: Clock3, label: "30 gün ücretsiz kullanım" },
   { icon: ShieldCheck, label: "İşletmenize özel güvenli alan" },
 ] as const;

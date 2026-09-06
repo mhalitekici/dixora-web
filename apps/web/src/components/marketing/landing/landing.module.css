@@ -1715,6 +1715,42 @@
   text-align: right;
 }
 
+.footerLegal {
+  border-top: 1px solid var(--line-dark);
+}
+
+.footerLegal nav {
+  width: min(100% - 40px, 1280px);
+  margin-inline: auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 20px;
+  padding-block: 14px;
+}
+
+.footerLegal nav a,
+.footerLegal nav button {
+  min-height: 40px;
+  display: inline-flex;
+  align-items: center;
+  border: none;
+  background: none;
+  padding-inline: 0;
+  color: rgba(251, 250, 246, 0.5);
+  font-family: inherit;
+  font-size: 0.66rem;
+  font-weight: 600;
+  text-decoration: none;
+  cursor: pointer;
+  transition: color 160ms ease;
+}
+
+.footerLegal nav a:hover,
+.footerLegal nav button:hover {
+  color: var(--orange-bright);
+}
+
 @supports (animation-timeline: view()) {
   .flowBoard,
   .featureChapter,

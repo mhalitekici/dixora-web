@@ -8,10 +8,20 @@ import { ServiceWorkerRegistration } from "@/components/providers/service-worker
 import { ThemeProvider } from "@/components/providers/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
 import { TooltipProvider } from "@/components/ui/tooltip"
+import {
+  forcedThemeFor,
+  useManagedThemeStore,
+} from "@/stores/managed-theme-store"
 
 export function AppProviders({ children }: PropsWithChildren) {
+  // next-themes ignores a nested provider, so a business-pinned theme has to be
+  // forced from here. The store reports what the pre-paint script already
+  // applied, so the very first client render agrees with the painted page and
+  // nothing flickers back to the device preference.
+  const managedMode = useManagedThemeStore((state) => state.mode)
+
   return (
-    <ThemeProvider>
+    <ThemeProvider forcedTheme={forcedThemeFor(managedMode)}>
       <QueryProvider>
         <TooltipProvider>
           {children}

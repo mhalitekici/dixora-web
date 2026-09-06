@@ -1,3 +1,5 @@
+import { CookieConsentBanner } from "@/components/legal/cookie-consent-banner";
+
 import { FeatureStories } from "./feature-stories";
 import { HeroSection } from "./hero-section";
 import { LandingFooter } from "./landing-footer";
@@ -22,6 +24,7 @@ export function LandingPage() {
         <RegistrationSection />
       </main>
       <LandingFooter />
+      <CookieConsentBanner />
     </div>
   );
 }

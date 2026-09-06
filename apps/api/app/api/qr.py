@@ -46,12 +46,14 @@ from app.models.enums import (
     QrOrderMode,
     QrRequestStatus,
     TableSessionStatus,
+    ThemeMode,
 )
 from app.schemas import (
     OrderCreate,
     OrderItemInput,
     OrderModifierInput,
     PublicActiveOrderOut,
+    PublicAppearanceOut,
     PublicBillRequestCreate,
     PublicBillRequestOut,
     PublicBranchOut,
@@ -300,6 +302,36 @@ async def _public_context(
     if config is None:
         raise DomainError("menu_disabled", "QR menu is not available", status_code=404)
     return tenant, branch, config
+
+
+@router.get("/public/{business_slug}/appearance", response_model=PublicAppearanceOut)
+async def public_appearance(
+    business_slug: str,
+    db: DbSession,
+    response: Response,
+) -> PublicAppearanceOut:
+    """The colour scheme this business pins for its guest screens.
+
+    Split out from the menu so the page shell can settle the theme before it
+    paints anything, which is what keeps a light menu from flashing dark on a
+    phone in dark mode. Deliberately uncached, like its sibling public routes:
+    an owner who switches the theme must see it on the next load, not after a
+    CDN entry expires.
+
+    Unknown or retired slugs answer SYSTEM rather than 404 — this decides a CSS
+    class, and a page whose menu is about to 404 anyway should not be turned
+    into a way to enumerate which business slugs exist.
+    """
+    response.headers["Cache-Control"] = "private, no-store"
+    theme_mode = (
+        await db.execute(
+            select(Tenant.theme_mode).where(
+                Tenant.slug == business_slug,
+                Tenant.is_active.is_(True),
+            )
+        )
+    ).scalar_one_or_none()
+    return PublicAppearanceOut(theme_mode=theme_mode or ThemeMode.SYSTEM)
 
 
 @router.get("/public/{business_slug}/branches", response_model=list[PublicBranchOut])
@@ -560,6 +592,7 @@ async def public_menu(
             currency=config.currency,
             customer_notes_enabled=config.customer_notes_enabled,
             allergens_visible=config.allergens_visible,
+            theme_mode=tenant.theme_mode,
         ),
         categories=[
             PublicMenuCategory(

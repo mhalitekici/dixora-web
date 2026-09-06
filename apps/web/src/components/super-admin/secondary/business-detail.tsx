@@ -15,11 +15,14 @@ import {
   LockKeyhole,
   RefreshCw,
   ShieldCheck,
+  Trash2,
+  TriangleAlert,
   UserCog,
   Store,
   Tag,
 } from "lucide-react"
 import Link from "next/link"
+import { useRouter } from "next/navigation"
 import { useState } from "react"
 import { toast } from "sonner"
 
@@ -55,6 +58,7 @@ import { cn } from "@/lib/utils"
 
 import { AdapterNotice } from "./adapter-notice"
 import {
+  deleteBusiness,
   getBusiness,
   getBusinessOverview,
   getBusinessUsers,
@@ -114,9 +118,17 @@ const statePresentation: Record<
 
 export function BusinessDetail({ businessId }: { businessId: string }) {
   const queryClient = useQueryClient()
+  const router = useRouter()
   const [pendingAction, setPendingAction] = useState<LifecycleAction | null>(
     null,
   )
+  // Set the moment the delete succeeds, to stand the detail queries down. Left
+  // enabled, removing them would re-fetch through their live observers and put
+  // a 404 error state on screen in the instant before the redirect lands.
+  const [deleted, setDeleted] = useState(false)
+  const [deleteOpen, setDeleteOpen] = useState(false)
+  const [deleteConfirmation, setDeleteConfirmation] = useState("")
+  const [deleteReason, setDeleteReason] = useState("")
   const [supportOpen, setSupportOpen] = useState(false)
   const [supportReason, setSupportReason] = useState("")
   const [passwordResetOpen, setPasswordResetOpen] = useState(false)
@@ -130,10 +142,12 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
   const query = useQuery({
     queryKey: secondaryAdminQueryKeys.business(businessId),
     queryFn: ({ signal }) => getBusiness(businessId, signal),
+    enabled: !deleted,
   })
   const overviewQuery = useQuery({
     queryKey: [...secondaryAdminQueryKeys.business(businessId), "overview"],
     queryFn: ({ signal }) => getBusinessOverview(businessId, signal),
+    enabled: !deleted,
   })
 
   const lifecycleMutation = useMutation({
@@ -158,6 +172,40 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
         error instanceof Error
           ? error.message
           : "İşletme durumu güncellenemedi.",
+      )
+    },
+  })
+
+  const deleteMutation = useMutation({
+    mutationFn: () =>
+      deleteBusiness(businessId, {
+        confirmName: deleteConfirmation,
+        reason: deleteReason,
+      }),
+    onSuccess: (result) => {
+      setDeleted(true)
+      setDeleteOpen(false)
+      // Removed rather than invalidated: the business is gone, so refetching
+      // its detail query would only produce a 404 on the way out.
+      queryClient.removeQueries({
+        queryKey: secondaryAdminQueryKeys.business(businessId),
+      })
+      queryClient.removeQueries({
+        queryKey: ["secondary-admin", "business-users", businessId],
+      })
+      void queryClient.invalidateQueries({ queryKey: ["platform", "businesses"] })
+      void queryClient.invalidateQueries({
+        queryKey: secondaryAdminQueryKeys.subscriptions,
+      })
+      void queryClient.invalidateQueries({ queryKey: ["platform", "invoices"] })
+      router.replace("/super-admin/businesses")
+      toast.success("İşletme kalıcı olarak silindi.", {
+        description: `${result.name} ve bağlı tüm kayıtlar kaldırıldı.`,
+      })
+    },
+    onError: (error) => {
+      toast.error(
+        error instanceof Error ? error.message : "İşletme silinemedi.",
       )
     },
   })
@@ -525,8 +573,48 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
             Destek modu sözleşmesini görüntüle
             <ExternalLink className="ml-auto size-3.5 text-muted-foreground" />
           </Button>
+
+          <div className="rounded-xl border border-destructive/35 bg-destructive/5 p-3">
+            <p className="text-xs font-semibold text-destructive">Tehlikeli bölge</p>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Askıya alma geri alınabilir; kalıcı silme alınamaz. İşletme ve ona
+              bağlı bütün kayıtlar veritabanından kaldırılır.
+            </p>
+            <Button
+              className="mt-3 w-full justify-start"
+              variant="destructive"
+              disabled={deleteMutation.isPending}
+              onClick={() => setDeleteOpen(true)}
+            >
+              {deleteMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Trash2 />
+              )}
+              İşletmeyi Kalıcı Sil
+            </Button>
+          </div>
         </SectionCard>
       </div>
+
+      <DeleteBusinessDialog
+        business={business}
+        open={deleteOpen}
+        confirmation={deleteConfirmation}
+        reason={deleteReason}
+        pending={deleteMutation.isPending}
+        onConfirmationChange={setDeleteConfirmation}
+        onReasonChange={setDeleteReason}
+        onOpenChange={(open) => {
+          if (deleteMutation.isPending) return
+          setDeleteOpen(open)
+          if (!open) {
+            setDeleteConfirmation("")
+            setDeleteReason("")
+          }
+        }}
+        onConfirm={() => deleteMutation.mutate()}
+      />
 
       <LifecycleConfirmation
         action={pendingAction}
@@ -762,6 +850,102 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
         </DialogContent>
       </Dialog>
     </>
+  )
+}
+
+/**
+ * The only way to erase a business, and deliberately awkward to get through.
+ *
+ * The operator has to retype the business's exact name before the button will
+ * enable. That is not decoration: the same string is checked on the server, so
+ * a mis-clicked row in a list cannot delete the wrong tenant. The dialog also
+ * refuses to close while the request is in flight, which — together with the
+ * disabled button — is what stops a double submit.
+ */
+export function DeleteBusinessDialog({
+  business,
+  open,
+  confirmation,
+  reason,
+  pending,
+  onConfirmationChange,
+  onReasonChange,
+  onOpenChange,
+  onConfirm,
+}: {
+  business: Pick<PlatformBusiness, "name" | "slug">
+  open: boolean
+  confirmation: string
+  reason: string
+  pending: boolean
+  onConfirmationChange: (value: string) => void
+  onReasonChange: (value: string) => void
+  onOpenChange: (open: boolean) => void
+  onConfirm: () => void
+}) {
+  const matches = confirmation.trim() === business.name.trim()
+
+  return (
+    <AlertDialog open={open} onOpenChange={onOpenChange}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogMedia className="bg-destructive/10 text-destructive">
+            <TriangleAlert />
+          </AlertDialogMedia>
+          <AlertDialogTitle>İşletmeyi kalıcı olarak sil</AlertDialogTitle>
+          <AlertDialogDescription>
+            Bu işlem geri alınamaz. İşletme ve işletmeye bağlı veriler kalıcı
+            olarak silinecektir: şubeler, kullanıcılar, menü ve ürünler,
+            kampanyalar, QR menü kayıtları, masalar, siparişler, ödemeler, stok,
+            sadakat verileri, abonelik ve fatura kayıtları.
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+
+        <div className="space-y-2">
+          <Label htmlFor="delete-confirmation">
+            Onaylamak için işletmenin adını birebir yazın
+          </Label>
+          <p className="font-mono text-sm font-semibold">{business.name}</p>
+          <Input
+            id="delete-confirmation"
+            value={confirmation}
+            onChange={(event) => onConfirmationChange(event.target.value)}
+            placeholder={business.name}
+            className="h-11 rounded-xl"
+            autoComplete="off"
+            disabled={pending}
+          />
+        </div>
+
+        <div className="space-y-2">
+          <Label htmlFor="delete-reason">Gerekçe (opsiyonel)</Label>
+          <Textarea
+            id="delete-reason"
+            value={reason}
+            onChange={(event) => onReasonChange(event.target.value)}
+            placeholder="Örn. KVKK silme talebi DX-1042"
+            maxLength={500}
+            disabled={pending}
+          />
+          <p className="text-xs text-muted-foreground">
+            Gerekçe, işletme silindikten sonra da kalan platform audit kaydına
+            yazılır.
+          </p>
+        </div>
+
+        <AlertDialogFooter>
+          <AlertDialogCancel disabled={pending}>Vazgeç</AlertDialogCancel>
+          <AlertDialogAction
+            variant="destructive"
+            disabled={!matches || pending}
+            onClick={onConfirm}
+          >
+            {pending ? <Loader2 className="animate-spin" /> : <Trash2 />}
+            {pending ? "Siliniyor" : "Kalıcı olarak sil"}
+          </AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   )
 }
 

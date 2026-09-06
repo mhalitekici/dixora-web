@@ -46,8 +46,18 @@ const businessSchema = z.object({
     .trim()
     .regex(/^[A-Z]{3}$/, "Üç harfli para birimi kodu seçin."),
   prevent_negative_stock: z.boolean(),
+  theme_mode: z.enum(["LIGHT", "DARK", "SYSTEM"]),
 });
 type BusinessValues = z.infer<typeof businessSchema>;
+
+const themeModeOptions: Array<{
+  value: BusinessValues["theme_mode"];
+  label: string;
+}> = [
+  { value: "LIGHT", label: "Açık" },
+  { value: "DARK", label: "Karanlık" },
+  { value: "SYSTEM", label: "Cihaz ayarını kullan" },
+];
 
 const tenantStateLabels: Record<Tenant["state"], string> = {
   TRIAL: "Deneme",
@@ -73,7 +83,7 @@ export function BusinessSettings() {
     mutationFn: ({ id, values }: { id: string; values: BusinessValues }) =>
       adminApi.updateBusiness(id, values),
     onSuccess: async () => {
-      toast.success("İşletme adı güncellendi.");
+      toast.success("İşletme ayarları güncellendi.");
       await queryClient.invalidateQueries({ queryKey: adminKeys.businesses() });
     },
     onError: (error) => toast.error(toErrorMessage(error)),
@@ -155,7 +165,7 @@ export function BusinessSettings() {
               description="Değiştirilebilir backend alanları"
             >
               <BusinessSettingsForm
-                key={`${business.id}:${business.name}:${business.default_currency}:${business.prevent_negative_stock}`}
+                key={`${business.id}:${business.name}:${business.default_currency}:${business.prevent_negative_stock}:${business.theme_mode}`}
                 business={business}
                 pending={mutation.isPending}
                 onSubmit={(values) => mutation.mutate({ id: business.id, values })}
@@ -205,6 +215,7 @@ function BusinessSettingsForm({
       name: business.name,
       default_currency: business.default_currency,
       prevent_negative_stock: business.prevent_negative_stock,
+      theme_mode: business.theme_mode,
     },
   });
   return (
@@ -256,6 +267,38 @@ function BusinessSettingsForm({
             </span>
             <Switch checked={field.value} onCheckedChange={field.onChange} />
           </label>
+        )}
+      />
+      <Controller
+        control={form.control}
+        name="theme_mode"
+        render={({ field, fieldState }) => (
+          <div>
+            <Label id="theme-mode-label">QR Menü ve Çalışan Ekranı Teması</Label>
+            <Select
+              value={field.value}
+              onValueChange={(value) => field.onChange(value ?? "SYSTEM")}
+            >
+              <SelectTrigger
+                aria-labelledby="theme-mode-label"
+                className="mt-1.5 h-10 w-full"
+              >
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {themeModeOptions.map((option) => (
+                  <SelectItem key={option.value} value={option.value}>
+                    {option.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <p className="mt-1 text-xs text-muted-foreground">
+              QR menü ve çalışanların mobil ekranlarında kullanılacak görünümü
+              belirler.
+            </p>
+            <FieldError>{fieldState.error?.message}</FieldError>
+          </div>
         )}
       />
       <Button type="submit" disabled={pending || !form.formState.isDirty}>

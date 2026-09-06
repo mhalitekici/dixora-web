@@ -54,6 +54,8 @@ export interface TenantSummary {
   state?: string
   isActive: boolean
   defaultCurrency?: string
+  /** Colour scheme the business pins for the QR menu and staff phone screens. */
+  themeMode?: "LIGHT" | "DARK" | "SYSTEM"
 }
 
 export interface BranchSummary {

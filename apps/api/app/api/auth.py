@@ -119,6 +119,7 @@ async def user_payload(
                 state=tenant.state,
                 is_active=tenant.is_active,
                 default_currency=tenant.default_currency,
+                theme_mode=tenant.theme_mode,
             )
             if tenant
             else None

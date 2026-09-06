@@ -426,5 +426,6 @@ export type Tenant = {
   is_active: boolean;
   default_currency: string;
   prevent_negative_stock: boolean;
+  theme_mode: "LIGHT" | "DARK" | "SYSTEM";
   created_at: string;
 };
