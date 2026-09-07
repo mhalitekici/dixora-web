@@ -2,19 +2,32 @@ import type { PrintJobClaim } from "@dixora/shared-types";
 
 export const PRINTING_API = Object.freeze({
   claim: (printerCodes: readonly string[], branchId?: string) => {
-    const parameters = new URLSearchParams({
-      printer_codes: printerCodes.join(","),
-    });
+    const parameters = new URLSearchParams();
+    if (printerCodes.length > 0) {
+      parameters.set("printer_codes", printerCodes.join(","));
+    }
     if (branchId) {
       parameters.set("branch_id", branchId);
     }
-    return `/api/v1/printing/bridge/claim?${parameters.toString()}`;
+    const query = parameters.toString();
+    return query
+      ? `/api/v1/printing/bridge/claim?${query}`
+      : "/api/v1/printing/bridge/claim";
   },
   update: (jobId: string) => `/api/v1/printing/bridge/jobs/${jobId}`,
+  heartbeat: "/api/v1/printing/bridge/heartbeat",
+  enroll: "/api/v1/printing/bridge/enroll",
 });
 
 export interface BridgeUpdateRequest {
+  attempt_count: number;
   error: string | null;
+  manual_retry_required?: boolean;
+  result?: {
+    external_reference: string;
+    printed_at: string;
+    transport: "mock" | "windows" | "macos";
+  };
   status: "SENT" | "PRINTED" | "FAILED";
 }
 
@@ -95,6 +108,12 @@ export function parseClaimedJobs(payload: unknown): PrintJobClaim[] {
       readAliasedValue(jobPayload, "isReprint", "is_reprint") === true ||
       kind === "REPRINT";
 
+    const localPrinterName = readNullableString(
+      candidate,
+      "localPrinterName",
+      "local_printer_name",
+    );
+
     return {
       id: requireString(candidate, "id"),
       tenantId: requireString(candidate, "tenantId", "tenant_id"),
@@ -102,6 +121,7 @@ export function parseClaimedJobs(payload: unknown): PrintJobClaim[] {
       printerDeviceId:
         readNullableString(candidate, "printerCode", "printer_code") ??
         requireString(candidate, "printerDeviceId", "printer_device_id"),
+      ...(localPrinterName ? { localPrinterName } : {}),
       preparationStationId: readNullableString(
         candidate,
         "preparationStationId",
@@ -250,12 +270,14 @@ function normalizeDocument(
         );
       }
       const unitPrice = readOptionalString(line, "unitPrice", "unit_price");
+      const lineTotal = readOptionalString(line, "lineTotal", "line_total");
       const note = readOptionalString(line, "note");
 
       return {
         name: requireString(line, "name"),
         quantity: requireString(line, "quantity"),
         ...(unitPrice !== undefined ? { unitPrice } : {}),
+        ...(lineTotal !== undefined ? { lineTotal } : {}),
         ...(footerSafeModifiers !== undefined
           ? { modifiers: footerSafeModifiers }
           : {}),

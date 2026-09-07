@@ -20,8 +20,8 @@ under **Current limitations**.
   concerns; security-critical state remains persisted
 - **Media:** S3-compatible abstraction with MinIO locally
 - **Real time:** WebSocket-ready API; important state remains persisted
-- **Printing:** Persisted print jobs and a TypeScript local bridge with a mock
-  adapter
+- **Printing:** Persisted print jobs, station routing, and a Windows/macOS
+  local bridge that prints through the operating system spooler
 - **Structure:** One modular backend deployable and explicit business-domain
   boundaries
 
@@ -35,7 +35,7 @@ never from a tenant ID submitted by the browser.
 apps/
   api/            FastAPI modular monolith
   web/            Next.js application
-  print-bridge/   Local bridge protocol and mock printer
+  print-bridge/   Local Windows/macOS printer bridge and installer scripts
 packages/
   config/         Shared TypeScript configuration
   shared-types/   Wire and operational contracts
@@ -104,11 +104,11 @@ Make is not included with PowerShell by default.
    - OpenAPI: <http://localhost:8000/api/v1/docs> (off in production unless
      `DIXORA_EXPOSE_API_DOCS=true`)
    - MinIO console: <http://localhost:9001>
-   - Mock Print Bridge health: <http://localhost:9100/healthz>
 
-Compose starts PostgreSQL, Redis, MinIO, the API, web application, and mock Print
-Bridge with health dependencies. Startup applies Alembic migrations before
-Uvicorn serves traffic.
+Compose starts PostgreSQL, Redis, MinIO, the API and web application. Startup
+applies Alembic migrations before Uvicorn serves traffic. A physical Print Bridge
+runs on the Windows/macOS computer beside the printer; see
+[local printing](docs/printing.md).
 
 ## Development seed accounts
 
@@ -300,7 +300,7 @@ birleşik bir görünüm yoktur.
 - API token and session settings
 - Browser API URL and CORS
 - Development seed
-- Mock Print Bridge
+- Optional development mock Print Bridge
 
 Do not commit `.env`. Production secrets belong in a managed secret store.
 Production startup must reject placeholder JWT, database, MinIO, seed, and

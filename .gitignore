@@ -28,6 +28,16 @@ logs/
 data/
 tmp/
 *.pid
+release/
+apps/print-bridge/desktop-dist/
+apps/print-bridge/desktop-package/
+apps/print-bridge/desktop/assets/icon.ico
+apps/print-bridge/desktop/assets/icon.png
+apps/print-bridge/desktop/assets/icon.icns
+apps/web/public/downloads/Dixora-Print-Bridge-Setup.exe
+apps/web/public/downloads/Dixora-Print-Bridge.dmg
+apps/web/public/downloads/*.blockmap
+apps/web/public/downloads/latest.yml
 
 # Local configuration and secrets
 .env

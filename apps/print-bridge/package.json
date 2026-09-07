@@ -3,12 +3,21 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "main": "desktop-dist/main.mjs",
+  "bin": {
+    "dixora-print-bridge": "dist/index.js"
+  },
   "engines": {
     "node": ">=22"
   },
   "scripts": {
     "dev": "tsx watch src/index.ts",
     "build": "tsc -p tsconfig.build.json",
+    "build:desktop": "node scripts/create-desktop-icon.mjs && tsc -p tsconfig.desktop.json && node scripts/build-desktop.mjs && node scripts/prepare-desktop-package.mjs",
+    "desktop:dev": "npm run build && npm run build:desktop && electron .",
+    "package:portable": "node scripts/package.mjs",
+    "package:windows": "npm run build && npm run build:desktop && electron-builder --projectDir desktop-package --config electron-builder.yml --win nsis --x64 && node scripts/publish-windows-installer.mjs",
+    "package:macos": "node scripts/require-macos-build-host.mjs && npm run build && npm run build:desktop && electron-builder --projectDir desktop-package --config electron-builder.yml --mac dmg --universal && node scripts/publish-macos-installer.mjs",
     "start": "node dist/index.js",
     "lint": "tsc -p tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -20,6 +29,8 @@
   },
   "devDependencies": {
     "@types/node": "^24.0.0",
+    "electron": "^44.2.0",
+    "electron-builder": "^26.15.3",
     "tsx": "^4.20.0",
     "typescript": "^5.9.2"
   }

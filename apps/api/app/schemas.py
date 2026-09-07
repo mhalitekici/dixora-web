@@ -1509,6 +1509,8 @@ class PrintJobOut(ORMModel):
     claimed_at: datetime | None
     sent_at: datetime | None
     printed_at: datetime | None
+    print_result: dict[str, object] | None
+    manual_retry_required: bool
     created_at: datetime
 
 
@@ -1516,6 +1518,7 @@ class PrintJobClaimOut(PrintJobOut):
     """Bridge-facing job payload with the configured, non-database printer code."""
 
     printer_code: str
+    local_printer_name: str | None = None
 
 
 class PrintBridgeCreate(BaseModel):
@@ -1532,9 +1535,93 @@ class PrintBridgeCreated(BaseModel):
     warning: str = "Store this token securely; it will not be shown again."
 
 
+class PrintBridgePrinterMappingOut(ORMModel):
+    id: UUID
+    tenant_id: UUID
+    branch_id: UUID
+    bridge_id: UUID
+    printer_device_id: UUID
+    local_printer_name: str
+    created_at: datetime
+    updated_at: datetime
+
+
+class PrintBridgePrinterMappingUpdate(BaseModel):
+    local_printer_name: str = Field(min_length=1, max_length=255)
+
+
+class PrintBridgeOut(ORMModel):
+    """What the business's own admin panel sees about one enrolled bridge.
+
+    `is_online` is derived from `last_seen_at` at read time, never stored —
+    a bridge that stops sending heartbeats must show as offline immediately,
+    not whenever something next happens to write its row.
+    """
+
+    id: UUID
+    tenant_id: UUID
+    branch_id: UUID
+    name: str
+    is_active: bool
+    platform: str | None
+    version: str | None
+    printer_inventory: list[str]
+    last_seen_at: datetime | None
+    is_online: bool
+    created_at: datetime
+    printer_mappings: list[PrintBridgePrinterMappingOut] = Field(default_factory=list)
+
+
+class PrintBridgeEnrollmentRequest(BaseModel):
+    branch_id: UUID | None = None
+    # How long the code stays redeemable. Kept short by default and capped
+    # server-side — a code lost or read by the wrong person should not stay
+    # valid for long.
+    ttl_minutes: int = Field(default=10, ge=1, le=60)
+
+
+class PrintBridgeEnrollmentOut(BaseModel):
+    code: str
+    expires_at: datetime
+
+
+class PrintBridgeEnrollRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=20)
+    name: str = Field(min_length=1, max_length=120)
+    platform: str | None = Field(default=None, max_length=20)
+    version: str | None = Field(default=None, max_length=40)
+
+
 class BridgeStatusUpdate(BaseModel):
     status: PrintJobStatus
     error: str | None = Field(default=None, max_length=2000)
+    attempt_count: int | None = Field(default=None, ge=1)
+    result: dict[str, object] | None = None
+    manual_retry_required: bool = False
+
+
+class BridgeHeartbeat(BaseModel):
+    platform: str | None = Field(default=None, max_length=20)
+    version: str | None = Field(default=None, max_length=40)
+    printers: list[str] = Field(default_factory=list, max_length=200)
+
+
+class BridgeHeartbeatOut(BaseModel):
+    bridge_id: UUID
+    server_time: datetime
+
+
+class PlatformPrintBridgeSummary(BaseModel):
+    """Platform-wide rollup for the Super Admin health screen.
+
+    Print Bridge is not a Hetzner-hosted service any more — it is one local
+    agent per business branch — so there is nothing central to health-check.
+    This aggregates every tenant's bridges instead of probing one process.
+    """
+
+    total_bridges: int
+    online_bridges: int
+    offline_bridges: int
 
 
 class PrinterDeviceCreate(BaseModel):

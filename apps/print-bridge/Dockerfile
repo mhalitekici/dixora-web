@@ -35,5 +35,4 @@ COPY --from=build /workspace/packages/config/dist ./packages/config/dist
 COPY --from=build /workspace/packages/shared-types/dist ./packages/shared-types/dist
 
 USER node
-EXPOSE 9100
 CMD ["node", "apps/print-bridge/dist/index.js"]

@@ -413,7 +413,8 @@ the database.
 
 - **Iyzico / card collection.** `DIXORA_PAYMENT_PROVIDER=none`. Subscriptions
   are still invoiced by `app.cli billing-run`; only collection is off.
-- **Print bridge.** The mock bridge prints nothing and is absent from the
-  production stack. Real printers connect a bridge on the venue's LAN later.
+- **Print bridge.** The central production stack does not run a print bridge.
+  Each venue runs its enrolled Windows/macOS bridge beside the physical printer;
+  it connects outward to the API and is mapped from the branch management UI.
 - **Offsite backups, monitoring stack, CDN, PgBouncer.** Second phase; the
   notes above say where each one goes when it arrives.

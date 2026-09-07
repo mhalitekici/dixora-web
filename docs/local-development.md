@@ -42,7 +42,6 @@ machine. The checked-in values are not production credentials.
 | Redis         | `localhost:6379`                    | Ephemeral coordination  |
 | MinIO         | <http://localhost:9000>             | S3-compatible API       |
 | MinIO console | <http://localhost:9001>             | Local object storage UI |
-| Print Bridge  | <http://localhost:9100/healthz>     | Mock bridge liveness    |
 
 ## Test the QR menu on a phone
 
@@ -128,7 +127,11 @@ npm run dev:web
 npm run dev:print-bridge
 ```
 
-For a host bridge, set `PRINT_BRIDGE_API_URL=http://localhost:8000`.
+For a host bridge, set `PRINT_BRIDGE_API_URL=http://localhost:8000`. On Windows
+or macOS use `PRINT_BRIDGE_TRANSPORT=auto`; it discovers printers locally and
+reports the inventory to the branch's management screen. The agent has no
+inbound port by default. See [local printing](printing.md) for enrollment,
+mapping and persistent service installation.
 
 ## Data reset
 
@@ -161,22 +164,17 @@ Check MinIO credentials match between the server and `minio-init`, then inspect:
 docker compose logs minio minio-init
 ```
 
-### Print Bridge is healthy but degraded
+### Print Bridge görünmüyor veya çevrimdışı
 
-`/healthz` proves the process is alive. `/readyz` reports whether API polling
-succeeds. Inspect bridge/API logs for credential, branch, payload, or network
-errors; process liveness alone does not mean printing is ready.
+Şube bilgisayarında agent'ın çalıştığını ve doğru API kök adresine bağlandığını
+kontrol edin. Yönetim ekranındaki son bağlantı zamanı agent'ın heartbeat'inden
+gelir; merkezden şube ağına istek atılmaz. Gerekirse bridge günlüklerini ve
+Windows spooler/CUPS kuyruğunu inceleyin.
 
-The idempotent development seed enrolls a branch-scoped mock bridge. The default
-local token is documented in `.env.example` as
-`PRINT_BRIDGE_TOKEN=pb_dev_dixora_lab_bridge_2026`; replace it when creating a fresh
-bridge enrollment. Production tokens are returned once, stored only as hashes by
-the API, and belong in a managed secret store.
-
-### Port conflict
-
-Change the host-side port in `.env`. Internal Compose ports and service URLs
-remain unchanged.
+Geliştirme mock'u ancak `docker compose --profile mock-print-bridge up` ile
+çalışır. Fiziksel bridge için tek kullanımlık bağlantı kodu kullanılır; token
+bir kez döner, sunucuda sadece özeti saklanır. Ayrıntılar için
+[printing.md](printing.md) belgesine bakın.
 
 ### Dependency audit findings
 

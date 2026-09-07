@@ -15,6 +15,7 @@ from app.dependencies import Identity, require_branch
 from app.errors import DomainError
 from app.models import (
     ApprovalRequest,
+    Branch,
     Cancellation,
     DiningTable,
     Discount,
@@ -25,6 +26,7 @@ from app.models import (
     Order,
     OrderItem,
     OrderItemModifier,
+    OrderNote,
     OrderOperation,
     Payment,
     PreparationStation,
@@ -37,6 +39,7 @@ from app.models import (
     StockMovement,
     TableSession,
     Tenant,
+    User,
 )
 from app.models.enums import (
     ApprovalStatus,
@@ -62,6 +65,97 @@ CENT = Decimal("0.01")
 
 def money(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+async def _build_kitchen_ticket_payload(
+    db: AsyncSession,
+    *,
+    order: Order,
+    station: PreparationStation | None,
+    items: list[OrderItem],
+    actor_user_id: UUID | None,
+    kind: PrintJobKind,
+) -> dict[str, object]:
+    """The full normalized receipt document for one station's preparation slip.
+
+    Shared by the initial acceptance and every later append so a garson's
+    manually-entered order, a QR order a cashier approves, and a mid-meal add-on
+    all produce the same physically-printed ticket shape — station name, order
+    number, table, waiter, item modifiers/notes, and any order-level note — not
+    the bare `{name, quantity, note}` list this used to send.
+    """
+    branch = await db.get(Branch, order.branch_id)
+    assert branch is not None
+
+    waiter_name: str | None = None
+    lookup_user_id = actor_user_id or order.created_by_user_id
+    if lookup_user_id is not None:
+        waiter_name = (
+            await db.execute(
+                select(User.display_name).where(User.id == lookup_user_id)
+            )
+        ).scalar_one_or_none()
+
+    order_note = (
+        await db.execute(
+            select(OrderNote.body)
+            .where(OrderNote.order_id == order.id)
+            .order_by(OrderNote.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+    # Fetched explicitly rather than through `item.modifiers`: some callers pass
+    # `OrderItem` rows created earlier in the same unit of work, and lazy-loading
+    # a relationship on those outside a query would fail (`MissingGreenlet`) —
+    # this also turns what would be N lazy loads into one query.
+    modifiers_by_item: dict[UUID, list[OrderItemModifier]] = defaultdict(list)
+    item_ids = [item.id for item in items]
+    if item_ids:
+        for modifier_row in (
+            await db.execute(
+                select(OrderItemModifier).where(
+                    OrderItemModifier.order_item_id.in_(item_ids)
+                )
+            )
+        ).scalars():
+            modifiers_by_item[modifier_row.order_item_id].append(modifier_row)
+
+    now = datetime.now(UTC)
+    document: dict[str, object] = {
+        "title": (station.name if station else "GENEL").upper(),
+        "branch_name": branch.name,
+        "station_name": station.name if station else "Genel",
+        "order_number": order_bill_reference(order.id),
+        "table_name": order.table_name,
+        "waiter_name": waiter_name,
+        "submitted_at": now.isoformat(),
+        "lines": [
+            {
+                "name": item.product_name_snapshot,
+                "quantity": str(item.quantity),
+                "modifiers": [
+                    (
+                        f"{modifier.quantity}x {modifier.name_snapshot}"
+                        if modifier.quantity > 1
+                        else modifier.name_snapshot
+                    )
+                    for modifier in modifiers_by_item.get(item.id, [])
+                ],
+                "note": item.note,
+            }
+            for item in items
+        ],
+    }
+    if order_note:
+        document["footer"] = [f"Sipariş notu: {order_note}"]
+
+    return {
+        "content_type": "application/vnd.dixora.receipt+json",
+        "copies": 1,
+        "is_reprint": kind == PrintJobKind.REPRINT,
+        "document": document,
+    }
 
 
 async def _station_printer_id(
@@ -692,6 +786,18 @@ async def append_order_items(
             branch_id=order.branch_id,
             station_id=station_id,
         )
+        station = await db.get(PreparationStation, station_id)
+        job_payload = await _build_kitchen_ticket_payload(
+            db,
+            order=order,
+            station=station,
+            items=station_items,
+            actor_user_id=actor_user_id,
+            kind=PrintJobKind.ORIGINAL,
+        )
+        job_payload["ticket_id"] = str(ticket.id)
+        job_payload["batch_number"] = ticket.batch_number
+        job_payload["new_items_only"] = True
         db.add(
             PrintJob(
                 tenant_id=tenant_id,
@@ -700,20 +806,7 @@ async def append_order_items(
                 printer_device_id=printer_device_id,
                 order_id=order.id,
                 kitchen_ticket_id=ticket.id,
-                payload={
-                    "order_id": str(order.id),
-                    "ticket_id": str(ticket.id),
-                    "batch_number": ticket.batch_number,
-                    "new_items_only": True,
-                    "items": [
-                        {
-                            "name": order_item.product_name_snapshot,
-                            "quantity": str(order_item.quantity),
-                            "note": order_item.note,
-                        }
-                        for order_item in station_items
-                    ],
-                },
+                payload=job_payload,
                 status=PrintJobStatus.PENDING,
                 kind=PrintJobKind.ORIGINAL,
                 idempotency_key=print_key,
@@ -936,6 +1029,16 @@ async def accept_order(
                 branch_id=order.branch_id,
                 station_id=station_id,
             )
+            station = await db.get(PreparationStation, station_id)
+            job_payload = await _build_kitchen_ticket_payload(
+                db,
+                order=order,
+                station=station,
+                items=items,
+                actor_user_id=actor_user_id,
+                kind=PrintJobKind.ORIGINAL,
+            )
+            job_payload["ticket_id"] = str(ticket.id)
             db.add(
                 PrintJob(
                     tenant_id=order.tenant_id,
@@ -944,18 +1047,7 @@ async def accept_order(
                     printer_device_id=printer_device_id,
                     order_id=order.id,
                     kitchen_ticket_id=ticket.id,
-                    payload={
-                        "order_id": str(order.id),
-                        "ticket_id": str(ticket.id),
-                        "items": [
-                            {
-                                "name": item.product_name_snapshot,
-                                "quantity": str(item.quantity),
-                                "note": item.note,
-                            }
-                            for item in items
-                        ],
-                    },
+                    payload=job_payload,
                     status=PrintJobStatus.PENDING,
                     kind=PrintJobKind.ORIGINAL,
                     idempotency_key=print_key,

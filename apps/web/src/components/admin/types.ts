@@ -185,6 +185,10 @@ export type PrintJob = {
   kind: "ORIGINAL" | "COPY" | "REPRINT";
   attempt_count: number;
   last_error: string | null;
+  manual_retry_required: boolean;
+  sent_at: string | null;
+  printed_at: string | null;
+  print_result: Record<string, unknown> | null;
   created_at: string;
 };
 
@@ -333,6 +337,37 @@ export type PrinterDevice = {
   is_active: boolean;
   last_seen_at: string | null;
   settings: Record<string, unknown>;
+};
+
+export type PrintBridgePrinterMapping = {
+  id: string;
+  tenant_id: string;
+  branch_id: string;
+  bridge_id: string;
+  printer_device_id: string;
+  local_printer_name: string;
+  created_at: string;
+  updated_at: string;
+};
+
+export type PrintBridge = {
+  id: string;
+  tenant_id: string;
+  branch_id: string;
+  name: string;
+  is_active: boolean;
+  platform: string | null;
+  version: string | null;
+  printer_inventory: string[];
+  last_seen_at: string | null;
+  is_online: boolean;
+  created_at: string;
+  printer_mappings: PrintBridgePrinterMapping[];
+};
+
+export type PrintBridgeEnrollment = {
+  code: string;
+  expires_at: string;
 };
 
 export type RoleCreateInput = {

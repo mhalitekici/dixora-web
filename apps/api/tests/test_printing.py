@@ -57,17 +57,18 @@ async def test_print_job_creation_and_bridge_state_are_idempotent_and_scoped(
     assert claimed.json()["id"] == first.json()["id"]
     assert claimed.json()["printer_code"] == "MOCK-KITCHEN"
     assert claimed.json()["claimed_by_bridge_id"]
+    attempt_count = claimed.json()["attempt_count"]
 
     printed = await api.client.patch(
         f"/api/v1/printing/bridge/jobs/{first.json()['id']}",
-        headers=bridge_headers,
-        json={"status": "PRINTED"},
+        headers={**bridge_headers, "Idempotency-Key": "print-job-key-0001:printed"},
+        json={"status": "PRINTED", "attempt_count": attempt_count},
     )
     assert printed.status_code == 200, printed.text
     replay = await api.client.patch(
         f"/api/v1/printing/bridge/jobs/{first.json()['id']}",
-        headers=bridge_headers,
-        json={"status": "PRINTED"},
+        headers={**bridge_headers, "Idempotency-Key": "print-job-key-0001:printed"},
+        json={"status": "PRINTED", "attempt_count": attempt_count},
     )
     assert replay.status_code == 200
     assert replay.json()["attempt_count"] == 1
@@ -101,7 +102,7 @@ async def test_bill_print_original_is_idempotent_and_reprint_is_distinct(
     assert first.json()["kind"] == "ORIGINAL"
     assert first.json()["printer_device_id"] is not None
     assert first.json()["payload"]["content_type"] == "application/vnd.dixora.receipt+json"
-    assert first.json()["payload"]["document"]["title"] == "MUSTERI BILGI FISI"
+    assert first.json()["payload"]["document"]["title"] == "MÜŞTERİ BİLGİ FİŞİ"
 
     order_after_first_print = await api.client.get(f"/api/v1/orders/{order['id']}", headers=headers)
     assert order_after_first_print.status_code == 200, order_after_first_print.text

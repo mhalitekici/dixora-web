@@ -21,6 +21,7 @@ from app.models import (
     ModifierGroup,
     PreparationStation,
     PrintBridgeClient,
+    PrintBridgePrinterMapping,
     PrinterDevice,
     Product,
     ProductModifierGroup,
@@ -363,13 +364,23 @@ async def seed_database(db: AsyncSession) -> None:
             "currency": "TRY",
         },
     )
-    await _one_or_create(
+    mock_printer = await _one_or_create(
         db,
         PrinterDevice,
         {"tenant_id": tenant.id, "branch_id": branch.id, "code": "MOCK-KITCHEN"},
         {
             "name": "Mock Kitchen Printer",
             "preparation_station_id": stations["KITCHEN"].id,
+            "transport": "MOCK",
+        },
+    )
+    mock_bar_printer = await _one_or_create(
+        db,
+        PrinterDevice,
+        {"tenant_id": tenant.id, "branch_id": branch.id, "code": "MOCK-BAR"},
+        {
+            "name": "Mock Bar Printer",
+            "preparation_station_id": stations["BAR"].id,
             "transport": "MOCK",
         },
     )
@@ -386,6 +397,22 @@ async def seed_database(db: AsyncSession) -> None:
         b"pb_dev_dixora_lab_bridge_2026"
     ).hexdigest()
     bridge_client.is_active = True
+    bridge_client.printer_inventory = ["MOCK-BAR", "MOCK-KITCHEN"]
+    for printer, local_printer_name in (
+        (mock_printer, "MOCK-KITCHEN"),
+        (mock_bar_printer, "MOCK-BAR"),
+    ):
+        await _one_or_create(
+            db,
+            PrintBridgePrinterMapping,
+            {"printer_device_id": printer.id},
+            {
+                "tenant_id": tenant.id,
+                "branch_id": branch.id,
+                "bridge_id": bridge_client.id,
+                "local_printer_name": local_printer_name,
+            },
+        )
 
     trial_plan = await _one_or_create(
         db,

@@ -1,216 +1,210 @@
-# Printing and Print Bridge protocol
+# Yerel Yazdırma Mimarisi
 
-Printing is a persisted job workflow. Browser print dialogs are useful for
-manual documents but are not the unattended kitchen/bar transport.
+Dixora fiziksel yazıcıya merkezi API veya Docker konteyneri üzerinden erişmez.
+Her şubede, yazıcının kurulu olduğu Windows ya da macOS bilgisayarında bir
+**Dixora Print Bridge** çalışır. Bridge yalnızca dışarıya doğru Dixora API'ye
+HTTPS istekleri açar; internetten şube bilgisayarına açılmış bir yazdırma portu
+gerekmez.
 
-## Components
+Bu sınır, buluttaki bir hata veya başka bir şubenin hesabının yerel spooler'a
+erişmesini engeller. Super Admin ekranı da bilgisayara sağlık isteği atmaz;
+bridge'in API'ye gönderdiği son heartbeat kaydını gösterir.
 
-- API printing module creates and owns jobs.
-- PostgreSQL stores job state and attempts.
-- A branch-scoped local Print Bridge claims jobs.
-- A printer adapter translates normalized documents to a local transport.
-- The current adapter is mock-only.
+## Siparişten istasyona
 
-## Job states
+QR menü onayı, garson siparişi ve kasiyer siparişi aynı `accept_order` akışını
+kullanır. Sipariş satırları ürünün hazırlık istasyonuna göre ayrılır ve her
+istasyon için kalıcı bir baskı işi oluşturulur. Örneğin burger `Mutfak`, limonata
+`Bar` cihazına gider. Fiş yeniden basımları da aynı job kaydı ve denetim izi
+üzerinden ilerler.
 
-| State       | Meaning                                            |
-| ----------- | -------------------------------------------------- |
-| `PENDING`   | Eligible to be claimed                             |
-| `CLAIMED`   | Leased to one bridge/attempt                       |
-| `SENT`      | Accepted by the local adapter/spool boundary       |
-| `PRINTED`   | Adapter confirmed the configured success condition |
-| `FAILED`    | Attempt failed with a sanitized error              |
-| `CANCELLED` | Job is no longer eligible                          |
+Kasa/garson hesap fişleri ve sipariş hareketi detayındaki fiş önizlemesi bu
+hazırlık fişlerinden ayrıdır. İşletme adı, masa, garson, tarih, içerik ve toplam
+tutarı gösteren müşteri bilgi fişi, ilgili ekranın açık yazıcısına normal iş
+akışıyla gönderilir.
 
-The API owns valid transitions. A stale claim lease may be retried according to
-policy. `PRINTED` is terminal except for a new explicitly marked reprint job.
+## Güvenli teslimat
 
-## Job record
+1. Bridge yalnız kendi şubesine ve sunucuda kendisine eşlenmiş cihazlara ait
+   işleri claim eder. Yerel OS yazıcı adı, claim yanıtında sunucudan gelir.
+2. Sunucu bir lease ve deneme numarası verir. `SENT`, `PRINTED` ve `FAILED`
+   geçişleri bridge kimliği, deneme numarası ve idempotency key ile doğrulanır.
+3. Bridge, OS spooler'a vermeden önce diske `DISPATCHING` kaydı yazar; başarılı
+   spool sonucunu API'ye bildirmeden önce `PRINTED` sonucunu yine diske yazar.
+4. Ağ, spool sonrası koparsa bridge yeniden açıldığında yalnızca API
+   acknowledgement'ını tekrarlar. Aynı belge fiziksel yazıcıya ikinci kez
+   gönderilmez.
+5. Spool sonucu belirsiz kaldıysa iş `FAILED` ve `manual_retry_required` olur.
+   Otomatik tekrar baskı yapılmaz. Şube yöneticisi, Yazıcı yönetimi ekranındaki
+   **Operatör olarak yeniden dene** eylemiyle yeni bir deneme başlatır.
 
-Required persisted fields include:
+Bu düzen, fiziksel baskıda mutlak exactly-once garantisi verilemeyen noktayı
+açıkça ele alır: OS spooler işi kabul ettikten sonra yazıcının gerçekten kağıdı
+kestiğini tüm sürücülerde programatik olarak doğrulamak mümkün değildir. Bridge
+bu durumda sessizce tekrar basmak yerine operatör kararını ister.
 
-- `id`, `tenant_id`, `branch_id`
-- `preparation_station_id`, `printer_device_id`
-- `order_id`, `kitchen_ticket_id`
-- Normalized versioned payload
-- `status`, `attempt_count`, `last_error`
-- `created_at`, `claimed_at`, `sent_at`, `printed_at`
-- Idempotency key, job kind, lease owner, and lease expiry
+## Windows masaüstü uygulaması
 
-Original, copy, and reprint semantics are explicit. A reprint is a new job
-linked to the original, displays `COPY` or `REPRINT`, records actor/reason, and
-creates an audit entry.
+Windows kullanıcısı için Print Bridge bir PowerShell dosyası ya da terminal
+komutu değildir. **Dixora Print Bridge Setup** adıyla kurulan masaüstü/tray
+uygulamasıdır. Setup, Node.js çalışma zamanını içerir; şube bilgisayarına Node
+kurulması gerekmez.
 
-## Enrollment and authorization
+Yayın paketi geliştirme veya CI makinesinde şu komutla üretilir:
 
-A bridge credential is issued for one tenant, branch, bridge ID, and allowed
-printer set. The API derives this scope from the credential; request fields
-cannot broaden it. Credentials are stored outside source control, rotated, and
-never logged.
-
-Production enrollment, mutual TLS, device attestation, and remote key rotation
-are not implemented by the mock.
-
-## Current bridge protocol
-
-The FastAPI module exposes:
-
-```text
-POST  /api/v1/printing/bridge/claim
-PATCH /api/v1/printing/bridge/jobs/{jobId}
+```bash
+npm run package:print-bridge:windows
 ```
 
-It authenticates `X-Print-Bridge-Token`. Tokens are stored only as hashes and
-resolve to one persisted tenant/branch bridge record; submitted query fields
-cannot broaden that scope. Claiming uses row locks and `skip_locked`, records
-the claiming bridge, and updates only accept jobs claimed by that same bridge.
-The TypeScript bridge consumes this protocol. A one-time raw token is returned
-when a manager enrolls a bridge.
+Bu komut şunları yapar:
 
-Every claim includes a required comma-separated `printer_codes` query value.
-The API normalizes the codes, joins the job to an active `PrinterDevice` in the
-credential's tenant and branch, and returns that persisted `printer_code` to
-the adapter. A bridge therefore cannot claim a job routed to a printer it did
-not declare, even when multiple bridges serve the same branch.
+1. `release/dixora-print-bridge-desktop/Dixora-Print-Bridge-Setup.exe`
+   dosyasını üretir.
+2. Dosyayı `apps/web/public/downloads` altına kopyalar.
+3. Web imajı yeniden üretildiğinde Yazıcı Yönetimi ekranındaki **Windows
+   uygulamasını indir** düğmesi gerçek `.exe` dosyasını indirir.
 
-For the checked-in development seed only, `X-Print-Bridge-Key` plus a branch ID
-remains as an explicit compatibility path. Production settings reject seed mode,
-so this fallback cannot become production authority accidentally.
+Şube kullanıcısının akışı:
 
-The current claim has no lease expiry, so a bridge crash after `CLAIMED` can
-leave a job stuck until an operator intervenes. This is another release blocker,
-not an acceptable retry policy.
+1. Yazıcı Yönetimi ekranından **Windows uygulamasını indir** düğmesine basın.
+2. `Dixora-Print-Bridge-Setup.exe` dosyasını açıp kurulumu tamamlayın.
+3. Açılan **Dixora Print Bridge** penceresinde API adresini, bilgisayar adını
+   ve paneldeki **Yeni Bridge bağla** eylemiyle üretilen tek kullanımlık kodu
+   girin.
+4. Uygulama Windows yazıcılarını listeler ve arka planda çalışmaya başlar.
+   Pencere kapatıldığında sistem tepsisinde kalır; sonraki Windows oturumunda
+   otomatik başlar.
+5. Web panelinde heartbeat geldikten sonra `MUTFAK` ve `BAR` cihazlarını
+   görünen yerel yazıcı adlarıyla eşleyin, ardından **Test çıktısı al** ile
+   gerçek fişi doğrulayın.
 
-Before physical printing or any untrusted network deployment, add lease expiry,
-attempt-bound acknowledgement idempotency, credential rotation, and the
-cross-tenant/replay tests described below.
+Yerel Docker testi için API adresi `http://localhost:8000` olabilir. Canlı
+kullanımda uygulama HTTPS API adresi ister. Setup dosyası kod imzalı değilse
+Windows SmartScreen yayıncı uyarısı gösterebilir; canlı dağıtımda bir Windows
+code-signing sertifikasıyla imzalanmalıdır.
 
-## Future hardened batch-claim target
+Windows taşıması `Get-Printer` ile yüklü yazıcıları keşfeder ve `Out-Printer`
+ile Windows spooler'a UTF-8 metin işi verir. USB, ağ ve sürücüyle kurulmuş
+yazıcılar, Windows'ta görünüyorsa desteklenir.
 
-```http
-POST /api/v1/printing/jobs/claim
-Authorization: Bearer <bridge-key>
-X-Dixora-Bridge-Id: local-mock-bridge
-Content-Type: application/json
+## macOS masaüstü uygulaması
+
+macOS kullanıcısı için Print Bridge bir shell betiği değildir. **Dixora Print
+Bridge** uygulaması, Intel Mac ve Apple Silicon bilgisayarlarda çalışan evrensel
+bir `.dmg` paketi olarak dağıtılır. Node.js kurulması gerekmez.
+
+DMG yalnız macOS üzerinde üretilebilir. Geliştirme Mac'inde veya GitHub
+Actions'taki **Package macOS Print Bridge** işinde şu komutu çalıştırın:
+
+```bash
+npm run package:print-bridge:macos
 ```
 
-```json
-{
-  "bridge_id": "local-mock-bridge",
-  "branch_id": "00000000-0000-0000-0000-000000000001",
-  "printer_ids": ["MOCK-KITCHEN", "MOCK-BAR"],
-  "max_jobs": 5
-}
+Bu komut:
+
+1. `release/dixora-print-bridge-desktop/Dixora-Print-Bridge.dmg` dosyasını
+   üretir.
+2. Dosyayı `apps/web/public/downloads` altına kopyalar.
+3. Web imajı yeniden üretildiğinde Yazıcı Yönetimi ekranındaki **macOS
+   uygulamasını indir** düğmesi gerçek `.dmg` dosyasını indirir.
+
+Şube kullanıcısının akışı:
+
+1. Yazıcı Yönetimi ekranından **macOS uygulamasını indir** düğmesine basın.
+2. `Dixora-Print-Bridge.dmg` dosyasını açın ve Dixora Print Bridge uygulamasını
+   Applications klasörüne taşıyın.
+3. Uygulamayı açıp API adresini, bilgisayar adını ve **Yeni Bridge bağla** ile
+   oluşturulan tek kullanımlık kodu girin.
+4. Uygulama CUPS yazıcılarını listeler, arka planda çalışır ve sonraki macOS
+   oturumunda otomatik başlar.
+5. Web panelinde heartbeat geldikten sonra cihazları görünen yerel yazıcılarla
+   eşleyip test çıktısı alın.
+
+Yerel Docker testi için API adresi `http://localhost:8000` olabilir. Canlıda
+HTTPS API adresi gerekir. Canlı dağıtım öncesi paket bir Apple Developer ID
+sertifikasıyla imzalanmalı ve Apple'a notarize edilmelidir; aksi halde Gatekeeper
+uyarısı görünür.
+
+### Taşınabilir manuel kurulum
+
+Node.js 22+ kullanan teknik destek senaryoları için taşınabilir paket korunur:
+
+```bash
+npm run package:print-bridge
 ```
 
-The API ignores `branch_id` as authority and verifies every requested printer
-against the credential. Claiming is atomic, for example with row locking and
-skip-locked semantics. The response is an array or `{ "items": [...] }`.
+Bu komut `release/dixora-print-bridge` klasörünü üretir. macOS'ta paket
+kökünden aşağıdaki betik çalıştırılabilir:
 
-Normalized job example:
-
-```json
-{
-  "id": "f8a5e6c8-576a-46d2-a651-eec8f23795f1",
-  "tenant_id": "77825697-a74c-4b4b-8ac1-6b4acb33c5a2",
-  "branch_id": "00000000-0000-0000-0000-000000000001",
-  "printer_device_id": "b5a16064-dfbb-4b9c-94f8-4c17acb48ee7",
-  "printer_code": "MOCK-KITCHEN",
-  "preparation_station_id": null,
-  "order_id": "50328733-2df3-48a1-a879-5d1b203f5cfa",
-  "kitchen_ticket_id": null,
-  "attempt_count": 1,
-  "claimed_at": "2026-07-30T20:00:00Z",
-  "kind": "ORIGINAL",
-  "payload": {
-    "content_type": "application/vnd.dixora.receipt+json",
-    "copies": 1,
-    "is_reprint": false,
-    "document": {
-      "title": "KITCHEN",
-      "branch_name": "Dixora Lab Main Branch",
-      "station_name": "Kitchen",
-      "order_number": "A-100",
-      "table_name": "R4",
-      "waiter_name": "Servis Personeli",
-      "submitted_at": "2026-07-30T20:00:00Z",
-      "lines": [
-        {
-          "name": "Classic Burger",
-          "quantity": "1",
-          "modifiers": ["Extra cheese"],
-          "note": "No onion"
-        }
-      ]
-    }
-  }
-}
+```bash
+chmod +x scripts/install-macos.sh
+./scripts/install-macos.sh \
+  --api-url "https://api.ornek-isletme.com" \
+  --code "XXXX-XXXX" \
+  --name "Kasa Mac mini"
 ```
 
-The bridge validates version/content type, copy limits, required identifiers,
-and document structure before printing.
+Bu yol yönetim panelinden indirilmez. Kurulum
+`~/Library/Application Support/DixoraPrintBridge` dizinine kopyalar ve
+`~/Library/LaunchAgents/com.dixora.print-bridge.plist` ile kullanıcıya ait bir
+LaunchAgent oluşturur. macOS taşıması `lpstat` ile yazıcıları keşfeder ve `lp`
+ile CUPS spooler'a gönderir.
 
-## Hardened acknowledgements
+## Yönetim ekranı
 
-```text
-POST /api/v1/printing/jobs/{jobId}/sent
-POST /api/v1/printing/jobs/{jobId}/printed
-POST /api/v1/printing/jobs/{jobId}/failed
+İşletme yöneticisi şube bazında **Yazıcı yönetimi** ekranından şunları yapar:
+
+- Windows veya macOS masaüstü uygulamasını indirir; kullanıcıya terminal komutu göstermez.
+- Bridge bağlantı kodu oluşturur veya aktif bridge'i iptal eder.
+- Bridge heartbeat'inden gelen Windows/macOS yazıcı envanterini görür.
+- Her Dixora cihazını bir hazırlık istasyonuna ve tek bir `bridge + yerel OS
+yazıcısı` eşlemesine bağlar.
+- Eşleme yoksa test baskısını çalıştıramaz; yanlış şubeye veya tanımsız bir
+  yazıcıya job düşmez.
+- Son baskı işlerini, deneme sayısını ve belirsiz baskı uyarılarını görür.
+
+Bridge, 20 saniyede bir heartbeat gönderir. Son bağlantı zamanı yalnızca
+gözlem verisidir; merkezden şube ağına health probe yapılmaz.
+
+## Fiş biçimi
+
+Fiziksel taşıma 80 mm termal fiş için 42 sütunluk UTF-8 düz metin üretir.
+Başlıkta `toLocaleUpperCase("tr")` kullanılır; böylece `İ`, `ı`, `Ş`, `Ğ`, `Ç`
+gibi Türkçe karakterler bozulmaz. Uzun ürün isimleri, notlar ve modifiyerler
+kesilmek yerine satıra sarılır.
+
+Windows'ta UTF-8 içerik geçici bir dosyadan `Out-Printer`'a okunur. macOS'ta
+aynı UTF-8 dosya `lp` ile gönderilir. Sürücü veya yazıcı UTF-8 desteklemiyorsa
+bu fiziksel sürücü kurulumunun sorunudur; Bridge metni kod sayfasına sessizce
+dönüştürmez.
+
+Taşıma OS spooler işinin kabulünü başarı sayar. Raw ESC/POS, programatik kesme,
+çekmece açma ve donanım seviyesinde kağıt/bıçak durum geri bildirimi bu sürümde
+desteklenmez.
+
+## Geliştirme mock'u
+
+Docker'daki mock bridge fiziksel yazdırma için kullanılmaz. Protokol testinde
+gerekirse açıkça etkinleştirilir:
+
+```bash
+docker compose --profile mock-print-bridge up --build
 ```
 
-Each transition includes `bridge_id`, `attempt_count`, and a stable
-`Idempotency-Key`. Printed payload:
+Mock taşıması yalnız geliştirme ortamında çalışır. Normal `docker compose up`
+komutu mock bridge'i başlatmaz. Elle çalıştırılan bir mock için `NODE_ENV`
+değerini açıkça `development` veya `test` yapın.
 
-```json
-{
-  "bridge_id": "local-mock-bridge",
-  "attempt_count": 1,
-  "result": {
-    "external_reference": "local-mock-bridge:MOCK-KITCHEN:job-id:1",
-    "printed_at": "2026-07-30T20:00:02Z",
-    "transport": "mock"
-  }
-}
+## Doğrulama
+
+```bash
+npm run typecheck --workspace @dixora/print-bridge
+npm test --workspace @dixora/print-bridge
+python -m pytest apps/api/tests/test_printing.py apps/api/tests/test_print_bridge_hardening.py -q
+docker compose config --quiet
 ```
 
-The API verifies current lease owner and attempt. Repeated acknowledgements with
-the same key return the original outcome.
-
-## Delivery safety
-
-Physical printing creates an unavoidable ambiguity: the printer can succeed
-while the network acknowledgement fails. Production safety requires a durable
-local journal recording job, document hash, send result, and acknowledgement
-state. On restart, the bridge retries acknowledgements before deciding to print
-again.
-
-The current mock bridge only keeps this cache in memory. Therefore it proves the
-protocol shape and ordinary idempotency, not crash-safe exactly-once physical
-printing.
-
-## Health and observability
-
-- `/healthz`: process liveness
-- `/readyz`: successful API polling readiness
-- Structured events for claims, sends, prints, failures, and acknowledgements
-- Metrics for queue age, attempts, failures, offline duration, and printer state
-- Receipt contents, credentials, and sensitive customer notes excluded from
-  ordinary logs
-
-## Adapter roadmap
-
-An adapter interface must define device discovery, capabilities, encoding,
-paper width, cut/kick commands, status feedback, timeout, and success semantics.
-Candidate implementations require hardware-specific acceptance tests. No
-ESC/POS, Windows spooler, USB, or network printer support is claimed today.
-
-## Required tests
-
-- Two bridges cannot claim the same attempt
-- Credential cannot claim another branch/printer
-- Transition idempotency and stale-attempt rejection
-- Lease expiry and retry
-- Reprint marking and audit
-- Unsupported/malformed payload rejection
-- Crash between local success and remote acknowledgement
-- API/TypeScript contract compatibility
+Donanımlı kabul testi için Windows'ta bir test siparişini hedef spooler
+kuyruğunda, macOS'ta ise CUPS kuyruğunda kontrol edin. Ardından Yazıcı yönetimi
+ekranında işin `Yazdırıldı` olduğunu ve doğru istasyon cihazına düştüğünü
+doğrulayın.

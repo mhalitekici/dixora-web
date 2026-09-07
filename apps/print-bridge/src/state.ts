@@ -4,6 +4,7 @@ export interface BridgeHealthSnapshot {
   bridgeId: string;
   failedJobs: number;
   lastError: string | null;
+  lastPrintedAt: string | null;
   lastSuccessfulPollAt: string | null;
   processedJobs: number;
   startedAt: string;
@@ -13,6 +14,7 @@ export interface BridgeHealthSnapshot {
 export class BridgeState {
   private failedJobs = 0;
   private lastError: string | null = null;
+  private lastPrintedAt: string | null = null;
   private lastSuccessfulPollAt: string | null = null;
   private processedJobs = 0;
   private readonly startedAt = new Date().toISOString();
@@ -35,6 +37,10 @@ export class BridgeState {
     this.processedJobs += 1;
   }
 
+  public recordLastPrintedAt(): void {
+    this.lastPrintedAt = new Date().toISOString();
+  }
+
   public recordFailedJob(message: string): void {
     this.failedJobs += 1;
     this.lastError = message;
@@ -49,6 +55,7 @@ export class BridgeState {
       bridgeId: this.bridgeId,
       failedJobs: this.failedJobs,
       lastError: this.lastError,
+      lastPrintedAt: this.lastPrintedAt,
       lastSuccessfulPollAt: this.lastSuccessfulPollAt,
       processedJobs: this.processedJobs,
       startedAt: this.startedAt,

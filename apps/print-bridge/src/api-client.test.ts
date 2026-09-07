@@ -3,7 +3,7 @@ import { createServer } from "node:http";
 import test from "node:test";
 
 import { PrintBridgeApiClient } from "./api-client.js";
-import type { BridgeConfig } from "./config.js";
+import { testConfig } from "./test-helpers.js";
 
 test("uses the current FastAPI bridge contract end to end", async (context) => {
   let claimCount = 0;
@@ -79,20 +79,14 @@ test("uses the current FastAPI bridge contract end to end", async (context) => {
   const address = server.address();
   assert.ok(address && typeof address === "object");
 
-  const config: BridgeConfig = {
+  const config = testConfig({
     apiKey: "",
     apiToken: "bridge-secret",
     apiUrl: `http://127.0.0.1:${address.port}`,
-    allowInsecureMock: false,
     bridgeId: "bridge-1",
-    healthPort: 9100,
     maxClaim: 2,
-    mockDelayMs: 0,
-    mockFailureRate: 0,
-    pollIntervalMs: 2_000,
     printerIds: ["MOCK-KITCHEN"],
-    requestTimeoutMs: 5_000,
-  };
+  });
   const client = new PrintBridgeApiClient(config);
   const [job] = await client.claimJobs();
   assert.ok(job);
@@ -119,4 +113,34 @@ test("uses the current FastAPI bridge contract end to end", async (context) => {
   );
   assert.match(requests[2]?.idempotencyKey ?? "", /:sent$/);
   assert.match(requests[3]?.idempotencyKey ?? "", /:printed$/);
+});
+
+test("lets a scoped bridge claim from its server-side printer mappings", async (context) => {
+  let requestedPath: string | undefined;
+  const server = createServer((request, response) => {
+    requestedPath = request.url;
+    response.setHeader("Content-Type", "application/json");
+    response.end("null");
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+  );
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+
+  const client = new PrintBridgeApiClient(
+    testConfig({
+      apiKey: "",
+      apiToken: "bridge-secret",
+      apiUrl: `http://127.0.0.1:${address.port}`,
+      printerIds: [],
+    }),
+  );
+  await client.claimJobs();
+
+  assert.equal(requestedPath, "/api/v1/printing/bridge/claim");
 });

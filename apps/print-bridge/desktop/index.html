@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="tr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Dixora Print Bridge</title>
+    <link rel="stylesheet" href="renderer.css" />
+  </head>
+  <body>
+    <main class="app-shell">
+      <header class="app-header">
+        <div class="brand-mark" aria-hidden="true">D</div>
+        <div>
+          <p class="eyebrow">DIXORA</p>
+          <h1>Print Bridge</h1>
+        </div>
+        <span id="connection-badge" class="status-badge status-muted">Bağlanmadı</span>
+      </header>
+
+      <section id="connected-panel" class="panel hidden" aria-live="polite">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">Yerel agent</p>
+            <h2 id="computer-name">Bilgisayar</h2>
+          </div>
+          <button id="change-connection" class="text-button" type="button">Bağlantıyı değiştir</button>
+        </div>
+        <dl class="status-list">
+          <div><dt>Cloud</dt><dd id="cloud-status">Bağlanıyor</dd></div>
+          <div><dt>API</dt><dd id="api-url">-</dd></div>
+          <div><dt>Son baskı</dt><dd id="last-print">Henüz baskı yok</dd></div>
+        </dl>
+        <div class="printers-heading">
+          <h2>Yazıcılar</h2>
+          <button id="refresh-printers" class="icon-button" type="button" aria-label="Yazıcıları yenile" title="Yazıcıları yenile">↻</button>
+        </div>
+        <ul id="printer-list" class="printer-list" aria-label="İşletim sistemi yazıcıları"></ul>
+        <p id="runtime-error" class="error-text hidden" role="alert"></p>
+      </section>
+
+      <section id="setup-panel" class="panel" aria-labelledby="setup-title">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">İlk kurulum</p>
+            <h2 id="setup-title">Şubeyi bağla</h2>
+          </div>
+        </div>
+        <form id="enrollment-form" class="setup-form">
+          <label for="api-url">Dixora API adresi</label>
+          <input id="api-url-input" name="api-url" type="url" inputmode="url" autocomplete="url" placeholder="https://api.dixora.com" required />
+          <label for="connection-code">Bağlantı kodu</label>
+          <input id="connection-code" name="connection-code" type="text" autocomplete="one-time-code" placeholder="A7K9-4P2M" maxlength="9" required />
+          <label for="computer-name-input">Bu bilgisayarın adı</label>
+          <input id="computer-name-input" name="computer-name" type="text" maxlength="120" required />
+          <p id="setup-error" class="error-text hidden" role="alert"></p>
+          <button id="enroll-button" class="primary-button" type="submit">Bridge'i bağla</button>
+        </form>
+      </section>
+
+      <footer class="app-footer">
+        <span id="footer-message">Bağlantı kodunu Dixora Yazıcı Yönetimi ekranından alın.</span>
+        <button id="hide-window" class="text-button" type="button">Pencereyi gizle</button>
+      </footer>
+    </main>
+    <script src="renderer.js"></script>
+  </body>
+</html>
