@@ -25,7 +25,9 @@ export function startHealthServer(port: number, state: BridgeState): Server {
     response.end(JSON.stringify({ error: "not_found" }));
   });
 
-  server.listen(port, "0.0.0.0");
+  // This is a local diagnostics endpoint for the desktop agent, not a cloud
+  // callback target. Binding loopback avoids opening an inbound LAN port.
+  server.listen(port, "127.0.0.1");
   return server;
 }
 

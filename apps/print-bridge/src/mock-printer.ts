@@ -2,10 +2,9 @@ import type { PrintJobClaim, PrintResult } from "@dixora/shared-types";
 
 import type { BridgeConfig } from "./config.js";
 import { log } from "./logger.js";
+import type { PrinterTransport } from "./printer-transport.js";
 
-export interface PrinterTransport {
-  print(job: PrintJobClaim): Promise<PrintResult>;
-}
+export type { PrinterTransport } from "./printer-transport.js";
 
 export interface MockPrinterOptions {
   delay?: (milliseconds: number) => Promise<void>;

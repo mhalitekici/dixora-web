@@ -1,0 +1,33 @@
+name: Package macOS Print Bridge
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Universal macOS DMG
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Package Print Bridge
+        run: npm run package:print-bridge:macos
+
+      - name: Upload DMG
+        uses: actions/upload-artifact@v4
+        with:
+          name: Dixora-Print-Bridge-macOS
+          path: apps/web/public/downloads/Dixora-Print-Bridge.dmg
+          if-no-files-found: error
+          retention-days: 14

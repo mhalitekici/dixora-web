@@ -100,6 +100,7 @@ export interface ReceiptLine {
   name: string;
   quantity: DecimalString;
   unitPrice?: DecimalString;
+  lineTotal?: DecimalString;
   modifiers?: readonly string[];
   note?: string;
 }
@@ -120,6 +121,9 @@ export interface ReceiptDocument {
 export interface PrintJobClaim extends BranchOwned {
   id: UUID;
   printerDeviceId: UUID | string;
+  /** Exact local OS printer name selected for this bridge, when the admin
+   * mapped one. Falls back to the Dixora printer code in the local agent. */
+  localPrinterName?: string;
   preparationStationId: UUID | null;
   orderId: UUID;
   kitchenTicketId: UUID | null;
@@ -131,10 +135,12 @@ export interface PrintJobClaim extends BranchOwned {
   claimedAt: IsoDateTime;
 }
 
+export type PrintTransportKind = "mock" | "windows" | "macos";
+
 export interface PrintResult {
   externalReference: string;
   printedAt: IsoDateTime;
-  transport: "mock";
+  transport: PrintTransportKind;
 }
 
 export interface RealtimeEnvelope<TPayload = unknown> {

@@ -150,7 +150,7 @@ export function SystemHealth() {
       <PageHeader
         eyebrow="Dixora Platform"
         title="Sistem sağlığı"
-        description="API, PostgreSQL, Redis ve Print Bridge servislerini sunucu tarafındaki canlı sağlık problarıyla izleyin."
+        description="API, PostgreSQL ve Redis canlı problarını; Print Bridge tarafında ise işletmelerin yerel heartbeat özetini izleyin."
         icon={HeartPulse}
         actions={
           <>
@@ -261,6 +261,10 @@ function ServiceHealthCard({
   const Icon = serviceIcons[service.id]
   const presentation = healthPresentation[service.state]
   const StateIcon = presentation.icon
+  const stateLabel =
+    service.id === "print-bridge" && service.summary === "Yapılandırılmadı"
+      ? "Yapılandırılmadı"
+      : presentation.label
 
   return (
     <Card className="gap-3">
@@ -280,7 +284,7 @@ function ServiceHealthCard({
           tone={presentation.tone}
           pulse={service.state === "healthy"}
         >
-          {presentation.label}
+          {stateLabel}
         </StatusBadge>
       </CardHeader>
 
@@ -375,10 +379,9 @@ function visibleMetadata(
   if (!service.metadata) return []
 
   const labels: Record<string, string> = {
-    bridgeId: "Köprü kimliği",
-    processedJobs: "İşlenen iş",
-    failedJobs: "Hatalı iş",
-    lastSuccessfulPollAt: "Son başarılı poll",
+    totalBridges: "Toplam bridge",
+    onlineBridges: "Çevrimiçi",
+    offlineBridges: "Çevrimdışı",
     httpStatus: "HTTP",
     database: "DB ping",
     service: "Servis",

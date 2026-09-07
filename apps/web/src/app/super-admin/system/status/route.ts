@@ -40,7 +40,7 @@ export async function GET(request: NextRequest): Promise<Response> {
         limitations: [
           "PostgreSQL durumu API /ready yanıtındaki bağlantı pinginden türetilir.",
           "Redis durumu web sunucusundan gönderilen salt-okunur PING probudur.",
-          "Print Bridge durumu köprünün /healthz süreç sinyalidir; bağlı yazıcıların fiziksel durumunu ölçmez.",
+          "Print Bridge durumu merkezi bir container probu değildir; işletmelerin kendi yerel agent'larından gelen heartbeat özetidir.",
         ],
       },
     }
@@ -263,91 +263,81 @@ async function probePrintBridge(
   signal: AbortSignal,
   observedAt: string,
 ): Promise<SystemServiceHealth> {
-  const configured =
-    process.env.PRINT_BRIDGE_HEALTH_URL ??
-    (process.env.NODE_ENV === "production"
-      ? "http://print-bridge:9100/healthz"
-      : "http://127.0.0.1:9100/healthz")
-
-  let target: URL
+  const started = performance.now()
+  let response: Response
   try {
-    target = new URL(configured)
+    response = await authenticatedBackendFetch("printing/platform/bridges/summary", {
+      headers: { accept: "application/json" },
+      method: "GET",
+      signal,
+    })
   } catch {
-    return unknownService(
-      "print-bridge",
-      "Print Bridge",
-      "Print Bridge sağlık adresi geçersiz.",
-      "GET /healthz",
-      observedAt,
-    )
-  }
-
-  if (!["http:", "https:"].includes(target.protocol)) {
-    return unknownService(
-      "print-bridge",
-      "Print Bridge",
-      "Print Bridge probu HTTP veya HTTPS adresi gerektiriyor.",
-      "GET /healthz",
-      observedAt,
-    )
-  }
-
-  const probe = await fetchProbe(target, signal)
-  if (!probe.response) {
     return {
       id: "print-bridge",
       name: "Print Bridge",
-      state: "offline",
-      summary: "Köprü yanıt vermiyor",
-      detail: probe.error ?? "Print Bridge sağlık endpointine ulaşılamadı.",
-      latencyMs: probe.latencyMs,
+      state: "unknown",
+      summary: "Heartbeat özeti alınamadı",
+      detail: "Yerel Print Bridge kayıtları API üzerinden okunamadı.",
+      latencyMs: Math.max(0, Math.round(performance.now() - started)),
       observedAt,
-      endpointLabel: "GET /healthz",
+      endpointLabel: "GET /printing/platform/bridges/summary",
+    }
+  }
+  const latencyMs = Math.max(0, Math.round(performance.now() - started))
+  if (!response.ok) {
+    return {
+      id: "print-bridge",
+      name: "Print Bridge",
+      state: "unknown",
+      summary: "Heartbeat özeti doğrulanamadı",
+      detail: `Bridge özeti HTTP ${response.status} döndürdü.`,
+      latencyMs,
+      observedAt,
+      endpointLabel: "GET /printing/platform/bridges/summary",
     }
   }
 
-  const payload = asRecord(await readJson(probe.response))
-  const rawState =
-    typeof payload?.status === "string" ? payload.status : "unknown"
+  const payload = asRecord(await readJson(response))
+  const total = readCount(payload?.total_bridges)
+  const online = readCount(payload?.online_bridges)
+  const offline = readCount(payload?.offline_bridges)
+  if (total === null || online === null || offline === null) {
+    return {
+      id: "print-bridge",
+      name: "Print Bridge",
+      state: "unknown",
+      summary: "Heartbeat özeti geçersiz",
+      detail: "API, Print Bridge adetlerini beklenen biçimde döndürmedi.",
+      latencyMs,
+      observedAt,
+      endpointLabel: "GET /printing/platform/bridges/summary",
+    }
+  }
   const state: ServiceHealthState =
-    probe.response.ok && rawState === "ok"
-      ? "healthy"
-      : probe.response.ok
-        ? "degraded"
-        : "offline"
+    total === 0 ? "unknown" : online === total ? "healthy" : online > 0 ? "degraded" : "offline"
 
   return {
     id: "print-bridge",
     name: "Print Bridge",
     state,
     summary:
-      state === "healthy"
-        ? "Köprü çevrimiçi"
-        : state === "degraded"
-          ? "Köprü kısıtlı çalışıyor"
-          : "Köprü hazır değil",
-    detail:
-      typeof payload?.lastError === "string" && payload.lastError.length > 0
-        ? payload.lastError
+      total === 0
+        ? "Yapılandırılmadı"
         : state === "healthy"
-          ? "İş kuyruğu yoklaması çalışan süreç tarafından doğrulandı."
-          : `Köprü ${rawState} durumunu bildirdi.`,
-    latencyMs: probe.latencyMs,
+          ? "Tüm yerel bridge'ler çevrimiçi"
+          : state === "degraded"
+            ? "Yerel bridge'lerin bir bölümü çevrimiçi"
+            : "Kayıtlı yerel bridge çevrimdışı",
+    detail: total === 0
+      ? "Henüz hiçbir işletme Print Bridge bağlamadı."
+      : `${online} çevrimiçi, ${offline} çevrimdışı yerel bridge bildirildi.`,
+    latencyMs,
     observedAt,
-    endpointLabel: "GET /healthz",
+    endpointLabel: "GET /printing/platform/bridges/summary",
     metadata: {
-      bridgeId:
-        typeof payload?.bridgeId === "string" ? payload.bridgeId : null,
-      processedJobs:
-        typeof payload?.processedJobs === "number"
-          ? payload.processedJobs
-          : null,
-      failedJobs:
-        typeof payload?.failedJobs === "number" ? payload.failedJobs : null,
-      lastSuccessfulPollAt:
-        typeof payload?.lastSuccessfulPollAt === "string"
-          ? payload.lastSuccessfulPollAt
-          : null,
+      totalBridges: total,
+      onlineBridges: online,
+      offlineBridges: offline,
     },
   }
 }
@@ -543,4 +533,10 @@ function asRecord(value: unknown): Record<string, unknown> | null {
     return null
   }
   return value as Record<string, unknown>
+}
+
+function readCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0
+    ? value
+    : null
 }

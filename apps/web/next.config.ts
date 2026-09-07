@@ -28,7 +28,9 @@ function contentSecurityPolicy(): string {
     process.env.NEXT_PUBLIC_WS_URL,
     process.env.NEXT_PUBLIC_MEDIA_URL,
   ]
-    .filter((value): value is string => Boolean(value && /^(https?|wss?):\/\//.test(value)))
+    .filter((value): value is string =>
+      Boolean(value && /^(https?|wss?):\/\//.test(value)),
+    )
     .map((value) => new URL(value).origin);
 
   const connect = ["'self'", ...origins, "ws:", "wss:"].join(" ");
@@ -67,6 +69,32 @@ const nextConfig: NextConfig = {
   },
   async headers() {
     return [
+      {
+        source: "/downloads/Dixora-Print-Bridge-Setup.exe",
+        headers: [
+          {
+            key: "Content-Type",
+            value: "application/octet-stream",
+          },
+          {
+            key: "Content-Disposition",
+            value: 'attachment; filename="Dixora-Print-Bridge-Setup.exe"',
+          },
+        ],
+      },
+      {
+        source: "/downloads/Dixora-Print-Bridge.dmg",
+        headers: [
+          {
+            key: "Content-Type",
+            value: "application/x-apple-diskimage",
+          },
+          {
+            key: "Content-Disposition",
+            value: 'attachment; filename="Dixora-Print-Bridge.dmg"',
+          },
+        ],
+      },
       {
         source: "/:workspace(admin|waiter|cashier|kitchen|super-admin)/:path*",
         headers: [

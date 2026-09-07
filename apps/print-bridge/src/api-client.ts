@@ -33,7 +33,11 @@ export class PrintBridgeApiClient {
   }
 
   public async markSent(job: PrintJobClaim): Promise<void> {
-    const request: BridgeUpdateRequest = { error: null, status: "SENT" };
+    const request: BridgeUpdateRequest = {
+      attempt_count: job.attemptCount,
+      error: null,
+      status: "SENT",
+    };
     await this.request(PRINTING_API.update(job.id), {
       body: JSON.stringify(request),
       headers: {
@@ -48,7 +52,16 @@ export class PrintBridgeApiClient {
     job: PrintJobClaim,
     result: PrintResult,
   ): Promise<void> {
-    const request: BridgeUpdateRequest = { error: null, status: "PRINTED" };
+    const request: BridgeUpdateRequest = {
+      attempt_count: job.attemptCount,
+      error: null,
+      result: {
+        external_reference: result.externalReference,
+        printed_at: result.printedAt,
+        transport: result.transport,
+      },
+      status: "PRINTED",
+    };
     await this.request(PRINTING_API.update(job.id), {
       body: JSON.stringify(request),
       headers: {
@@ -62,9 +75,12 @@ export class PrintBridgeApiClient {
   public async markFailed(
     job: PrintJobClaim,
     errorMessage: string,
+    manualRetryRequired = false,
   ): Promise<void> {
     const request: BridgeUpdateRequest = {
+      attempt_count: job.attemptCount,
       error: errorMessage,
+      ...(manualRetryRequired ? { manual_retry_required: true } : {}),
       status: "FAILED",
     };
     await this.request(PRINTING_API.update(job.id), {
@@ -77,6 +93,72 @@ export class PrintBridgeApiClient {
     });
   }
 
+  public async recoverPrinted(
+    jobId: string,
+    attemptCount: number,
+    result: PrintResult,
+  ): Promise<void> {
+    const request: BridgeUpdateRequest = {
+      attempt_count: attemptCount,
+      error: null,
+      result: {
+        external_reference: result.externalReference,
+        printed_at: result.printedAt,
+        transport: result.transport,
+      },
+      status: "PRINTED",
+    };
+    await this.request(PRINTING_API.update(jobId), {
+      body: JSON.stringify(request),
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": this.recoveryIdempotencyKey(
+          jobId,
+          attemptCount,
+          "printed",
+        ),
+      },
+      method: "PATCH",
+    });
+  }
+
+  public async recoverUncertainDispatch(
+    jobId: string,
+    attemptCount: number,
+    message: string,
+  ): Promise<void> {
+    const request: BridgeUpdateRequest = {
+      attempt_count: attemptCount,
+      error: message,
+      manual_retry_required: true,
+      status: "FAILED",
+    };
+    await this.request(PRINTING_API.update(jobId), {
+      body: JSON.stringify(request),
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": this.recoveryIdempotencyKey(
+          jobId,
+          attemptCount,
+          "failed",
+        ),
+      },
+      method: "PATCH",
+    });
+  }
+
+  public async heartbeat(printers: readonly string[]): Promise<void> {
+    await this.request(PRINTING_API.heartbeat, {
+      body: JSON.stringify({
+        platform: hostPlatform(),
+        printers,
+        version: this.config.version,
+      }),
+      headers: { "Content-Type": "application/json" },
+      method: "POST",
+    });
+  }
+
   private idempotencyKey(
     job: PrintJobClaim,
     transition: "sent" | "printed" | "failed",
@@ -86,6 +168,20 @@ export class PrintBridgeApiClient {
       this.config.bridgeId,
       job.id,
       job.attemptCount,
+      transition,
+    ].join(":");
+  }
+
+  private recoveryIdempotencyKey(
+    jobId: string,
+    attemptCount: number,
+    transition: "printed" | "failed",
+  ): string {
+    return [
+      "print-bridge",
+      this.config.bridgeId,
+      jobId,
+      attemptCount,
       transition,
     ].join(":");
   }
@@ -136,4 +232,10 @@ export class PrintBridgeApiClient {
       clearTimeout(timeout);
     }
   }
+}
+
+function hostPlatform(): "windows" | "macos" | "linux" {
+  if (process.platform === "win32") return "windows";
+  if (process.platform === "darwin") return "macos";
+  return "linux";
 }

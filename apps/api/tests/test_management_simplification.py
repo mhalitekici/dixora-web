@@ -317,6 +317,29 @@ async def test_printer_test_creates_real_scoped_print_job(api: ApiContext) -> No
     )
     assert device.status_code == 201, device.text
 
+    unmapped_test = await api.client.post(
+        f"/api/v1/printing/devices/{device.json()['id']}/test",
+        headers=headers,
+    )
+    assert unmapped_test.status_code == 409, unmapped_test.text
+    assert unmapped_test.json()["error"]["code"] == "printer_bridge_mapping_required"
+
+    bridges = await api.client.get("/api/v1/printing/bridges", headers=headers)
+    assert bridges.status_code == 200, bridges.text
+    bridge = next(item for item in bridges.json() if item["name"] == "Development Bridge")
+    heartbeat = await api.client.post(
+        "/api/v1/printing/bridge/heartbeat",
+        headers={"X-Print-Bridge-Token": "pb_dev_dixora_lab_bridge_2026"},
+        json={"printers": ["MOCK-KITCHEN", "MOCK-BAR", "Kitchen Route Printer"]},
+    )
+    assert heartbeat.status_code == 200, heartbeat.text
+    mapped = await api.client.put(
+        f"/api/v1/printing/bridges/{bridge['id']}/printer-mappings/{device.json()['id']}",
+        headers=headers,
+        json={"local_printer_name": "Kitchen Route Printer"},
+    )
+    assert mapped.status_code == 200, mapped.text
+
     test_job = await api.client.post(
         f"/api/v1/printing/devices/{device.json()['id']}/test",
         headers=headers,

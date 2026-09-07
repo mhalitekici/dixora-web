@@ -3,23 +3,10 @@ import test from "node:test";
 
 import type { PrintJobClaim } from "@dixora/shared-types";
 
-import type { BridgeConfig } from "./config.js";
 import { MockPrinterTransport } from "./mock-printer.js";
+import { testConfig } from "./test-helpers.js";
 
-const config: BridgeConfig = {
-  apiKey: "test",
-  apiUrl: "http://api.test",
-  allowInsecureMock: false,
-  branchId: "branch-1",
-  bridgeId: "bridge-1",
-  healthPort: 9100,
-  maxClaim: 5,
-  mockDelayMs: 0,
-  mockFailureRate: 0,
-  pollIntervalMs: 2_000,
-  printerIds: ["kitchen"],
-  requestTimeoutMs: 5_000,
-};
+const config = testConfig();
 
 const job: PrintJobClaim = {
   id: "job-1",

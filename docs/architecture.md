@@ -33,7 +33,7 @@ storage boundary for images and tenant logos.
 apps/
   web/            Next.js App Router user interfaces
   api/            FastAPI modular monolith
-  print-bridge/   Local printing protocol and mock transport
+  print-bridge/   Local Windows/macOS print agent, protocol and installers
 packages/
   config/         Shared TypeScript compiler and environment helpers
   shared-types/   Browser/bridge wire contracts without business logic

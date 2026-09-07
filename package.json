@@ -16,6 +16,9 @@
     "dev": "npm run dev --workspaces --if-present",
     "dev:web": "npm run dev --workspace web",
     "dev:print-bridge": "npm run dev --workspace @dixora/print-bridge",
+    "package:print-bridge": "npm run build --workspace @dixora/config && npm run build --workspace @dixora/shared-types && npm run build --workspace @dixora/print-bridge && npm run package:portable --workspace @dixora/print-bridge",
+    "package:print-bridge:windows": "npm run build --workspace @dixora/config && npm run build --workspace @dixora/shared-types && npm run package:windows --workspace @dixora/print-bridge",
+    "package:print-bridge:macos": "npm run build --workspace @dixora/config && npm run build --workspace @dixora/shared-types && npm run package:macos --workspace @dixora/print-bridge",
     "build": "npm run build --workspaces --if-present",
     "lint": "npm run lint --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present && npm exec --workspace web -- tsc --noEmit",
@@ -36,6 +39,7 @@
     "typescript": "^5.9.2"
   },
   "overrides": {
+    "fast-uri": "3.1.7",
     "minimatch": "10.2.6",
     "postcss": "8.5.25",
     "sharp": "0.35.3"

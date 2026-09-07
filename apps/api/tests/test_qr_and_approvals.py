@@ -168,6 +168,9 @@ async def test_qr_request_requires_staff_approval_then_uses_unified_order_engine
     public_burger = next(
         product for product in menu_payload["products"] if product["name"] == "Classic Burger"
     )
+    public_lemonade = next(
+        product for product in menu_payload["products"] if product["name"] == "Homemade Lemonade"
+    )
     assert public_burger["id"].startswith("p_")
     assert public_burger["category_id"].startswith("c_")
     assert menu_payload["active_order"] is None
@@ -186,7 +189,10 @@ async def test_qr_request_requires_staff_approval_then_uses_unified_order_engine
             "table_token": table["qr_token"],
             "session_token": session_token,
             "idempotency_key": "qr-request-key-0001",
-            "items": [{"product_id": public_burger["id"], "quantity": "1"}],
+            "items": [
+                {"product_id": public_burger["id"], "quantity": "1"},
+                {"product_id": public_lemonade["id"], "quantity": "2"},
+            ],
             "customer_note": "No onions",
         },
     )
@@ -216,6 +222,17 @@ async def test_qr_request_requires_staff_approval_then_uses_unified_order_engine
     assert order.status_code == 200
     assert order.json()["source"] == "QR"
     assert order.json()["status"] == "ACCEPTED"
+    print_jobs = await api.client.get(
+        "/api/v1/printing/jobs",
+        headers=headers,
+        params={"order_id": order_id},
+    )
+    assert print_jobs.status_code == 200, print_jobs.text
+    assert {
+        job["payload"]["document"]["station_name"]
+        for job in print_jobs.json()
+        if job["kitchen_ticket_id"]
+    } == {"Kitchen", "Bar"}
 
     refreshed_menu = await api.client.get(
         "/api/v1/qr/public/dixora-lab/merkez",

@@ -20,6 +20,9 @@ import type {
   OrderStatus,
   PageResult,
   PrintJob,
+  PrintBridge,
+  PrintBridgeEnrollment,
+  PrintBridgePrinterMapping,
   PrinterDevice,
   QrRequest,
   QrRequestStatus,
@@ -47,6 +50,8 @@ export const adminKeys = {
   printJobs: (branchId = "current") => [...adminKeys.root, "print-jobs", branchId] as const,
   printerDevices: (branchId: string) =>
     [...adminKeys.root, "printer-devices", branchId] as const,
+  printBridges: (branchId: string) =>
+    [...adminKeys.root, "print-bridges", branchId] as const,
   kitchenTickets: (stationId: string, includeCompleted: boolean) =>
     [...adminKeys.root, "kitchen-tickets", stationId, includeCompleted] as const,
   employees: () => [...adminKeys.root, "employees"] as const,
@@ -142,6 +147,27 @@ export const adminApi = {
   ) => api.patch<PrinterDevice>(`printing/devices/${id}`, input),
   testPrinterDevice: (id: string) =>
     api.post<PrintJob>(`printing/devices/${id}/test`),
+  retryPrintJob: (id: string) => api.post<PrintJob>(`printing/jobs/${id}/retry`),
+  printBridges: (branchId: string, signal?: AbortSignal) =>
+    api.get<PrintBridge[]>("printing/bridges", {
+      search: { branch_id: branchId },
+      signal,
+    }),
+  createPrintBridgeEnrollment: (input: { branch_id: string; ttl_minutes?: number }) =>
+    api.post<PrintBridgeEnrollment>("printing/bridges/enrollment-codes", input),
+  mapBridgePrinter: (
+    bridgeId: string,
+    printerDeviceId: string,
+    localPrinterName: string,
+  ) =>
+    api.put<PrintBridgePrinterMapping>(
+      `printing/bridges/${bridgeId}/printer-mappings/${printerDeviceId}`,
+      { local_printer_name: localPrinterName },
+    ),
+  unmapBridgePrinter: (bridgeId: string, printerDeviceId: string) =>
+    api.delete<void>(`printing/bridges/${bridgeId}/printer-mappings/${printerDeviceId}`),
+  revokePrintBridge: (bridgeId: string) =>
+    api.post<PrintBridge>(`printing/bridges/${bridgeId}/revoke`),
   kitchenTickets: (
     input: { stationId?: string; includeCompleted?: boolean } = {},
     signal?: AbortSignal,

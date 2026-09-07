@@ -150,8 +150,9 @@ Scope:
 - Mock adapter retained for CI and development
 - Protocol compatibility tests between API and bridge
 
-Physical printer support remains a separately accepted adapter milestone. It
-must not be inferred from the existence of the mock bridge.
+Windows and macOS spooler transports are implemented for the local agent.
+Physical-printer acceptance still requires checking each venue's installed
+driver, paper configuration and CUPS/Windows spool queue.
 
 ## Quality gates for every milestone
 

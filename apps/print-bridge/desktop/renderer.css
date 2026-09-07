@@ -1,0 +1,63 @@
+:root {
+  color: #202326;
+  background: #eceff1;
+  font-family: "Segoe UI", system-ui, sans-serif;
+}
+
+* { box-sizing: border-box; }
+
+body { margin: 0; min-width: 400px; background: #eceff1; }
+
+button, input { font: inherit; }
+
+.app-shell { display: flex; min-height: 100vh; flex-direction: column; gap: 16px; padding: 20px; }
+
+.app-header { display: flex; align-items: center; gap: 12px; padding: 2px 2px 10px; }
+
+.brand-mark { display: grid; width: 38px; height: 38px; place-items: center; border-radius: 8px; background: #d84727; color: #fff; font-size: 20px; font-weight: 800; }
+
+.eyebrow, .section-kicker { margin: 0; color: #72777b; font-size: 11px; font-weight: 700; letter-spacing: .08em; }
+
+h1, h2 { margin: 0; color: #202326; }
+h1 { font-size: 19px; line-height: 1.2; }
+h2 { font-size: 16px; line-height: 1.3; }
+
+.status-badge { margin-left: auto; border: 1px solid #d7dcdf; border-radius: 999px; padding: 5px 9px; font-size: 12px; font-weight: 700; }
+.status-muted { background: #f5f6f7; color: #5d6468; }
+.status-ok { border-color: #b7dbc7; background: #edf8f0; color: #17643b; }
+.status-attention { border-color: #edc8bc; background: #fff1ec; color: #a13e25; }
+
+.panel { border: 1px solid #d7dcdf; border-radius: 8px; background: #fff; padding: 18px; }
+.panel.hidden, .hidden { display: none; }
+.panel-heading, .printers-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.panel-heading { margin-bottom: 16px; }
+
+.status-list { margin: 0; border-top: 1px solid #e9ecee; }
+.status-list div { display: grid; grid-template-columns: 90px 1fr; gap: 12px; border-bottom: 1px solid #e9ecee; padding: 10px 0; }
+.status-list dt { color: #70777b; font-size: 13px; }
+.status-list dd { margin: 0; overflow: hidden; color: #202326; font-size: 13px; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+
+.printers-heading { margin-top: 18px; }
+.printer-list { margin: 10px 0 0; padding: 0; list-style: none; }
+.printer-list li { display: flex; align-items: center; gap: 8px; border-top: 1px solid #eef0f1; padding: 9px 0; font-size: 13px; }
+.printer-list li::before { width: 7px; height: 7px; border-radius: 999px; background: #4d9869; content: ""; }
+.printer-list .empty { color: #70777b; }
+.printer-list .empty::before { background: #b6bdc1; }
+
+.setup-form { display: grid; gap: 8px; }
+.setup-form label { margin-top: 5px; color: #4c5357; font-size: 13px; font-weight: 700; }
+.setup-form input { width: 100%; border: 1px solid #cbd1d4; border-radius: 6px; background: #fff; padding: 10px 11px; color: #202326; outline: none; }
+.setup-form input:focus { border-color: #d84727; box-shadow: 0 0 0 3px rgb(216 71 39 / 15%); }
+
+.primary-button, .text-button, .icon-button { cursor: pointer; }
+.primary-button { margin-top: 10px; border: 1px solid #c93b20; border-radius: 6px; background: #d84727; padding: 10px 12px; color: #fff; font-weight: 700; }
+.primary-button:hover { background: #c93b20; }
+.primary-button:disabled { cursor: wait; opacity: .65; }
+.text-button { border: 0; background: transparent; padding: 4px; color: #a13e25; font-size: 12px; font-weight: 700; }
+.text-button:hover { text-decoration: underline; }
+.icon-button { display: grid; width: 28px; height: 28px; place-items: center; border: 1px solid #d7dcdf; border-radius: 6px; background: #fff; color: #454b4f; font-size: 18px; }
+
+.error-text { margin: 8px 0 0; color: #b42318; font-size: 12px; line-height: 1.45; }
+.app-footer { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: auto; color: #70777b; font-size: 12px; }
+
+@media (max-width: 460px) { body { min-width: 320px; } .app-shell { padding: 14px; } .app-footer { align-items: flex-start; flex-direction: column; } }

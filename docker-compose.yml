@@ -230,8 +230,13 @@ services:
     build:
       context: .
       dockerfile: apps/print-bridge/Dockerfile
-    restart: unless-stopped
+    # Development-only protocol smoke test. Physical printer agents belong on
+    # the Windows/macOS computer next to the printer, never in central Docker.
+    profiles: ["mock-print-bridge"]
+    restart: "no"
     environment:
+      NODE_ENV: development
+      PRINT_BRIDGE_TRANSPORT: mock
       PRINT_BRIDGE_PORT: 9100
       PRINT_BRIDGE_ID: ${PRINT_BRIDGE_ID:-local-mock-bridge}
       PRINT_BRIDGE_API_URL: ${PRINT_BRIDGE_API_URL:-http://api:8000}

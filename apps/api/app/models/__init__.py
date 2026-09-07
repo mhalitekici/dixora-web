@@ -74,7 +74,14 @@ from app.models.orders import (
     Payment,
 )
 from app.models.payments import PaymentAttempt, SavedCard
-from app.models.printing import PrintBridgeClient, PrinterDevice, PrintJob
+from app.models.printing import (
+    PrintBridgeClient,
+    PrintBridgeEnrollmentCode,
+    PrintBridgePrinterMapping,
+    PrinterDevice,
+    PrintJob,
+    PrintJobAcknowledgement,
+)
 from app.models.qr import QrMenuConfig, QrOrderRequest
 from app.models.shifts import CashierShift
 from app.models.subscriptions import (
@@ -137,6 +144,9 @@ __all__ = [
     "Permission",
     "PreparationStation",
     "PrintBridgeClient",
+    "PrintBridgeEnrollmentCode",
+    "PrintBridgePrinterMapping",
+    "PrintJobAcknowledgement",
     "PrinterDevice",
     "PrintJob",
     "Product",
