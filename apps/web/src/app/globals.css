@@ -149,7 +149,8 @@
     @apply bg-background text-foreground antialiased;
     min-width: 320px;
   }
-  button:not(:disabled), [role="button"]:not(:disabled) {
+  button:not(:disabled),
+  [role="button"]:not(:disabled) {
     cursor: pointer;
   }
   html {
@@ -161,14 +162,27 @@
 @layer utilities {
   .surface-grid {
     background-image:
-      linear-gradient(to right, color-mix(in srgb, var(--border) 35%, transparent) 1px, transparent 1px),
-      linear-gradient(to bottom, color-mix(in srgb, var(--border) 35%, transparent) 1px, transparent 1px);
+      linear-gradient(
+        to right,
+        color-mix(in srgb, var(--border) 35%, transparent) 1px,
+        transparent 1px
+      ),
+      linear-gradient(
+        to bottom,
+        color-mix(in srgb, var(--border) 35%, transparent) 1px,
+        transparent 1px
+      );
     background-size: 32px 32px;
   }
 
   .scrollbar-subtle {
     scrollbar-width: thin;
-    scrollbar-color: color-mix(in srgb, var(--muted-foreground) 32%, transparent) transparent;
+    scrollbar-color: color-mix(
+        in srgb,
+        var(--muted-foreground) 32%,
+        transparent
+      )
+      transparent;
   }
 
   .focus-operational {
@@ -201,8 +215,8 @@
   background: #fff;
   color: #000;
   font-family: ui-monospace, "SFMono-Regular", "Menlo", "Consolas", monospace;
-  font-size: 11px;
-  line-height: 1.45;
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .dixora-receipt .receipt-head {
@@ -211,8 +225,8 @@
 
 .dixora-receipt .receipt-head h1 {
   margin: 0;
-  font-size: 15px;
-  font-weight: 700;
+  font-size: 17px;
+  font-weight: 800;
   letter-spacing: 0.06em;
 }
 
@@ -253,8 +267,8 @@
 }
 
 .dixora-receipt .receipt-row-strong {
-  font-weight: 700;
-  font-size: 12px;
+  font-weight: 800;
+  font-size: 14px;
 }
 
 .dixora-receipt .receipt-meta,
@@ -280,7 +294,13 @@
 
 .dixora-receipt .receipt-line-name {
   flex: 1;
+  font-weight: 650;
   word-break: break-word;
+}
+
+.dixora-receipt .receipt-comp {
+  font-weight: 800;
+  letter-spacing: 0.04em;
 }
 
 .dixora-receipt .receipt-line-total {
@@ -307,7 +327,8 @@
   body:has(.dixora-receipt[data-print-target="true"])
     .dixora-receipt[data-print-target="true"],
   body:has(.dixora-receipt[data-print-target="true"])
-    .dixora-receipt[data-print-target="true"] * {
+    .dixora-receipt[data-print-target="true"]
+    * {
     visibility: visible;
   }
 

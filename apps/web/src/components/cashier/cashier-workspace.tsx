@@ -8,17 +8,17 @@ import {
   Check,
   ChevronRight,
   CircleDollarSign,
-  CircleOff,
   ClipboardCheck,
   Copy,
   CreditCard,
   DoorClosed,
   Grid2X2,
+  Gift,
   Loader2,
   Merge,
+  Minus,
   MonitorDot,
   MessageSquare,
-  MoreHorizontal,
   Plus,
   Printer,
   QrCode,
@@ -26,6 +26,7 @@ import {
   Search,
   Split,
   Tags,
+  Trash2,
   Volume2,
   VolumeX,
   WalletCards,
@@ -58,12 +59,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -76,7 +71,9 @@ import {
 } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { useGuestLabel } from "@/components/tables/use-guest-label";
+import { useCurrentUser } from "@/hooks/use-auth";
 import { formatDateTime, formatRelativeTime } from "@/lib/formatters";
+import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 import { cn } from "@/lib/utils";
 
 import {
@@ -116,6 +113,8 @@ type OrderItem = {
   unit_price: string | number;
   quantity: string | number;
   line_total: string | number;
+  is_complimentary?: boolean;
+  complimentary_reason?: string | null;
   status: string;
   note?: string | null;
   modifiers?: OrderItemModifier[];
@@ -150,7 +149,9 @@ type Order = {
   subtotal: string | number;
   discount_total: string | number;
   tax_total: string | number;
+  service_charge_amount?: string | number;
   total: string | number;
+  version: number;
   items: OrderItem[];
   payments: Payment[];
   created_at?: string;
@@ -164,7 +165,12 @@ type ApprovalRequest = {
 type ApprovalSummary = {
   id: string;
   order_id: string | null;
-  approval_type: "DISCOUNT" | "ITEM_CANCELLATION" | "ORDER_VOID" | "STOCK_OVERRIDE" | "TABLE_TRANSFER";
+  approval_type:
+    | "DISCOUNT"
+    | "ITEM_CANCELLATION"
+    | "ORDER_VOID"
+    | "STOCK_OVERRIDE"
+    | "TABLE_TRANSFER";
   status: string;
   reason: string;
   created_at: string;
@@ -205,7 +211,11 @@ const currency = new Intl.NumberFormat("tr-TR", {
 
 function unwrap<T>(value: unknown): T[] {
   if (Array.isArray(value)) return value as T[];
-  if (value && typeof value === "object" && Array.isArray((value as { items?: unknown }).items)) {
+  if (
+    value &&
+    typeof value === "object" &&
+    Array.isArray((value as { items?: unknown }).items)
+  ) {
     return (value as { items: T[] }).items;
   }
   return [];
@@ -226,14 +236,20 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
 };
 
 const CLOSE_TABLE_ERROR_MESSAGES: Record<string, string> = {
-  table_has_open_orders: "Masayı kapatmadan önce açık siparişleri ödeyin veya iptal edin.",
-  table_has_unsettled_balance: "Masada tahsil edilmemiş veya iade edilmemiş bir bakiye var. Lütfen ödemeleri kontrol edin.",
+  table_has_open_orders:
+    "Masayı kapatmadan önce açık siparişleri ödeyin veya iptal edin.",
+  table_has_unsettled_balance:
+    "Masada tahsil edilmemiş veya iade edilmemiş bir bakiye var. Lütfen ödemeleri kontrol edin.",
   table_version_conflict: "Masa bilgisi güncellendi, lütfen tekrar deneyin.",
-  table_session_conflict: "Masada birden fazla açık oturum var, önce bunları çözün.",
+  table_session_conflict:
+    "Masada birden fazla açık oturum var, önce bunları çözün.",
   table_disabled: "Devre dışı masalar kapatılamaz.",
   table_session_not_open: "Bu oturum zaten kapatılmış.",
+  cashier_printer_not_configured: "Kasa yazıcısı yapılandırılmamış.",
+  order_version_conflict:
+    "Sipariş başka bir kasada güncellendi. Son hali yükleniyor.",
+  quantity_remove_required: "Son adet için Sil işlemini kullanın.",
 };
-
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/backend${path}`, {
@@ -284,7 +300,8 @@ const tableState: Record<string, TableStateMeta> = {
     label: "Boş",
     tone: "success",
     card: "border-emerald-300/70 bg-emerald-50 hover:border-emerald-400 dark:border-emerald-500/25 dark:bg-emerald-500/10",
-    badge: "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300",
+    badge:
+      "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300",
     dot: "bg-emerald-500",
   },
   OCCUPIED: {
@@ -305,7 +322,8 @@ const tableState: Record<string, TableStateMeta> = {
     label: "Hazırlanıyor",
     tone: "warning",
     card: "border-amber-300/70 bg-amber-50 hover:border-amber-400 dark:border-amber-500/25 dark:bg-amber-500/10",
-    badge: "bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200",
+    badge:
+      "bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200",
     dot: "bg-amber-500",
   },
   READY: {
@@ -321,7 +339,8 @@ const tableState: Record<string, TableStateMeta> = {
     label: "Hesap İstendi",
     tone: "purple",
     card: "border-violet-400 bg-violet-100 hover:border-violet-500 dark:border-violet-500/40 dark:bg-violet-500/15",
-    badge: "bg-violet-200 text-violet-900 dark:bg-violet-500/25 dark:text-violet-200",
+    badge:
+      "bg-violet-200 text-violet-900 dark:bg-violet-500/25 dark:text-violet-200",
     dot: "bg-violet-500",
     pulse: true,
   },
@@ -329,7 +348,8 @@ const tableState: Record<string, TableStateMeta> = {
     label: "Ödeme Bekliyor",
     tone: "warning",
     card: "border-amber-400 bg-amber-100 hover:border-amber-500 dark:border-amber-500/40 dark:bg-amber-500/15",
-    badge: "bg-amber-200 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200",
+    badge:
+      "bg-amber-200 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200",
     dot: "bg-amber-500",
     pulse: true,
   },
@@ -337,7 +357,8 @@ const tableState: Record<string, TableStateMeta> = {
     label: "Temizleniyor",
     tone: "neutral",
     card: "border-slate-300 bg-slate-100 dark:border-slate-500/25 dark:bg-slate-500/10",
-    badge: "bg-slate-200 text-slate-700 dark:bg-slate-500/20 dark:text-slate-300",
+    badge:
+      "bg-slate-200 text-slate-700 dark:bg-slate-500/20 dark:text-slate-300",
     dot: "bg-slate-400",
   },
   DISABLED: {
@@ -407,9 +428,13 @@ function buildMergeCandidates(
 
 export function CashierWorkspace() {
   const queryClient = useQueryClient();
-  const { labelProps, dialog: guestLabelDialog } = useGuestLabel([["cashier", "tables"]]);
-  const [statusFilter, setStatusFilter] =
-    useState<"all" | "free" | "busy" | "bill">("all");
+  const currentUser = useCurrentUser();
+  const { labelProps, dialog: guestLabelDialog } = useGuestLabel([
+    ["cashier", "tables"],
+  ]);
+  const [statusFilter, setStatusFilter] = useState<
+    "all" | "free" | "busy" | "bill"
+  >("all");
   const [selectedArea, setSelectedArea] = useState("all");
   const [selectedTableId, setSelectedTableId] = useState("");
   const [tableSearch, setTableSearch] = useState("");
@@ -428,6 +453,7 @@ export function CashierWorkspace() {
     | "merge"
     | "split"
     | "cancel-item"
+    | "complimentary"
     | "close-table"
     | "qr-queue"
     | "approvals-queue"
@@ -444,8 +470,14 @@ export function CashierWorkspace() {
   const [mergeDestinationTable, setMergeDestinationTable] = useState("");
   const [mergeReason, setMergeReason] = useState("");
   const [mergeIdempotencyKey, setMergeIdempotencyKey] = useState("");
-  const [cancellationItem, setCancellationItem] = useState<OrderItem | null>(null);
+  const [cancellationItem, setCancellationItem] = useState<OrderItem | null>(
+    null,
+  );
   const [cancellationReason, setCancellationReason] = useState("");
+  const [complimentaryItem, setComplimentaryItem] = useState<OrderItem | null>(
+    null,
+  );
+  const [complimentaryReason, setComplimentaryReason] = useState("");
   const [splitAmount, setSplitAmount] = useState("");
 
   const areasQuery = useQuery({
@@ -459,16 +491,15 @@ export function CashierWorkspace() {
   });
   const ordersQuery = useQuery({
     queryKey: ["cashier", "orders"],
-    queryFn: async () =>
-      unwrap<Order>(await api<unknown>("/orders?limit=200")),
+    queryFn: async () => unwrap<Order>(await api<unknown>("/orders?limit=200")),
     refetchInterval: 8_000,
   });
   const productsQuery = useQuery({
     queryKey: ["cashier", "products"],
     queryFn: async () =>
-      unwrap<Product>(
-        await api<unknown>("/catalog/products?limit=200"),
-      ).filter((item) => item.is_available),
+      unwrap<Product>(await api<unknown>("/catalog/products?limit=200")).filter(
+        (item) => item.is_available,
+      ),
   });
   const shiftQuery = useQuery({
     queryKey: ["shifts", "current"],
@@ -499,11 +530,17 @@ export function CashierWorkspace() {
   const tables = useMemo(() => tablesQuery.data ?? [], [tablesQuery.data]);
   const orders = ordersQuery.data ?? [];
   const products = productsQuery.data ?? [];
-  const selectedTable = tables.find((table) => table.id === selectedTableId) ?? tables[0];
+  const selectedTable =
+    tables.find((table) => table.id === selectedTableId) ?? tables[0];
   const selectedOrder = selectCurrentTableOrder(orders, selectedTable);
-  const paid = selectedOrder?.payments
-    .filter((payment) => payment.status === "COMPLETED")
-    .reduce((sum, payment) => sum + Number(payment.amount), 0) ?? 0;
+  const canMarkComplimentary = hasPermission(
+    currentUser.data,
+    PERMISSIONS.order.comp,
+  );
+  const paid =
+    selectedOrder?.payments
+      .filter((payment) => payment.status === "COMPLETED")
+      .reduce((sum, payment) => sum + Number(payment.amount), 0) ?? 0;
   const remaining = Math.max(0, Number(selectedOrder?.total ?? 0) - paid);
   const tableCanClose = canCloseTableSession(
     selectedOrder,
@@ -520,7 +557,10 @@ export function CashierWorkspace() {
           ? "Kapanıştan sonra masa yeniden sipariş almaya açılır."
           : "Bu masa oturumu kapatılmaya uygun değil.";
 
-  const qrPendingRequests = useMemo(() => qrRequestsQuery.data ?? [], [qrRequestsQuery.data]);
+  const qrPendingRequests = useMemo(
+    () => qrRequestsQuery.data ?? [],
+    [qrRequestsQuery.data],
+  );
   const qrPendingTableIds = useMemo(
     () => new Set(qrPendingRequests.map((request) => request.table_id)),
     [qrPendingRequests],
@@ -532,7 +572,9 @@ export function CashierWorkspace() {
     soundEnabled: alertSoundEnabled,
     setSoundPreference: setAlertSoundEnabled,
   } = useAlertChime(qrPendingRequests.length, !qrRequestsQuery.isLoading);
-  const billRequestedCount = orders.filter((order) => order.status === "BILL_REQUESTED").length;
+  const billRequestedCount = orders.filter(
+    (order) => order.status === "BILL_REQUESTED",
+  ).length;
   // The two numbers a cashier is asked for all evening: how much is still on
   // the floor, and how long the oldest table has been sitting.
   const outstandingTotal = orders.reduce((sum, order) => {
@@ -557,7 +599,8 @@ export function CashierWorkspace() {
       all: inArea.length,
       free: inArea.filter((table) => table.state === "AVAILABLE").length,
       busy: inArea.filter(
-        (table) => !["AVAILABLE", "DISABLED", "BILL_REQUESTED"].includes(table.state),
+        (table) =>
+          !["AVAILABLE", "DISABLED", "BILL_REQUESTED"].includes(table.state),
       ).length,
       bill: inArea.filter((table) => table.state === "BILL_REQUESTED").length,
     };
@@ -567,12 +610,15 @@ export function CashierWorkspace() {
     () =>
       tables
         .filter((table) => {
-          const areaMatch = selectedArea === "all" || table.area_id === selectedArea;
+          const areaMatch =
+            selectedArea === "all" || table.area_id === selectedArea;
           const needle = tableSearch.toLocaleLowerCase("tr-TR");
           // Searching the guest label lets staff find a party by name.
           const searchMatch =
             table.name.toLocaleLowerCase("tr-TR").includes(needle) ||
-            (table.guest_label ?? "").toLocaleLowerCase("tr-TR").includes(needle);
+            (table.guest_label ?? "")
+              .toLocaleLowerCase("tr-TR")
+              .includes(needle);
           const statusMatch =
             statusFilter === "all"
               ? true
@@ -580,18 +626,26 @@ export function CashierWorkspace() {
                 ? table.state === "AVAILABLE"
                 : statusFilter === "bill"
                   ? table.state === "BILL_REQUESTED"
-                  : !["AVAILABLE", "DISABLED", "BILL_REQUESTED"].includes(table.state);
+                  : !["AVAILABLE", "DISABLED", "BILL_REQUESTED"].includes(
+                      table.state,
+                    );
           return areaMatch && searchMatch && statusMatch;
         })
         .sort((a, b) => {
           const priority = (table: DiningTable) =>
-            table.state === "BILL_REQUESTED" ? 0 : qrPendingTableIds.has(table.id) ? 1 : 2;
+            table.state === "BILL_REQUESTED"
+              ? 0
+              : qrPendingTableIds.has(table.id)
+                ? 1
+                : 2;
           return priority(a) - priority(b);
         }),
     [selectedArea, tableSearch, tables, qrPendingTableIds, statusFilter],
   );
   const filteredProducts = products.filter((product) =>
-    product.name.toLocaleLowerCase("tr-TR").includes(productSearch.toLocaleLowerCase("tr-TR")),
+    product.name
+      .toLocaleLowerCase("tr-TR")
+      .includes(productSearch.toLocaleLowerCase("tr-TR")),
   );
   const mergeCandidates = buildMergeCandidates(
     orders,
@@ -612,16 +666,30 @@ export function CashierWorkspace() {
     ]);
   }
 
+  function applyUpdatedOrder(updatedOrder: Order) {
+    queryClient.setQueryData<Order[]>(["cashier", "orders"], (current) =>
+      (current ?? []).map((order) =>
+        order.id === updatedOrder.id ? updatedOrder : order,
+      ),
+    );
+    refreshOperations();
+  }
+
   const productMutation = useMutation({
     mutationFn: async (product: Product) => {
       if (!selectedTable) {
         throw new Error("Canlı masa verisi olmadan ürün eklenemez.");
       }
-      const payloadItems = [{ product_id: product.id, quantity: "1", note: null, modifiers: [] }];
+      const payloadItems = [
+        { product_id: product.id, quantity: "1", note: null, modifiers: [] },
+      ];
       if (selectedOrder) {
         return api<Order>(`/orders/${selectedOrder.id}/items`, {
           method: "POST",
-          body: JSON.stringify({ items: payloadItems, idempotency_key: crypto.randomUUID() }),
+          body: JSON.stringify({
+            items: payloadItems,
+            idempotency_key: crypto.randomUUID(),
+          }),
         });
       }
       return api<Order>("/orders", {
@@ -639,7 +707,8 @@ export function CashierWorkspace() {
       toast.success(`${product.name} siparişe eklendi`);
       refreshOperations();
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Ürün eklenemedi."),
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Ürün eklenemedi."),
   });
 
   const paymentMutation = useMutation({
@@ -654,7 +723,8 @@ export function CashierWorkspace() {
           method: paymentMethod,
           amount: paymentAmount,
           idempotency_key: crypto.randomUUID(),
-          reference: paymentMethod === "ROOM_CHARGE" ? roomReference.trim() : null,
+          reference:
+            paymentMethod === "ROOM_CHARGE" ? roomReference.trim() : null,
         }),
       });
     },
@@ -666,7 +736,10 @@ export function CashierWorkspace() {
       setRoomReference("");
       refreshOperations();
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Ödeme kaydedilemedi."),
+    onError: (error) =>
+      toast.error(
+        error instanceof Error ? error.message : "Ödeme kaydedilemedi.",
+      ),
   });
 
   const closeTableMutation = useMutation({
@@ -720,7 +793,12 @@ export function CashierWorkspace() {
       setDialog(null);
       refreshOperations();
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "İndirim talebi oluşturulamadı."),
+    onError: (error) =>
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "İndirim talebi oluşturulamadı.",
+      ),
   });
 
   const transferMutation = useMutation({
@@ -728,7 +806,10 @@ export function CashierWorkspace() {
       if (!selectedOrder) throw new Error("Canlı sipariş verisi bulunamadı.");
       return api(`/orders/${selectedOrder.id}/transfer`, {
         method: "POST",
-        body: JSON.stringify({ destination_table_id: destinationTable, reason }),
+        body: JSON.stringify({
+          destination_table_id: destinationTable,
+          reason,
+        }),
       });
     },
     onSuccess: () => {
@@ -737,7 +818,10 @@ export function CashierWorkspace() {
       setDialog(null);
       refreshOperations();
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Masa transfer edilemedi."),
+    onError: (error) =>
+      toast.error(
+        error instanceof Error ? error.message : "Masa transfer edilemedi.",
+      ),
   });
 
   const mergeMutation = useMutation({
@@ -791,13 +875,101 @@ export function CashierWorkspace() {
       ),
   });
 
+  const itemActionMutation = useMutation({
+    mutationFn: async ({
+      item,
+      action,
+      reason: actionReason,
+    }: {
+      item: OrderItem;
+      action:
+        "INCREASE" | "DECREASE" | "SET_COMPLIMENTARY" | "REMOVE_COMPLIMENTARY";
+      reason?: string;
+    }) => {
+      if (!selectedOrder) throw new Error("Canlı sipariş verisi bulunamadı.");
+      return api<Order>(`/orders/${selectedOrder.id}/items/${item.id}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          action,
+          expected_version: selectedOrder.version,
+          idempotency_key: `cashier-item:${crypto.randomUUID()}`,
+          reason: actionReason ?? null,
+        }),
+      });
+    },
+    onSuccess: (updatedOrder, variables) => {
+      applyUpdatedOrder(updatedOrder);
+      if (variables.action === "SET_COMPLIMENTARY") {
+        toast.success(
+          `${variables.item.product_name_snapshot} ikram olarak işaretlendi.`,
+        );
+        setComplimentaryItem(null);
+        setComplimentaryReason("");
+        setDialog(null);
+      } else if (variables.action === "REMOVE_COMPLIMENTARY") {
+        toast.success("İkram kaldırıldı.");
+      }
+    },
+    onError: (error) => {
+      if (
+        error instanceof ApiCallError &&
+        error.code === "order_version_conflict"
+      ) {
+        refreshOperations();
+      }
+      toast.error(
+        error instanceof Error ? error.message : "Ürün güncellenemedi.",
+      );
+    },
+  });
+
+  const removeItemMutation = useMutation({
+    mutationFn: async (item: OrderItem) => {
+      if (!selectedOrder) throw new Error("Canlı sipariş verisi bulunamadı.");
+      return api<Order>(`/orders/${selectedOrder.id}/items/${item.id}`, {
+        method: "DELETE",
+        body: JSON.stringify({
+          expected_version: selectedOrder.version,
+          idempotency_key: `cashier-remove:${crypto.randomUUID()}`,
+          reason: "Kasiyer ürün kaldırma işlemi",
+        }),
+      });
+    },
+    onSuccess: (updatedOrder, item) => {
+      applyUpdatedOrder(updatedOrder);
+      toast.success(`${item.product_name_snapshot} siparişten kaldırıldı.`);
+    },
+    onError: (error, item) => {
+      if (
+        error instanceof ApiCallError &&
+        error.code === "item_cancellation_required"
+      ) {
+        setCancellationItem(item);
+        setCancellationReason("");
+        setDialog("cancel-item");
+        return;
+      }
+      if (
+        error instanceof ApiCallError &&
+        error.code === "order_version_conflict"
+      ) {
+        refreshOperations();
+      }
+      toast.error(
+        error instanceof Error ? error.message : "Ürün kaldırılamadı.",
+      );
+    },
+  });
+
   const cancellationMutation = useMutation({
     mutationFn: async () => {
       if (!selectedOrder || !cancellationItem) {
         throw new Error("Canlı sipariş kalemi bulunamadı.");
       }
       if (terminalItemStatuses.has(cancellationItem.status)) {
-        throw new Error("İptal edilmiş bir kalem için yeni talep oluşturulamaz.");
+        throw new Error(
+          "İptal edilmiş bir kalem için yeni talep oluşturulamaz.",
+        );
       }
       const trimmedReason = cancellationReason.trim();
       if (trimmedReason.length < 3) {
@@ -825,34 +997,40 @@ export function CashierWorkspace() {
     },
     onError: (error) =>
       toast.error(
-        error instanceof Error
-          ? error.message
-          : "İptal talebi oluşturulamadı.",
+        error instanceof Error ? error.message : "İptal talebi oluşturulamadı.",
       ),
   });
 
   const approveCancellationMutation = useMutation({
     mutationFn: async (approval: ApprovalSummary) =>
-      api(`/orders/cancellation-requests/${approval.id}/approve`, { method: "POST" }),
+      api(`/orders/cancellation-requests/${approval.id}/approve`, {
+        method: "POST",
+      }),
     onSuccess: () => {
       toast.success("İptal talebi onaylandı");
       refreshOperations();
       void approvalsQuery.refetch();
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Talep onaylanamadı."),
+      toast.error(
+        error instanceof Error ? error.message : "Talep onaylanamadı.",
+      ),
   });
 
   const rejectCancellationMutation = useMutation({
     mutationFn: async (approval: ApprovalSummary) =>
-      api(`/orders/cancellation-requests/${approval.id}/reject`, { method: "POST" }),
+      api(`/orders/cancellation-requests/${approval.id}/reject`, {
+        method: "POST",
+      }),
     onSuccess: () => {
       toast.success("İptal talebi reddedildi");
       refreshOperations();
       void approvalsQuery.refetch();
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Talep reddedilemedi."),
+      toast.error(
+        error instanceof Error ? error.message : "Talep reddedilemedi.",
+      ),
   });
 
   async function handleApproveQr(request: QrRequestDto) {
@@ -862,7 +1040,8 @@ export function CashierWorkspace() {
       refreshOperations();
     } catch (error) {
       toast.error("QR siparişi onaylanamadı", {
-        description: error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
+        description:
+          error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
       });
     }
   }
@@ -874,7 +1053,8 @@ export function CashierWorkspace() {
       refreshOperations();
     } catch (error) {
       toast.error("QR siparişi reddedilemedi", {
-        description: error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
+        description:
+          error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
       });
     }
   }
@@ -898,7 +1078,8 @@ export function CashierWorkspace() {
       setDialog(null);
       refreshOperations();
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Hesap bölünemedi."),
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Hesap bölünemedi."),
   });
 
   const printJobsQuery = useQuery({
@@ -912,7 +1093,9 @@ export function CashierWorkspace() {
   const billPrintJobs = (printJobsQuery.data ?? []).filter(
     (job) => (job.payload as { type?: string })?.type === "BILL",
   );
-  const hasOriginalBillPrint = billPrintJobs.some((job) => job.kind !== "REPRINT");
+  const hasOriginalBillPrint = billPrintJobs.some(
+    (job) => job.kind !== "REPRINT",
+  );
 
   const printMutation = useMutation({
     mutationFn: async (kind: "ORIGINAL" | "REPRINT") => {
@@ -938,7 +1121,9 @@ export function CashierWorkspace() {
     },
     onSuccess: (_, kind) => {
       toast.success(
-        kind === "ORIGINAL" ? "Müşteri bilgi fişi yazdırılıyor" : "Yeniden baskı kuyruğa alındı",
+        kind === "ORIGINAL"
+          ? "Müşteri bilgi fişi yazdırılıyor"
+          : "Yeniden baskı kuyruğa alındı",
         {
           description:
             kind === "ORIGINAL"
@@ -948,7 +1133,25 @@ export function CashierWorkspace() {
       );
       void printJobsQuery.refetch();
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Baskı işi oluşturulamadı."),
+    onError: (error) => {
+      if (
+        error instanceof ApiCallError &&
+        error.code === "cashier_printer_not_configured"
+      ) {
+        toast.error("Kasa yazıcısı yapılandırılmamış.", {
+          description:
+            "Ayarlar > Yazıcılar bölümünden Kasa / hesap rolünde bir yazıcı ekleyin.",
+          action: {
+            label: "Yazıcılara git",
+            onClick: () => window.location.assign("/admin/printers"),
+          },
+        });
+        return;
+      }
+      toast.error(
+        error instanceof Error ? error.message : "Baskı işi oluşturulamadı.",
+      );
+    },
   });
 
   const workspaceLoading =
@@ -1021,7 +1224,9 @@ export function CashierWorkspace() {
             <span className="text-[0.6rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
               Açık hesap
             </span>
-            <span className="text-sm font-bold tabular-nums">{orders.length}</span>
+            <span className="text-sm font-bold tabular-nums">
+              {orders.length}
+            </span>
           </span>
           <span className="h-7 w-px bg-border" aria-hidden="true" />
           <span className="flex flex-col leading-tight">
@@ -1068,7 +1273,9 @@ export function CashierWorkspace() {
         <button
           type="button"
           onClick={() => {
-            const table = tables.find((item) => item.state === "BILL_REQUESTED");
+            const table = tables.find(
+              (item) => item.state === "BILL_REQUESTED",
+            );
             if (table) setSelectedTableId(table.id);
           }}
           disabled={billRequestedCount === 0}
@@ -1082,7 +1289,9 @@ export function CashierWorkspace() {
         >
           <ReceiptText className="size-3.5" />
           Hesap İstekleri
-          <span className="rounded-full bg-current/15 px-1.5 tabular-nums">{billRequestedCount}</span>
+          <span className="rounded-full bg-current/15 px-1.5 tabular-nums">
+            {billRequestedCount}
+          </span>
         </button>
         <button
           type="button"
@@ -1099,7 +1308,9 @@ export function CashierWorkspace() {
         >
           <QrCode className="size-3.5" />
           QR Siparişleri
-          <span className="rounded-full bg-current/15 px-1.5 tabular-nums">{qrPendingRequests.length}</span>
+          <span className="rounded-full bg-current/15 px-1.5 tabular-nums">
+            {qrPendingRequests.length}
+          </span>
         </button>
         <button
           type="button"
@@ -1113,7 +1324,9 @@ export function CashierWorkspace() {
         >
           <ClipboardCheck className="size-3.5" />
           Onay Bekleyenler
-          <span className="rounded-full bg-current/15 px-1.5 tabular-nums">{pendingApprovals.length}</span>
+          <span className="rounded-full bg-current/15 px-1.5 tabular-nums">
+            {pendingApprovals.length}
+          </span>
         </button>
       </div>
       {qrAlerting ? (
@@ -1147,7 +1360,12 @@ export function CashierWorkspace() {
                 {alertSoundEnabled ? "Uyarı sesini kapat" : "Uyarı sesini aç"}
               </span>
             </Button>
-            <Button type="button" size="sm" variant="outline" onClick={acknowledgeQrAlert}>
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              onClick={acknowledgeQrAlert}
+            >
               Sesi durdur
             </Button>
             <Button
@@ -1164,269 +1382,427 @@ export function CashierWorkspace() {
         </div>
       ) : null}
       <div className="grid flex-1 xl:grid-cols-[280px_minmax(0,1fr)_350px]">
-      <aside className="border-r bg-muted/30 xl:min-h-[calc(100dvh-4rem)]">
-        <div className="border-b p-3">
-          <div className="mb-3 flex items-center justify-between">
-            <div>
-              <h1 className="text-sm font-semibold">Masalar</h1>
-              <p className="text-[0.65rem] text-muted-foreground">{tables.length} masa · {orders.length} açık hesap</p>
+        <aside className="border-r bg-muted/30 xl:min-h-[calc(100dvh-4rem)]">
+          <div className="border-b p-3">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h1 className="text-sm font-semibold">Masalar</h1>
+                <p className="text-[0.65rem] text-muted-foreground">
+                  {tables.length} masa · {orders.length} açık hesap
+                </p>
+              </div>
+              <StatusBadge tone="success" pulse>
+                Canlı
+              </StatusBadge>
             </div>
-            <StatusBadge tone="success" pulse>Canlı</StatusBadge>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+              <Input
+                type="search"
+                aria-label="Masa ara"
+                name="cashier-table-search"
+                value={tableSearch}
+                onChange={(event) => setTableSearch(event.target.value)}
+                placeholder="Masa ara…"
+                className="h-10 rounded-xl pl-9"
+              />
+            </div>
           </div>
-          <div className="relative">
-            <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-            <Input
-              type="search"
-              aria-label="Masa ara"
-              name="cashier-table-search"
-              value={tableSearch}
-              onChange={(event) => setTableSearch(event.target.value)}
-              placeholder="Masa ara…"
-              className="h-10 rounded-xl pl-9"
-            />
-          </div>
-        </div>
-        <div className="scrollbar-subtle flex gap-1 overflow-x-auto border-b p-2 xl:flex-wrap">
-          <button
-            type="button"
-            className={cn(
-              "h-8 shrink-0 rounded-lg px-2.5 text-[0.68rem] font-semibold",
-              selectedArea === "all" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
-            )}
-            onClick={() => setSelectedArea("all")}
-          >
-            Tümü
-          </button>
-          {areas.map((area) => (
+          <div className="scrollbar-subtle flex gap-1 overflow-x-auto border-b p-2 xl:flex-wrap">
             <button
-              key={area.id}
               type="button"
               className={cn(
                 "h-8 shrink-0 rounded-lg px-2.5 text-[0.68rem] font-semibold",
-                selectedArea === area.id ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground",
+                selectedArea === "all"
+                  ? "bg-primary text-primary-foreground"
+                  : "bg-muted text-muted-foreground",
               )}
-              onClick={() => setSelectedArea(area.id)}
+              onClick={() => setSelectedArea("all")}
             >
-              {area.name}
+              Tümü
             </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-1.5 border-b px-2 py-2">
-          {(
-            [
-              ["all", "Tümü", statusCounts.all, "bg-foreground"],
-              ["free", "Boş", statusCounts.free, "bg-emerald-500"],
-              ["busy", "Dolu", statusCounts.busy, "bg-blue-500"],
-              ["bill", "Hesap", statusCounts.bill, "bg-violet-500"],
-            ] as const
-          ).map(([value, label, count, dot]) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setStatusFilter(value)}
-              className={cn(
-                "flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-[0.66rem] font-semibold transition-colors",
-                statusFilter === value
-                  ? "border-primary bg-primary/10 text-foreground"
-                  : "border-transparent bg-muted/70 text-muted-foreground hover:bg-muted",
-              )}
-            >
-              <span className={cn("size-1.5 rounded-full", dot)} />
-              {label}
-              <span className="tabular-nums opacity-70">{count}</span>
-            </button>
-          ))}
-        </div>
-        <ScrollArea className="h-[320px] xl:h-[calc(100dvh-15.4rem)]">
-          <div className="grid grid-cols-2 gap-2.5 p-3 xl:grid-cols-1">
-            {filteredTables.map((table) => {
-              const meta = tableState[table.state] ?? tableState.AVAILABLE;
-              const order = selectCurrentTableOrder(orders, table);
-              const hasQrRequest = qrPendingTableIds.has(table.id);
-              const dwell = order ? dwellMinutes(order.created_at, now) : null;
-              return (
-                <button
-                  type="button"
-                  key={table.id}
-                  onClick={() => setSelectedTableId(table.id)}
-                  {...labelProps(table)}
-                  title="Sağ tık: misafir adı ekle"
-                  className={cn(
-                    "relative flex min-h-16 items-center gap-2.5 overflow-hidden rounded-2xl border-2 p-2.5 text-left shadow-sm transition-all hover:shadow-md active:scale-[0.99]",
-                    meta.card,
-                    selectedTableId === table.id &&
-                      "border-primary shadow-md ring-2 ring-primary/25",
-                  )}
-                >
-                  {hasQrRequest ? (
-                    <span
-                      className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-sm"
-                      title="QR sipariş talebi var"
-                    >
-                      <QrCode className="size-3" />
-                    </span>
-                  ) : null}
-                  <span
+            {areas.map((area) => (
+              <button
+                key={area.id}
+                type="button"
+                className={cn(
+                  "h-8 shrink-0 rounded-lg px-2.5 text-[0.68rem] font-semibold",
+                  selectedArea === area.id
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground",
+                )}
+                onClick={() => setSelectedArea(area.id)}
+              >
+                {area.name}
+              </button>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-1.5 border-b px-2 py-2">
+            {(
+              [
+                ["all", "Tümü", statusCounts.all, "bg-foreground"],
+                ["free", "Boş", statusCounts.free, "bg-emerald-500"],
+                ["busy", "Dolu", statusCounts.busy, "bg-blue-500"],
+                ["bill", "Hesap", statusCounts.bill, "bg-violet-500"],
+              ] as const
+            ).map(([value, label, count, dot]) => (
+              <button
+                key={value}
+                type="button"
+                onClick={() => setStatusFilter(value)}
+                className={cn(
+                  "flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-[0.66rem] font-semibold transition-colors",
+                  statusFilter === value
+                    ? "border-primary bg-primary/10 text-foreground"
+                    : "border-transparent bg-muted/70 text-muted-foreground hover:bg-muted",
+                )}
+              >
+                <span className={cn("size-1.5 rounded-full", dot)} />
+                {label}
+                <span className="tabular-nums opacity-70">{count}</span>
+              </button>
+            ))}
+          </div>
+          <ScrollArea className="h-[320px] xl:h-[calc(100dvh-15.4rem)]">
+            <div className="grid grid-cols-2 gap-2.5 p-3 xl:grid-cols-1">
+              {filteredTables.map((table) => {
+                const meta = tableState[table.state] ?? tableState.AVAILABLE;
+                const order = selectCurrentTableOrder(orders, table);
+                const hasQrRequest = qrPendingTableIds.has(table.id);
+                const dwell = order
+                  ? dwellMinutes(order.created_at, now)
+                  : null;
+                return (
+                  <button
+                    type="button"
+                    key={table.id}
+                    onClick={() => setSelectedTableId(table.id)}
+                    {...labelProps(table)}
+                    title="Sağ tık: misafir adı ekle"
                     className={cn(
-                      "flex size-10 shrink-0 items-center justify-center rounded-lg text-base font-bold",
-                      meta.badge,
+                      "relative flex min-h-16 items-center gap-2.5 overflow-hidden rounded-2xl border-2 p-2.5 text-left shadow-sm transition-all hover:shadow-md active:scale-[0.99]",
+                      meta.card,
+                      selectedTableId === table.id &&
+                        "border-primary shadow-md ring-2 ring-primary/25",
                     )}
                   >
-                    {table.name}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center gap-1.5">
-                      <span className={cn("relative flex size-1.5 shrink-0 rounded-full", meta.dot)}>
-                        {meta.pulse ? (
-                          <span className={cn("absolute inline-flex size-full animate-ping rounded-full opacity-60", meta.dot)} />
-                        ) : null}
-                      </span>
-                      <span className="text-xs font-bold uppercase tracking-wide">{meta.label}</span>
-                    </span>
-                    {table.guest_label ? (
-                      <span className="mt-0.5 block truncate text-[0.7rem] font-semibold text-foreground">
-                        {table.guest_label}
+                    {hasQrRequest ? (
+                      <span
+                        className="absolute -right-1.5 -top-1.5 flex size-5 items-center justify-center rounded-full bg-brand text-brand-foreground shadow-sm"
+                        title="QR sipariş talebi var"
+                      >
+                        <QrCode className="size-3" />
                       </span>
                     ) : null}
-                    <span className="mt-0.5 flex items-baseline gap-1.5">
-                      <span className="truncate text-[0.72rem] font-bold tabular-nums text-foreground">
-                        {order ? currency.format(Number(order.total)) : `${table.capacity} kişilik`}
-                      </span>
-                      {dwell !== null ? (
+                    <span
+                      className={cn(
+                        "flex size-10 shrink-0 items-center justify-center rounded-lg text-base font-bold",
+                        meta.badge,
+                      )}
+                    >
+                      {table.name}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="flex items-center gap-1.5">
                         <span
                           className={cn(
-                            "shrink-0 rounded px-1 text-[0.62rem] font-semibold tabular-nums",
-                            dwellTone[dwellUrgency(dwell)],
+                            "relative flex size-1.5 shrink-0 rounded-full",
+                            meta.dot,
                           )}
                         >
-                          {formatDwell(dwell)}
+                          {meta.pulse ? (
+                            <span
+                              className={cn(
+                                "absolute inline-flex size-full animate-ping rounded-full opacity-60",
+                                meta.dot,
+                              )}
+                            />
+                          ) : null}
+                        </span>
+                        <span className="text-xs font-bold uppercase tracking-wide">
+                          {meta.label}
+                        </span>
+                      </span>
+                      {table.guest_label ? (
+                        <span className="mt-0.5 block truncate text-[0.7rem] font-semibold text-foreground">
+                          {table.guest_label}
                         </span>
                       ) : null}
+                      <span className="mt-0.5 flex items-baseline gap-1.5">
+                        <span className="truncate text-[0.72rem] font-bold tabular-nums text-foreground">
+                          {order
+                            ? currency.format(Number(order.total))
+                            : `${table.capacity} kişilik`}
+                        </span>
+                        {dwell !== null ? (
+                          <span
+                            className={cn(
+                              "shrink-0 rounded px-1 text-[0.62rem] font-semibold tabular-nums",
+                              dwellTone[dwellUrgency(dwell)],
+                            )}
+                          >
+                            {formatDwell(dwell)}
+                          </span>
+                        ) : null}
+                      </span>
                     </span>
-                  </span>
-                  <ChevronRight className="hidden size-4 text-muted-foreground xl:block" />
-                </button>
-              );
-            })}
-          </div>
-        </ScrollArea>
-      </aside>
-
-      <section className="min-w-0 border-r bg-muted/15">
-        <header className="flex min-h-16 items-center gap-3 border-b bg-card px-4">
-          <span className="flex size-10 items-center justify-center rounded-xl bg-brand-soft text-lg font-bold text-brand">
-            {selectedTable?.name ?? "—"}
-          </span>
-          <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2">
-              <h2 className="truncate text-sm font-semibold">
-                {selectedTable ? `Masa ${selectedTable.name}` : "Masa seçin"}
-              </h2>
-              {selectedOrder ? (
-                <StatusBadge tone={tableState[selectedTable?.state ?? "AVAILABLE"]?.tone ?? "neutral"}>
-                  {simplifiedOrderStatus(selectedOrder.status)}
-                </StatusBadge>
-              ) : null}
+                    <ChevronRight className="hidden size-4 text-muted-foreground xl:block" />
+                  </button>
+                );
+              })}
             </div>
-            <p className="text-[0.65rem] text-muted-foreground">
-              {selectedOrder?.customer_name || (selectedOrder ? `${selectedOrder.items.length} kalem` : "Yeni hesap")}
-            </p>
-          </div>
-          <Button
-            variant="outline"
-            className="h-9 rounded-xl"
-            onClick={() => setDialog("products")}
-            disabled={
-              !selectedTable ||
-              Boolean(selectedOrder && terminalOrderStatuses.has(selectedOrder.status))
-            }
-          >
-            <Plus />
-            Ürün ekle
-          </Button>
-        </header>
+          </ScrollArea>
+        </aside>
 
-        <ScrollArea className="h-[440px] xl:h-[calc(100dvh-12.2rem)]">
-          <div className="p-4">
-            {selectedOrder?.items?.length ? (
-              <div className="space-y-2">
-                {selectedOrder.items.map((item) => (
-                  <article key={item.id} className="flex items-start gap-3 rounded-2xl border bg-card p-3 shadow-sm">
-                    <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-muted text-xs font-bold">
-                      {Number(item.quantity)}×
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold">{item.product_name_snapshot}</p>
-                      {terminalItemStatuses.has(item.status) ? (
-                        <StatusBadge tone="danger" dot={false} className="mt-1 h-5 px-1.5 text-[0.56rem]">
-                          İptal
-                        </StatusBadge>
-                      ) : null}
-                      {item.modifiers?.length ? (
-                        <ul className="mt-1.5 space-y-0.5">
-                          {item.modifiers.map((modifier) => (
-                            <li
-                              key={modifier.id}
-                              className="flex items-baseline gap-1.5 text-[0.7rem] leading-4 text-muted-foreground"
+        <section className="min-w-0 border-r bg-muted/15">
+          <header className="flex min-h-16 items-center gap-3 border-b bg-card px-4">
+            <span className="flex size-10 items-center justify-center rounded-xl bg-brand-soft text-lg font-bold text-brand">
+              {selectedTable?.name ?? "—"}
+            </span>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <h2 className="truncate text-sm font-semibold">
+                  {selectedTable ? `Masa ${selectedTable.name}` : "Masa seçin"}
+                </h2>
+                {selectedOrder ? (
+                  <StatusBadge
+                    tone={
+                      tableState[selectedTable?.state ?? "AVAILABLE"]?.tone ??
+                      "neutral"
+                    }
+                  >
+                    {simplifiedOrderStatus(selectedOrder.status)}
+                  </StatusBadge>
+                ) : null}
+              </div>
+              <p className="text-[0.65rem] text-muted-foreground">
+                {selectedOrder?.customer_name ||
+                  (selectedOrder
+                    ? `${selectedOrder.items.length} kalem`
+                    : "Yeni hesap")}
+              </p>
+            </div>
+            <Button
+              variant="outline"
+              className="h-9 rounded-xl"
+              onClick={() => setDialog("products")}
+              disabled={
+                !selectedTable ||
+                Boolean(
+                  selectedOrder &&
+                  terminalOrderStatuses.has(selectedOrder.status),
+                )
+              }
+            >
+              <Plus />
+              Ürün ekle
+            </Button>
+          </header>
+
+          <ScrollArea className="h-[440px] xl:h-[calc(100dvh-12.2rem)]">
+            <div className="p-4">
+              {selectedOrder?.items?.length ? (
+                <div className="space-y-2">
+                  {selectedOrder.items.map((item) => (
+                    <article
+                      key={item.id}
+                      className="rounded-xl border bg-card p-3"
+                    >
+                      <div className="flex items-start gap-3">
+                        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-muted text-xs font-bold tabular-nums">
+                          {Number(item.quantity)}×
+                        </span>
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-semibold">
+                              {item.product_name_snapshot}
+                            </p>
+                            {item.is_complimentary ? (
+                              <StatusBadge
+                                tone="warning"
+                                dot={false}
+                                className="h-5 px-1.5 text-[0.58rem]"
+                              >
+                                İkram
+                              </StatusBadge>
+                            ) : null}
+                          </div>
+                          {terminalItemStatuses.has(item.status) ? (
+                            <StatusBadge
+                              tone="danger"
+                              dot={false}
+                              className="mt-1 h-5 px-1.5 text-[0.56rem]"
                             >
-                              <Plus className="size-3 shrink-0 text-brand" aria-hidden="true" />
-                              <span className="min-w-0 flex-1">
-                                {modifier.quantity > 1 ? `${modifier.quantity}× ` : ""}
-                                {modifier.name_snapshot}
+                              İptal
+                            </StatusBadge>
+                          ) : null}
+                          {item.modifiers?.length ? (
+                            <ul className="mt-1.5 space-y-0.5">
+                              {item.modifiers.map((modifier) => (
+                                <li
+                                  key={modifier.id}
+                                  className="flex items-baseline gap-1.5 text-[0.7rem] leading-4 text-muted-foreground"
+                                >
+                                  <Plus
+                                    className="size-3 shrink-0 text-brand"
+                                    aria-hidden="true"
+                                  />
+                                  <span className="min-w-0 flex-1">
+                                    {modifier.quantity > 1
+                                      ? `${modifier.quantity}× `
+                                      : ""}
+                                    {modifier.name_snapshot}
+                                  </span>
+                                  {Number(modifier.price_delta_snapshot) !==
+                                  0 ? (
+                                    <span className="shrink-0 tabular-nums">
+                                      {Number(modifier.price_delta_snapshot) > 0
+                                        ? "+"
+                                        : ""}
+                                      {currency.format(
+                                        Number(modifier.price_delta_snapshot),
+                                      )}
+                                    </span>
+                                  ) : null}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                          {item.note ? (
+                            // The customer's own words: shown in full, because a
+                            // truncated "az acılı" is worse than no note at all.
+                            <p className="mt-1.5 flex items-start gap-1.5 rounded-lg bg-amber-500/10 px-2 py-1 text-[0.7rem] leading-4 text-amber-800 dark:text-amber-200">
+                              <MessageSquare
+                                className="mt-px size-3 shrink-0"
+                                aria-hidden="true"
+                              />
+                              <span className="min-w-0 whitespace-pre-wrap break-words">
+                                {item.note}
                               </span>
-                              {Number(modifier.price_delta_snapshot) !== 0 ? (
-                                <span className="shrink-0 tabular-nums">
-                                  {Number(modifier.price_delta_snapshot) > 0 ? "+" : ""}
-                                  {currency.format(Number(modifier.price_delta_snapshot))}
-                                </span>
-                              ) : null}
-                            </li>
-                          ))}
-                        </ul>
-                      ) : null}
-                      {item.note ? (
-                        // The customer's own words: shown in full, because a
-                        // truncated "az acılı" is worse than no note at all.
-                        <p className="mt-1.5 flex items-start gap-1.5 rounded-lg bg-amber-500/10 px-2 py-1 text-[0.7rem] leading-4 text-amber-800 dark:text-amber-200">
-                          <MessageSquare className="mt-px size-3 shrink-0" aria-hidden="true" />
-                          <span className="min-w-0 whitespace-pre-wrap break-words">{item.note}</span>
-                        </p>
-                      ) : null}
-                    </div>
-                    <div className="text-right">
-                      <p className="text-sm font-semibold tabular-nums">{currency.format(Number(item.line_total))}</p>
-                      <p className="text-[0.62rem] text-muted-foreground">{currency.format(Number(item.unit_price))} / adet</p>
-                    </div>
-                    <DropdownMenu>
-                      <DropdownMenuTrigger
-                        render={
+                            </p>
+                          ) : null}
+                          {item.is_complimentary &&
+                          item.complimentary_reason ? (
+                            <p className="mt-1 text-[0.65rem] text-muted-foreground">
+                              İkram nedeni: {item.complimentary_reason}
+                            </p>
+                          ) : null}
+                        </div>
+                        <div className="text-right">
+                          <p className="text-sm font-semibold tabular-nums">
+                            {item.is_complimentary
+                              ? "İKRAM"
+                              : currency.format(Number(item.line_total))}
+                          </p>
+                          <p className="text-[0.62rem] text-muted-foreground">
+                            {currency.format(Number(item.unit_price))} / adet
+                          </p>
+                        </div>
+                      </div>
+                      {!terminalItemStatuses.has(item.status) ? (
+                        <div className="mt-3 flex flex-wrap items-center gap-2 border-t pt-3">
+                          <div className="flex h-10 items-center rounded-lg border bg-background">
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className="size-9 rounded-md"
+                              disabled={
+                                Number(item.quantity) <= 1 ||
+                                itemActionMutation.isPending ||
+                                removeItemMutation.isPending
+                              }
+                              onClick={() =>
+                                itemActionMutation.mutate({
+                                  item,
+                                  action: "DECREASE",
+                                })
+                              }
+                              aria-label={`${item.product_name_snapshot} adedini azalt`}
+                              title={
+                                Number(item.quantity) <= 1
+                                  ? "Son adet için Sil işlemini kullanın"
+                                  : "Adedi azalt"
+                              }
+                            >
+                              <Minus />
+                            </Button>
+                            <output
+                              className="w-9 text-center text-sm font-bold tabular-nums"
+                              aria-live="polite"
+                            >
+                              {Number(item.quantity)}
+                            </output>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="icon-sm"
+                              className="size-9 rounded-md"
+                              disabled={
+                                itemActionMutation.isPending ||
+                                removeItemMutation.isPending
+                              }
+                              onClick={() =>
+                                itemActionMutation.mutate({
+                                  item,
+                                  action: "INCREASE",
+                                })
+                              }
+                              aria-label={`${item.product_name_snapshot} adedini artır`}
+                            >
+                              <Plus />
+                            </Button>
+                          </div>
                           <Button
-                            variant="ghost"
-                            size="icon-sm"
-                            aria-label={`${item.product_name_snapshot} kalem işlemleri`}
-                            disabled={cancellationMutation.isPending}
-                          />
-                        }
-                      >
-                        <MoreHorizontal />
-                      </DropdownMenuTrigger>
-                      <DropdownMenuContent align="end">
-                        <DropdownMenuItem
-                          variant="destructive"
-                          disabled={terminalItemStatuses.has(item.status)}
-                          onClick={() => {
-                            setCancellationItem(item);
-                            setCancellationReason("");
-                            setDialog("cancel-item");
-                          }}
-                        >
-                          <CircleOff />
-                          İptal talebi oluştur
-                        </DropdownMenuItem>
-                      </DropdownMenuContent>
-                    </DropdownMenu>
-                  </article>
-                ))}
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-10 rounded-lg"
+                            disabled={
+                              !canMarkComplimentary ||
+                              itemActionMutation.isPending ||
+                              removeItemMutation.isPending
+                            }
+                            title={
+                              !canMarkComplimentary
+                                ? "İkram yetkiniz bulunmuyor"
+                                : undefined
+                            }
+                            onClick={() => {
+                              if (item.is_complimentary) {
+                                itemActionMutation.mutate({
+                                  item,
+                                  action: "REMOVE_COMPLIMENTARY",
+                                  reason: "İkram kaldırıldı",
+                                });
+                                return;
+                              }
+                              setComplimentaryItem(item);
+                              setComplimentaryReason("");
+                              setDialog("complimentary");
+                            }}
+                          >
+                            <Gift />
+                            {item.is_complimentary ? "İkramı kaldır" : "İkram"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="ml-auto h-10 rounded-lg text-destructive hover:text-destructive"
+                            disabled={
+                              itemActionMutation.isPending ||
+                              removeItemMutation.isPending
+                            }
+                            onClick={() => removeItemMutation.mutate(item)}
+                          >
+                            <Trash2 />
+                            Sil
+                          </Button>
+                        </div>
+                      ) : null}
+                    </article>
+                  ))}
                   <Button
                     variant="outline"
                     className="mt-3 h-12 w-full rounded-xl border-dashed text-muted-foreground"
@@ -1434,287 +1810,335 @@ export function CashierWorkspace() {
                     disabled={
                       !selectedTable ||
                       Boolean(
-                        selectedOrder && terminalOrderStatuses.has(selectedOrder.status),
+                        selectedOrder &&
+                        terminalOrderStatuses.has(selectedOrder.status),
                       )
                     }
-                >
-                  <Plus />
-                  Yeni kalem ekle
-                </Button>
-              </div>
-            ) : (
-              <div className="flex min-h-72 flex-col items-center justify-center rounded-2xl border border-dashed text-center">
-                <Grid2X2 className="size-7 text-muted-foreground" />
-                <h3 className="mt-4 text-sm font-semibold">
-                  {selectedTable ? `${selectedTable.name} için açık sipariş yok` : "Bir masa seçin"}
-                </h3>
-                <p className="mt-1 max-w-xs text-xs leading-5 text-muted-foreground">
-                  Müşterinin siparişini başlatmak için ürün ekleyin.
-                </p>
-                <Button
-                  className="mt-4 h-10 rounded-xl"
-                  onClick={() => setDialog("products")}
-                  disabled={
-                    !selectedTable ||
-                    Boolean(
-                      selectedOrder && terminalOrderStatuses.has(selectedOrder.status),
-                    )
-                  }
-                >
-                  <Plus />
-                  İlk ürünü ekle
-                </Button>
-              </div>
-            )}
-          </div>
-        </ScrollArea>
-
-        <footer className="grid grid-cols-2 gap-2 border-t bg-card p-3 sm:grid-cols-3 lg:grid-cols-5">
-          <Button
-            variant="outline"
-            className="h-10 rounded-xl"
-            disabled={
-              !selectedOrder || terminalOrderStatuses.has(selectedOrder.status)
-            }
-            onClick={() => setDialog("transfer")}
-          >
-            <ArrowLeftRight />
-            Masa taşı
-          </Button>
-          <Button
-            variant="outline"
-            className="h-10 rounded-xl"
-            disabled={
-              !selectedOrder || terminalOrderStatuses.has(selectedOrder.status)
-            }
-            onClick={() => setDialog("split")}
-          >
-            <Split />
-            Hesabı böl
-          </Button>
-          <Button
-            variant="outline"
-            className="h-10 rounded-xl"
-            disabled={
-              !selectedOrder ||
-              terminalOrderStatuses.has(selectedOrder.status) ||
-              mergeCandidates.length === 0 ||
-              mergeMutation.isPending
-            }
-            title={
-              mergeCandidates.length
-                ? undefined
-                : "Birleştirilebilecek başka aktif masa siparişi yok"
-            }
-            onClick={() => {
-              setMergeDestinationTable("");
-              setMergeReason("");
-              setMergeIdempotencyKey(`cashier-merge:${crypto.randomUUID()}`);
-              setDialog("merge");
-            }}
-          >
-            <Merge />
-            Masaları birleştir
-          </Button>
-          <Button
-            variant="outline"
-            className="h-10 rounded-xl"
-            disabled={!selectedOrder || printMutation.isPending}
-            onClick={() => printMutation.mutate("ORIGINAL")}
-            title="Hesap fişini ilk kez yazdır"
-          >
-            {printMutation.isPending && printMutation.variables === "ORIGINAL" ? (
-              <Loader2 className="animate-spin" />
-            ) : (
-              <Printer />
-            )}
-            Bilgi fişi
-          </Button>
-          <Button
-            variant="outline"
-            className="h-10 rounded-xl"
-            disabled={!selectedOrder || printMutation.isPending || !hasOriginalBillPrint}
-            onClick={() => printMutation.mutate("REPRINT")}
-            title={
-              hasOriginalBillPrint
-                ? "Fişi REPRINT olarak yeniden yazdır"
-                : "Önce hesap fişini bir kez yazdırın"
-            }
-          >
-            {printMutation.isPending && printMutation.variables === "REPRINT" ? (
-              <Loader2 className="animate-spin" />
-            ) : (
-              <Copy />
-            )}
-            Yeniden yazdır
-          </Button>
-        </footer>
-      </section>
-
-      <aside className="bg-card">
-        <div className="border-b p-4">
-          <h2 className="text-sm font-semibold">Hesap ve ödeme</h2>
-          <p className="mt-0.5 text-[0.65rem] text-muted-foreground">
-            {selectedTable ? `Masa ${selectedTable.name}` : "Masa seçilmedi"}
-          </p>
-        </div>
-        <div className="space-y-4 p-4">
-          <div className="rounded-2xl bg-muted/45 p-4 text-sm">
-            <div className="flex items-baseline justify-between">
-              <span className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
-                Toplam
-              </span>
-              <span className="text-3xl font-bold tabular-nums tracking-tight">
-                {currency.format(Number(selectedOrder?.total ?? 0))}
-              </span>
-            </div>
-            <div className="mt-3 space-y-1 border-t pt-3 text-[0.72rem]">
-              <div className="flex justify-between text-muted-foreground">
-                <span>Ara toplam</span>
-                <span className="tabular-nums">{currency.format(Number(selectedOrder?.subtotal ?? 0))}</span>
-              </div>
-              {Number(selectedOrder?.discount_total ?? 0) > 0 ? (
-                <div className="flex justify-between text-emerald-700 dark:text-emerald-300">
-                  <span>İndirimler</span>
-                  <span className="tabular-nums">−{currency.format(Number(selectedOrder?.discount_total ?? 0))}</span>
+                  >
+                    <Plus />
+                    Yeni kalem ekle
+                  </Button>
                 </div>
-              ) : null}
-              {Number(selectedOrder?.tax_total ?? 0) > 0 ? (
-                <div className="flex justify-between text-muted-foreground">
-                  <span>Vergi</span>
-                  <span className="tabular-nums">{currency.format(Number(selectedOrder?.tax_total ?? 0))}</span>
-                </div>
-              ) : null}
-            </div>
-            {paid > 0 ? (
-              <>
-                <div className="flex justify-between text-blue-700 dark:text-blue-300">
-                  <span>Ödenen</span>
-                  <span>{currency.format(paid)}</span>
-                </div>
-                <div className="flex justify-between font-semibold">
-                  <span>Kalan</span>
-                  <span>{currency.format(remaining)}</span>
-                </div>
-              </>
-            ) : null}
-          </div>
-
-          <StaffLoyaltyPanel
-            orderId={selectedOrder?.id ?? null}
-            items={selectedOrder?.items ?? []}
-            disabled={
-              paid > 0 ||
-              Boolean(selectedOrder && !loyaltyEligibleOrderStatuses.has(selectedOrder.status))
-            }
-            compact
-            onChanged={refreshOperations}
-          />
-
-          <Button
-            className="h-14 w-full rounded-2xl text-base"
-            disabled={
-              !selectedOrder ||
-              remaining <= 0 ||
-              terminalOrderStatuses.has(selectedOrder.status)
-            }
-            onClick={() => {
-              setPaymentAmount(remaining.toFixed(2));
-              setRoomReference("");
-              setDialog("payment");
-            }}
-          >
-            <WalletCards />
-            Ödeme al
-            <span className="ml-auto">{currency.format(remaining)}</span>
-          </Button>
-
-          <div className="space-y-1.5">
-            <Button
-              variant="outline"
-              className="h-12 w-full rounded-xl"
-              disabled={!tableCanClose || closeTableMutation.isPending}
-              aria-describedby="table-close-hint"
-              onClick={() => setDialog("close-table")}
-            >
-              {closeTableMutation.isPending ? (
-                <Loader2 className="animate-spin" />
               ) : (
-                <DoorClosed />
+                <div className="flex min-h-72 flex-col items-center justify-center rounded-2xl border border-dashed text-center">
+                  <Grid2X2 className="size-7 text-muted-foreground" />
+                  <h3 className="mt-4 text-sm font-semibold">
+                    {selectedTable
+                      ? `${selectedTable.name} için açık sipariş yok`
+                      : "Bir masa seçin"}
+                  </h3>
+                  <p className="mt-1 max-w-xs text-xs leading-5 text-muted-foreground">
+                    Müşterinin siparişini başlatmak için ürün ekleyin.
+                  </p>
+                  <Button
+                    className="mt-4 h-10 rounded-xl"
+                    onClick={() => setDialog("products")}
+                    disabled={
+                      !selectedTable ||
+                      Boolean(
+                        selectedOrder &&
+                        terminalOrderStatuses.has(selectedOrder.status),
+                      )
+                    }
+                  >
+                    <Plus />
+                    İlk ürünü ekle
+                  </Button>
+                </div>
               )}
-              Masayı kapat
-            </Button>
-            <p
-              id="table-close-hint"
-              className="px-1 text-[0.65rem] leading-4 text-muted-foreground"
-              aria-live="polite"
-            >
-              {tableCloseHint}
-            </p>
-          </div>
+            </div>
+          </ScrollArea>
 
-          <div className="grid grid-cols-2 gap-2">
+          <footer className="grid grid-cols-2 gap-2 border-t bg-card p-3 sm:grid-cols-3 lg:grid-cols-5">
             <Button
               variant="outline"
-              className="h-11 rounded-xl"
+              className="h-10 rounded-xl"
               disabled={
-                !selectedOrder || terminalOrderStatuses.has(selectedOrder.status)
+                !selectedOrder ||
+                terminalOrderStatuses.has(selectedOrder.status)
               }
-              onClick={() => setDialog("discount")}
+              onClick={() => setDialog("transfer")}
             >
-              <Tags />
-              İndirim
+              <ArrowLeftRight />
+              Masa taşı
             </Button>
             <Button
               variant="outline"
-              className="h-11 rounded-xl"
+              className="h-10 rounded-xl"
               disabled={
-                !selectedOrder || terminalOrderStatuses.has(selectedOrder.status)
+                !selectedOrder ||
+                terminalOrderStatuses.has(selectedOrder.status)
               }
               onClick={() => setDialog("split")}
             >
               <Split />
-              Parçalı ödeme
+              Hesabı böl
             </Button>
-          </div>
+            <Button
+              variant="outline"
+              className="h-10 rounded-xl"
+              disabled={
+                !selectedOrder ||
+                terminalOrderStatuses.has(selectedOrder.status) ||
+                mergeCandidates.length === 0 ||
+                mergeMutation.isPending
+              }
+              title={
+                mergeCandidates.length
+                  ? undefined
+                  : "Birleştirilebilecek başka aktif masa siparişi yok"
+              }
+              onClick={() => {
+                setMergeDestinationTable("");
+                setMergeReason("");
+                setMergeIdempotencyKey(`cashier-merge:${crypto.randomUUID()}`);
+                setDialog("merge");
+              }}
+            >
+              <Merge />
+              Masaları birleştir
+            </Button>
+            <Button
+              variant="outline"
+              className="h-10 rounded-xl"
+              disabled={!selectedOrder || printMutation.isPending}
+              onClick={() => printMutation.mutate("ORIGINAL")}
+              title="Hesap fişini ilk kez yazdır"
+            >
+              {printMutation.isPending &&
+              printMutation.variables === "ORIGINAL" ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Printer />
+              )}
+              Bilgi fişi
+            </Button>
+            <Button
+              variant="outline"
+              className="h-10 rounded-xl"
+              disabled={
+                !selectedOrder ||
+                printMutation.isPending ||
+                !hasOriginalBillPrint
+              }
+              onClick={() => printMutation.mutate("REPRINT")}
+              title={
+                hasOriginalBillPrint
+                  ? "Fişi REPRINT olarak yeniden yazdır"
+                  : "Önce hesap fişini bir kez yazdırın"
+              }
+            >
+              {printMutation.isPending &&
+              printMutation.variables === "REPRINT" ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Copy />
+              )}
+              Yeniden yazdır
+            </Button>
+          </footer>
+        </section>
 
-          <div className="rounded-2xl border p-3">
-            <div className="mb-3 flex items-center justify-between">
-              <h3 className="text-xs font-semibold">Ödeme geçmişi</h3>
-              <span className="text-[0.62rem] text-muted-foreground">{selectedOrder?.payments.length ?? 0} kayıt</span>
-            </div>
-            {selectedOrder?.payments.length ? (
-              <div className="space-y-2">
-                {selectedOrder.payments.map((payment) => (
-                  <div key={payment.id} className="flex items-center gap-2 rounded-xl bg-muted/45 p-2.5">
-                    <span className="flex size-8 items-center justify-center rounded-lg bg-card">
-                      {payment.method === "CASH" ? (
-                        <Banknote className="size-4" />
-                      ) : payment.method === "ROOM_CHARGE" ? (
-                        <ReceiptText className="size-4" />
-                      ) : (
-                        <CreditCard className="size-4" />
+        <aside className="bg-card">
+          <div className="border-b p-4">
+            <h2 className="text-sm font-semibold">Hesap ve ödeme</h2>
+            <p className="mt-0.5 text-[0.65rem] text-muted-foreground">
+              {selectedTable ? `Masa ${selectedTable.name}` : "Masa seçilmedi"}
+            </p>
+          </div>
+          <div className="space-y-4 p-4">
+            <div className="rounded-2xl bg-muted/45 p-4 text-sm">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[0.7rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
+                  Toplam
+                </span>
+                <span className="text-3xl font-bold tabular-nums tracking-tight">
+                  {currency.format(Number(selectedOrder?.total ?? 0))}
+                </span>
+              </div>
+              <div className="mt-3 space-y-1 border-t pt-3 text-[0.72rem]">
+                <div className="flex justify-between text-muted-foreground">
+                  <span>Ara toplam</span>
+                  <span className="tabular-nums">
+                    {currency.format(Number(selectedOrder?.subtotal ?? 0))}
+                  </span>
+                </div>
+                {Number(selectedOrder?.discount_total ?? 0) > 0 ? (
+                  <div className="flex justify-between text-emerald-700 dark:text-emerald-300">
+                    <span>İndirimler</span>
+                    <span className="tabular-nums">
+                      −
+                      {currency.format(
+                        Number(selectedOrder?.discount_total ?? 0),
                       )}
                     </span>
-                    <span className="min-w-0 flex-1 text-xs font-semibold">
-                      {PAYMENT_METHOD_LABELS[payment.method] ?? payment.method}
-                      {payment.reference ? (
-                        <span className="ml-1 font-normal text-muted-foreground">· {payment.reference}</span>
-                      ) : null}
-                    </span>
-                    <span className="text-xs font-semibold">{currency.format(Number(payment.amount))}</span>
                   </div>
-                ))}
+                ) : null}
+                {Number(selectedOrder?.tax_total ?? 0) > 0 ? (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Vergi</span>
+                    <span className="tabular-nums">
+                      {currency.format(Number(selectedOrder?.tax_total ?? 0))}
+                    </span>
+                  </div>
+                ) : null}
+                {Number(selectedOrder?.service_charge_amount ?? 0) > 0 ? (
+                  <div className="flex justify-between text-muted-foreground">
+                    <span>Servis</span>
+                    <span className="tabular-nums">
+                      {currency.format(
+                        Number(selectedOrder?.service_charge_amount ?? 0),
+                      )}
+                    </span>
+                  </div>
+                ) : null}
               </div>
-            ) : (
-              <div className="flex min-h-20 flex-col items-center justify-center rounded-xl bg-muted/30 text-center">
-                <CircleDollarSign className="size-4 text-muted-foreground" />
-                <p className="mt-2 text-[0.65rem] text-muted-foreground">Henüz ödeme yok</p>
+              {paid > 0 ? (
+                <>
+                  <div className="flex justify-between text-blue-700 dark:text-blue-300">
+                    <span>Ödenen</span>
+                    <span>{currency.format(paid)}</span>
+                  </div>
+                  <div className="flex justify-between font-semibold">
+                    <span>Kalan</span>
+                    <span>{currency.format(remaining)}</span>
+                  </div>
+                </>
+              ) : null}
+            </div>
+
+            <StaffLoyaltyPanel
+              orderId={selectedOrder?.id ?? null}
+              items={selectedOrder?.items ?? []}
+              disabled={
+                paid > 0 ||
+                Boolean(
+                  selectedOrder &&
+                  !loyaltyEligibleOrderStatuses.has(selectedOrder.status),
+                )
+              }
+              compact
+              onChanged={refreshOperations}
+            />
+
+            <Button
+              className="h-14 w-full rounded-2xl text-base"
+              disabled={
+                !selectedOrder ||
+                remaining <= 0 ||
+                terminalOrderStatuses.has(selectedOrder.status)
+              }
+              onClick={() => {
+                setPaymentAmount(remaining.toFixed(2));
+                setRoomReference("");
+                setDialog("payment");
+              }}
+            >
+              <WalletCards />
+              Ödeme al
+              <span className="ml-auto">{currency.format(remaining)}</span>
+            </Button>
+
+            <div className="space-y-1.5">
+              <Button
+                variant="outline"
+                className="h-12 w-full rounded-xl"
+                disabled={!tableCanClose || closeTableMutation.isPending}
+                aria-describedby="table-close-hint"
+                onClick={() => setDialog("close-table")}
+              >
+                {closeTableMutation.isPending ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <DoorClosed />
+                )}
+                Masayı kapat
+              </Button>
+              <p
+                id="table-close-hint"
+                className="px-1 text-[0.65rem] leading-4 text-muted-foreground"
+                aria-live="polite"
+              >
+                {tableCloseHint}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <Button
+                variant="outline"
+                className="h-11 rounded-xl"
+                disabled={
+                  !selectedOrder ||
+                  terminalOrderStatuses.has(selectedOrder.status)
+                }
+                onClick={() => setDialog("discount")}
+              >
+                <Tags />
+                İndirim
+              </Button>
+              <Button
+                variant="outline"
+                className="h-11 rounded-xl"
+                disabled={
+                  !selectedOrder ||
+                  terminalOrderStatuses.has(selectedOrder.status)
+                }
+                onClick={() => setDialog("split")}
+              >
+                <Split />
+                Parçalı ödeme
+              </Button>
+            </div>
+
+            <div className="rounded-2xl border p-3">
+              <div className="mb-3 flex items-center justify-between">
+                <h3 className="text-xs font-semibold">Ödeme geçmişi</h3>
+                <span className="text-[0.62rem] text-muted-foreground">
+                  {selectedOrder?.payments.length ?? 0} kayıt
+                </span>
               </div>
-            )}
+              {selectedOrder?.payments.length ? (
+                <div className="space-y-2">
+                  {selectedOrder.payments.map((payment) => (
+                    <div
+                      key={payment.id}
+                      className="flex items-center gap-2 rounded-xl bg-muted/45 p-2.5"
+                    >
+                      <span className="flex size-8 items-center justify-center rounded-lg bg-card">
+                        {payment.method === "CASH" ? (
+                          <Banknote className="size-4" />
+                        ) : payment.method === "ROOM_CHARGE" ? (
+                          <ReceiptText className="size-4" />
+                        ) : (
+                          <CreditCard className="size-4" />
+                        )}
+                      </span>
+                      <span className="min-w-0 flex-1 text-xs font-semibold">
+                        {PAYMENT_METHOD_LABELS[payment.method] ??
+                          payment.method}
+                        {payment.reference ? (
+                          <span className="ml-1 font-normal text-muted-foreground">
+                            · {payment.reference}
+                          </span>
+                        ) : null}
+                      </span>
+                      <span className="text-xs font-semibold">
+                        {currency.format(Number(payment.amount))}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="flex min-h-20 flex-col items-center justify-center rounded-xl bg-muted/30 text-center">
+                  <CircleDollarSign className="size-4 text-muted-foreground" />
+                  <p className="mt-2 text-[0.65rem] text-muted-foreground">
+                    Henüz ödeme yok
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
-        </div>
-      </aside>
+        </aside>
       </div>
 
       <Dialog
@@ -1728,14 +2152,17 @@ export function CashierWorkspace() {
             <DialogTitle>Masayı kapat</DialogTitle>
             <DialogDescription>
               Masa {selectedTable?.name ?? "—"} oturumunu kapatmak üzeresiniz.
-              İşlem denetim kaydına yazılır ve masa yeniden sipariş almaya açılır.
+              İşlem denetim kaydına yazılır ve masa yeniden sipariş almaya
+              açılır.
             </DialogDescription>
           </DialogHeader>
           <div className="rounded-xl border bg-muted/35 p-3 text-sm">
             <div className="flex items-center justify-between gap-3">
               <span className="text-muted-foreground">Hesap durumu</span>
               <span className="font-semibold">
-                {selectedOrder ? simplifiedOrderStatus(selectedOrder.status) : "—"}
+                {selectedOrder
+                  ? simplifiedOrderStatus(selectedOrder.status)
+                  : "—"}
               </span>
             </div>
             <div className="mt-2 flex items-center justify-between gap-3">
@@ -1768,11 +2195,16 @@ export function CashierWorkspace() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={dialog === "products"} onOpenChange={(open) => !open && setDialog(null)}>
+      <Dialog
+        open={dialog === "products"}
+        onOpenChange={(open) => !open && setDialog(null)}
+      >
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
             <DialogTitle>Masa {selectedTable?.name} · Ürün ekle</DialogTitle>
-            <DialogDescription>Eklenen ürün doğrudan mevcut siparişin yeni gönderimine katılır.</DialogDescription>
+            <DialogDescription>
+              Eklenen ürün doğrudan mevcut siparişin yeni gönderimine katılır.
+            </DialogDescription>
           </DialogHeader>
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
@@ -1809,9 +2241,13 @@ export function CashierWorkspace() {
                   )}
                 </span>
                 <span className="flex min-h-14 flex-col p-2.5">
-                  <span className="line-clamp-1 text-sm font-semibold">{product.name}</span>
+                  <span className="line-clamp-1 text-sm font-semibold">
+                    {product.name}
+                  </span>
                   <span className="mt-auto flex w-full items-center justify-between pt-1.5">
-                    <span className="text-xs font-bold">{currency.format(Number(product.selling_price))}</span>
+                    <span className="text-xs font-bold">
+                      {currency.format(Number(product.selling_price))}
+                    </span>
                     <Plus className="size-4 text-brand" />
                   </span>
                 </span>
@@ -1821,11 +2257,16 @@ export function CashierWorkspace() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={dialog === "payment"} onOpenChange={(open) => !open && setDialog(null)}>
+      <Dialog
+        open={dialog === "payment"}
+        onOpenChange={(open) => !open && setDialog(null)}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Ödeme kaydet</DialogTitle>
-            <DialogDescription>Kısmi veya tam ödeme alın. Kalan tutar otomatik hesaplanır.</DialogDescription>
+            <DialogDescription>
+              Kısmi veya tam ödeme alın. Kalan tutar otomatik hesaplanır.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
@@ -1844,7 +2285,8 @@ export function CashierWorkspace() {
                       onClick={() => setPaymentMethod(String(value))}
                       className={cn(
                         "flex min-h-20 flex-col items-center justify-center rounded-xl border text-xs font-semibold",
-                        paymentMethod === value && "border-brand/35 bg-brand-soft text-brand",
+                        paymentMethod === value &&
+                          "border-brand/35 bg-brand-soft text-brand",
                       )}
                     >
                       <MethodIcon className="mb-2 size-4" />
@@ -1856,7 +2298,9 @@ export function CashierWorkspace() {
             </div>
             {paymentMethod === "ROOM_CHARGE" ? (
               <div className="space-y-2">
-                <Label htmlFor="payment-room-reference">Oda numarası / adı</Label>
+                <Label htmlFor="payment-room-reference">
+                  Oda numarası / adı
+                </Label>
                 <Input
                   id="payment-room-reference"
                   value={roomReference}
@@ -1891,22 +2335,26 @@ export function CashierWorkspace() {
                 className="h-14 rounded-xl text-xl font-semibold"
               />
               <div className="grid grid-cols-3 gap-2">
-                {[remaining / 2, remaining / 3, remaining].map((amount, index) => (
-                  <Button
-                    key={index}
-                    type="button"
-                    variant="outline"
-                    size="sm"
-                    onClick={() => setPaymentAmount(amount.toFixed(2))}
-                  >
-                    {index === 0 ? "½" : index === 1 ? "⅓" : "Tamamı"}
-                  </Button>
-                ))}
+                {[remaining / 2, remaining / 3, remaining].map(
+                  (amount, index) => (
+                    <Button
+                      key={index}
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPaymentAmount(amount.toFixed(2))}
+                    >
+                      {index === 0 ? "½" : index === 1 ? "⅓" : "Tamamı"}
+                    </Button>
+                  ),
+                )}
               </div>
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialog(null)}>Vazgeç</Button>
+            <Button variant="outline" onClick={() => setDialog(null)}>
+              Vazgeç
+            </Button>
             <Button
               disabled={
                 !Number(paymentAmount) ||
@@ -1916,18 +2364,27 @@ export function CashierWorkspace() {
               }
               onClick={() => paymentMutation.mutate()}
             >
-              {paymentMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
+              {paymentMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Check />
+              )}
               Ödemeyi kaydet
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={dialog === "discount"} onOpenChange={(open) => !open && setDialog(null)}>
+      <Dialog
+        open={dialog === "discount"}
+        onOpenChange={(open) => !open && setDialog(null)}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>İndirim talebi</DialogTitle>
-            <DialogDescription>Yetki limitini aşan indirimler yönetici onayına gider.</DialogDescription>
+            <DialogDescription>
+              Yetki limitini aşan indirimler yönetici onayına gider.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="grid grid-cols-2 gap-2">
@@ -1967,7 +2424,9 @@ export function CashierWorkspace() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialog(null)}>Vazgeç</Button>
+            <Button variant="outline" onClick={() => setDialog(null)}>
+              Vazgeç
+            </Button>
             <Button
               disabled={
                 !discountValue ||
@@ -1976,29 +2435,45 @@ export function CashierWorkspace() {
               }
               onClick={() => discountMutation.mutate()}
             >
-              {discountMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
+              {discountMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Check />
+              )}
               Onaya gönder
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={dialog === "transfer"} onOpenChange={(open) => !open && setDialog(null)}>
+      <Dialog
+        open={dialog === "transfer"}
+        onOpenChange={(open) => !open && setDialog(null)}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Masa transferi</DialogTitle>
-            <DialogDescription>Açık oturum ve sipariş hedef masaya transaction içinde taşınır.</DialogDescription>
+            <DialogDescription>
+              Açık oturum ve sipariş hedef masaya transaction içinde taşınır.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div className="space-y-2">
               <Label>Hedef masa</Label>
-              <Select value={destinationTable} onValueChange={(value) => setDestinationTable(value ?? "")}>
+              <Select
+                value={destinationTable}
+                onValueChange={(value) => setDestinationTable(value ?? "")}
+              >
                 <SelectTrigger className="h-11 w-full rounded-xl">
                   <SelectValue placeholder="Müsait masa seçin" />
                 </SelectTrigger>
                 <SelectContent>
                   {tables
-                    .filter((table) => table.state === "AVAILABLE" && table.id !== selectedTable?.id)
+                    .filter(
+                      (table) =>
+                        table.state === "AVAILABLE" &&
+                        table.id !== selectedTable?.id,
+                    )
                     .map((table) => (
                       <SelectItem key={table.id} value={table.id}>
                         {table.name} · {table.capacity} kişi
@@ -2019,7 +2494,9 @@ export function CashierWorkspace() {
             </div>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialog(null)}>Vazgeç</Button>
+            <Button variant="outline" onClick={() => setDialog(null)}>
+              Vazgeç
+            </Button>
             <Button
               disabled={
                 !destinationTable ||
@@ -2028,7 +2505,11 @@ export function CashierWorkspace() {
               }
               onClick={() => transferMutation.mutate()}
             >
-              {transferMutation.isPending ? <Loader2 className="animate-spin" /> : <ArrowLeftRight />}
+              {transferMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <ArrowLeftRight />
+              )}
               Masayı taşı
             </Button>
           </DialogFooter>
@@ -2050,8 +2531,8 @@ export function CashierWorkspace() {
           <DialogHeader>
             <DialogTitle>Masaları birleştir</DialogTitle>
             <DialogDescription>
-              Masa {selectedTable?.name} hesabındaki aktif kalemler hedef masanın
-              açık siparişine taşınır. Kaynak hesap kapatılır.
+              Masa {selectedTable?.name} hesabındaki aktif kalemler hedef
+              masanın açık siparişine taşınır. Kaynak hesap kapatılır.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -2066,9 +2547,7 @@ export function CashierWorkspace() {
               <Label htmlFor="merge-destination">Hedef aktif masa</Label>
               <Select
                 value={mergeDestinationTable}
-                onValueChange={(value) =>
-                  setMergeDestinationTable(value ?? "")
-                }
+                onValueChange={(value) => setMergeDestinationTable(value ?? "")}
               >
                 <SelectTrigger
                   id="merge-destination"
@@ -2145,6 +2624,95 @@ export function CashierWorkspace() {
                   <Merge />
                 )}
                 Hesapları birleştir
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={dialog === "complimentary"}
+        onOpenChange={(open) => {
+          if (!open && !itemActionMutation.isPending) {
+            setComplimentaryItem(null);
+            setComplimentaryReason("");
+            setDialog(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Ürünü ikram yap</DialogTitle>
+            <DialogDescription>
+              Ürün hazırlık akışında kalır; müşterinin hesabına 0,00 TL olarak
+              yansır.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            id="complimentary-item-form"
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!complimentaryItem) return;
+              itemActionMutation.mutate({
+                item: complimentaryItem,
+                action: "SET_COMPLIMENTARY",
+                reason: complimentaryReason.trim(),
+              });
+            }}
+          >
+            <div className="flex items-center justify-between gap-3 rounded-xl border bg-muted/35 p-3">
+              <div>
+                <p className="text-sm font-semibold">
+                  {complimentaryItem?.product_name_snapshot}
+                </p>
+                <p className="mt-0.5 text-xs text-muted-foreground">
+                  {Number(complimentaryItem?.quantity ?? 0)} adet
+                </p>
+              </div>
+              <span className="font-semibold tabular-nums">
+                {currency.format(Number(complimentaryItem?.line_total ?? 0))}
+              </span>
+            </div>
+            <div>
+              <Label htmlFor="complimentary-reason">İkram nedeni</Label>
+              <Input
+                id="complimentary-reason"
+                value={complimentaryReason}
+                onChange={(event) => setComplimentaryReason(event.target.value)}
+                placeholder="Örn. müşteri memnuniyeti"
+                maxLength={255}
+                className="mt-1.5"
+                autoFocus
+              />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Denetim kaydı için en az 3 karakter.
+              </p>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={itemActionMutation.isPending}
+                onClick={() => setDialog(null)}
+              >
+                Vazgeç
+              </Button>
+              <Button
+                type="submit"
+                form="complimentary-item-form"
+                disabled={
+                  !complimentaryItem ||
+                  complimentaryReason.trim().length < 3 ||
+                  itemActionMutation.isPending
+                }
+              >
+                {itemActionMutation.isPending ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <Gift />
+                )}
+                İkram olarak kaydet
               </Button>
             </DialogFooter>
           </form>
@@ -2264,11 +2832,17 @@ export function CashierWorkspace() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={dialog === "split"} onOpenChange={(open) => !open && setDialog(null)}>
+      <Dialog
+        open={dialog === "split"}
+        onOpenChange={(open) => !open && setDialog(null)}
+      >
         <DialogContent className="sm:max-w-md">
           <DialogHeader>
             <DialogTitle>Hesabı tutara göre böl</DialogTitle>
-            <DialogDescription>Yeni alt hesap tutarı toplam bakiyeyi aşamaz; finansal bütünlük korunur.</DialogDescription>
+            <DialogDescription>
+              Yeni alt hesap tutarı toplam bakiyeyi aşamaz; finansal bütünlük
+              korunur.
+            </DialogDescription>
           </DialogHeader>
           <div className="space-y-2">
             <Label htmlFor="split-amount">Ayrılacak tutar</Label>
@@ -2285,7 +2859,9 @@ export function CashierWorkspace() {
             />
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setDialog(null)}>Vazgeç</Button>
+            <Button variant="outline" onClick={() => setDialog(null)}>
+              Vazgeç
+            </Button>
             <Button
               disabled={
                 !Number(splitAmount) ||
@@ -2294,19 +2870,27 @@ export function CashierWorkspace() {
               }
               onClick={() => splitMutation.mutate()}
             >
-              {splitMutation.isPending ? <Loader2 className="animate-spin" /> : <Split />}
+              {splitMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Split />
+              )}
               Alt hesap oluştur
             </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={dialog === "qr-queue"} onOpenChange={(open) => !open && setDialog(null)}>
+      <Dialog
+        open={dialog === "qr-queue"}
+        onOpenChange={(open) => !open && setDialog(null)}
+      >
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>QR sipariş talepleri</DialogTitle>
             <DialogDescription>
-              Onaylanan talepler doğrudan siparişe dönüşür ve masa hesabına eklenir.
+              Onaylanan talepler doğrudan siparişe dönüşür ve masa hesabına
+              eklenir.
             </DialogDescription>
           </DialogHeader>
           {qrRequestsQuery.isLoading ? (
@@ -2316,7 +2900,9 @@ export function CashierWorkspace() {
           ) : qrRequestsQuery.isError ? (
             <div className="flex min-h-32 flex-col items-center justify-center text-center">
               <AlertTriangle className="size-7 text-destructive" />
-              <p className="mt-3 text-sm font-semibold">QR talepleri alınamadı</p>
+              <p className="mt-3 text-sm font-semibold">
+                QR talepleri alınamadı
+              </p>
               <Button
                 type="button"
                 variant="outline"
@@ -2330,7 +2916,9 @@ export function CashierWorkspace() {
           ) : qrPendingRequests.length === 0 ? (
             <div className="flex min-h-32 flex-col items-center justify-center text-center">
               <QrCode className="size-7 text-muted-foreground/50" />
-              <p className="mt-3 text-sm font-semibold">Bekleyen QR talebi yok</p>
+              <p className="mt-3 text-sm font-semibold">
+                Bekleyen QR talebi yok
+              </p>
               <p className="mt-1 text-xs text-muted-foreground">
                 Yeni müşteri talepleri geldiğinde burada görünür.
               </p>
@@ -2338,17 +2926,29 @@ export function CashierWorkspace() {
           ) : (
             <div className="space-y-2">
               {qrPendingRequests.map((request) => {
-                const table = tables.find((item) => item.id === request.table_id);
-                const itemCount = request.items_payload.reduce((total, item) => {
-                  const quantity = Number((item as { quantity?: unknown }).quantity);
-                  return total + (Number.isFinite(quantity) ? quantity : 0);
-                }, 0);
+                const table = tables.find(
+                  (item) => item.id === request.table_id,
+                );
+                const itemCount = request.items_payload.reduce(
+                  (total, item) => {
+                    const quantity = Number(
+                      (item as { quantity?: unknown }).quantity,
+                    );
+                    return total + (Number.isFinite(quantity) ? quantity : 0);
+                  },
+                  0,
+                );
                 const approving =
-                  approveQrRequest.isPending && approveQrRequest.variables === request.id;
+                  approveQrRequest.isPending &&
+                  approveQrRequest.variables === request.id;
                 const rejecting =
-                  rejectQrRequest.isPending && rejectQrRequest.variables === request.id;
+                  rejectQrRequest.isPending &&
+                  rejectQrRequest.variables === request.id;
                 return (
-                  <article key={request.id} className="rounded-xl border bg-card p-3">
+                  <article
+                    key={request.id}
+                    className="rounded-xl border bg-card p-3"
+                  >
                     <div className="flex items-center justify-between gap-3">
                       <p className="font-semibold">{table?.name ?? "Masa"}</p>
                       <span className="text-xs text-muted-foreground">
@@ -2370,7 +2970,11 @@ export function CashierWorkspace() {
                         disabled={approving || rejecting}
                         onClick={() => void handleRejectQr(request)}
                       >
-                        {rejecting ? <Loader2 className="animate-spin" /> : <X />}
+                        {rejecting ? (
+                          <Loader2 className="animate-spin" />
+                        ) : (
+                          <X />
+                        )}
                         Reddet
                       </Button>
                       <Button
@@ -2378,7 +2982,11 @@ export function CashierWorkspace() {
                         disabled={approving || rejecting}
                         onClick={() => void handleApproveQr(request)}
                       >
-                        {approving ? <Loader2 className="animate-spin" /> : <Check />}
+                        {approving ? (
+                          <Loader2 className="animate-spin" />
+                        ) : (
+                          <Check />
+                        )}
                         Onayla
                       </Button>
                     </div>
@@ -2390,13 +2998,16 @@ export function CashierWorkspace() {
         </DialogContent>
       </Dialog>
 
-      <Dialog open={dialog === "approvals-queue"} onOpenChange={(open) => !open && setDialog(null)}>
+      <Dialog
+        open={dialog === "approvals-queue"}
+        onOpenChange={(open) => !open && setDialog(null)}
+      >
         <DialogContent className="max-h-[85dvh] overflow-y-auto sm:max-w-lg">
           <DialogHeader>
             <DialogTitle>Onay bekleyenler</DialogTitle>
             <DialogDescription>
-              Ürün iptal taleplerini burada onaylayabilirsiniz. İndirim talepleri yönetici
-              onayı gerektirir.
+              Ürün iptal taleplerini burada onaylayabilirsiniz. İndirim
+              talepleri yönetici onayı gerektirir.
             </DialogDescription>
           </DialogHeader>
           {approvalsQuery.isLoading ? (
@@ -2406,7 +3017,9 @@ export function CashierWorkspace() {
           ) : approvalsQuery.isError ? (
             <div className="flex min-h-32 flex-col items-center justify-center text-center">
               <AlertTriangle className="size-7 text-destructive" />
-              <p className="mt-3 text-sm font-semibold">Onay talepleri alınamadı</p>
+              <p className="mt-3 text-sm font-semibold">
+                Onay talepleri alınamadı
+              </p>
               <Button
                 type="button"
                 variant="outline"
@@ -2435,9 +3048,14 @@ export function CashierWorkspace() {
                   rejectCancellationMutation.isPending &&
                   rejectCancellationMutation.variables?.id === approval.id;
                 return (
-                  <article key={approval.id} className="rounded-xl border bg-card p-3">
+                  <article
+                    key={approval.id}
+                    className="rounded-xl border bg-card p-3"
+                  >
                     <div className="flex items-center justify-between gap-3">
-                      <p className="font-semibold">{approval.table_name ?? "Masa bilinmiyor"}</p>
+                      <p className="font-semibold">
+                        {approval.table_name ?? "Masa bilinmiyor"}
+                      </p>
                       <span className="text-xs text-muted-foreground">
                         {formatRelativeTime(approval.created_at)}
                       </span>
@@ -2449,24 +3067,38 @@ export function CashierWorkspace() {
                           ? `İptal talebi · ${approval.order_item_name}`
                           : "Sipariş iptal talebi"}
                     </p>
-                    <p className="mt-2 text-xs italic text-muted-foreground">“{approval.reason}”</p>
+                    <p className="mt-2 text-xs italic text-muted-foreground">
+                      “{approval.reason}”
+                    </p>
                     {isCancellation ? (
                       <div className="mt-3 grid grid-cols-2 gap-2">
                         <Button
                           variant="outline"
                           size="sm"
                           disabled={approving || rejecting}
-                          onClick={() => rejectCancellationMutation.mutate(approval)}
+                          onClick={() =>
+                            rejectCancellationMutation.mutate(approval)
+                          }
                         >
-                          {rejecting ? <Loader2 className="animate-spin" /> : <X />}
+                          {rejecting ? (
+                            <Loader2 className="animate-spin" />
+                          ) : (
+                            <X />
+                          )}
                           Reddet
                         </Button>
                         <Button
                           size="sm"
                           disabled={approving || rejecting}
-                          onClick={() => approveCancellationMutation.mutate(approval)}
+                          onClick={() =>
+                            approveCancellationMutation.mutate(approval)
+                          }
                         >
-                          {approving ? <Loader2 className="animate-spin" /> : <Check />}
+                          {approving ? (
+                            <Loader2 className="animate-spin" />
+                          ) : (
+                            <Check />
+                          )}
                           Onayla
                         </Button>
                       </div>

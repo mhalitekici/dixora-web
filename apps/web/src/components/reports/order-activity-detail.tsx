@@ -1,13 +1,13 @@
-"use client"
+"use client";
 
-import { useMutation, useQuery } from "@tanstack/react-query"
-import { ExternalLink, Loader2, Receipt } from "lucide-react"
-import Link from "next/link"
-import { useState } from "react"
-import { toast } from "sonner"
+import { useMutation, useQuery } from "@tanstack/react-query";
+import { ExternalLink, Loader2, Receipt } from "lucide-react";
+import Link from "next/link";
+import { useState } from "react";
+import { toast } from "sonner";
 
-import { ReceiptPreviewDialog } from "@/components/printing/receipt-preview-dialog"
-import type { ReceiptDocument } from "@/components/printing/receipt-types"
+import { ReceiptPreviewDialog } from "@/components/printing/receipt-preview-dialog";
+import type { ReceiptDocument } from "@/components/printing/receipt-types";
 import {
   CANCELLED_ITEM_STATUSES,
   CHANNEL_LABELS,
@@ -15,9 +15,9 @@ import {
   PAYMENT_STATUS_LABELS,
   SOURCE_LABELS,
   STATUS_LABELS,
-} from "@/components/reports/order-activity-labels"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+} from "@/components/reports/order-activity-labels";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
@@ -25,86 +25,91 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog"
-import { Label } from "@/components/ui/label"
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { useCurrentUser } from "@/hooks/use-auth"
-import { api } from "@/lib/api"
-import { formatDateTime, formatMoney, formatNumber } from "@/lib/formatters"
-import { hasPermission, PERMISSIONS } from "@/lib/permissions"
-import { cn } from "@/lib/utils"
+} from "@/components/ui/select";
+import { useCurrentUser } from "@/hooks/use-auth";
+import { api } from "@/lib/api";
+import { formatDateTime, formatMoney, formatNumber } from "@/lib/formatters";
+import { hasPermission, PERMISSIONS } from "@/lib/permissions";
+import { cn } from "@/lib/utils";
 
 type PrinterDevice = {
-  id: string
-  name: string
-  code: string
-  preparation_station_id: string | null
-  is_active: boolean
-}
+  id: string;
+  name: string;
+  code: string;
+  preparation_station_id: string | null;
+  purpose: "PREPARATION" | "CASHIER";
+  is_active: boolean;
+};
 
 type Station = {
-  id: string
-  name: string
-}
+  id: string;
+  name: string;
+};
 
 type OrderActivityItem = {
-  name: string
-  quantity: string
-  unit_price: string
-  discount: string
-  line_total: string
-  status: string
-  note: string | null
-  modifiers: string[]
-}
+  name: string;
+  quantity: string;
+  unit_price: string;
+  discount: string;
+  line_total: string;
+  is_complimentary: boolean;
+  status: string;
+  note: string | null;
+  modifiers: string[];
+};
 
 type OrderActivityPayment = {
-  method: string
-  amount: string
-  status: string
-  reference: string | null
-  recorded_at: string
-  recorded_by: string | null
-}
+  method: string;
+  amount: string;
+  status: string;
+  reference: string | null;
+  recorded_at: string;
+  recorded_by: string | null;
+};
 
 export type OrderActivityDetail = {
-  order_id: string
-  reference: string
-  created_at: string
-  branch_id: string
-  status: string
-  source: string
-  table_name: string | null
-  staff_name: string | null
-  member_code: string | null
-  delivery_channel: string | null
-  customer_name: string | null
-  currency: string
-  business_name: string
-  branch_name: string
-  branch_address: string | null
-  branch_phone: string | null
-  submitted_at: string | null
-  accepted_at: string | null
-  paid_at: string | null
-  subtotal: string
-  discount_total: string
-  tax_total: string
-  total: string
-  paid_total: string
-  remaining: string
-  items: OrderActivityItem[]
-  payments: OrderActivityPayment[]
-}
+  order_id: string;
+  reference: string;
+  created_at: string;
+  branch_id: string;
+  status: string;
+  source: string;
+  table_name: string | null;
+  staff_name: string | null;
+  member_code: string | null;
+  delivery_channel: string | null;
+  customer_name: string | null;
+  currency: string;
+  business_name: string;
+  branch_name: string;
+  branch_address: string | null;
+  branch_phone: string | null;
+  submitted_at: string | null;
+  accepted_at: string | null;
+  paid_at: string | null;
+  subtotal: string;
+  discount_total: string;
+  tax_total: string;
+  service_charge_type: string | null;
+  service_charge_value: string;
+  service_charge_amount: string;
+  total: string;
+  paid_total: string;
+  remaining: string;
+  items: OrderActivityItem[];
+  payments: OrderActivityPayment[];
+};
 
 /** Let the API pick the branch's bill printer, as the cashier flow does. */
-const AUTO_PRINTER = "AUTO"
+const AUTO_PRINTER = "AUTO";
 
 const PAYMENT_METHOD_LABELS: Record<string, string> = {
   CASH: "Nakit",
@@ -113,7 +118,7 @@ const PAYMENT_METHOD_LABELS: Record<string, string> = {
   MEAL_CARD: "Yemek kartı",
   ONLINE: "Online",
   OTHER: "Diğer",
-}
+};
 
 /**
  * Everything behind one row of the order activity feed.
@@ -126,13 +131,16 @@ export function OrderActivityDetailDialog({
   orderId,
   onClose,
 }: {
-  orderId: string | null
-  onClose: () => void
+  orderId: string | null;
+  onClose: () => void;
 }) {
-  const [receiptOpen, setReceiptOpen] = useState(false)
-  const [printerId, setPrinterId] = useState(AUTO_PRINTER)
-  const session = useCurrentUser()
-  const canQueuePrint = hasPermission(session.data, PERMISSIONS.printing.reprint)
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const [printerId, setPrinterId] = useState(AUTO_PRINTER);
+  const session = useCurrentUser();
+  const canQueuePrint = hasPermission(
+    session.data,
+    PERMISSIONS.printing.reprint,
+  );
 
   const detailQuery = useQuery({
     queryKey: ["reports", "order-activity", "detail", orderId],
@@ -141,7 +149,7 @@ export function OrderActivityDetailDialog({
         signal,
       }),
     enabled: Boolean(orderId),
-  })
+  });
 
   // Both lists are scoped to the active branch by the API, which is the same
   // branch the report itself covers.
@@ -150,7 +158,7 @@ export function OrderActivityDetailDialog({
     queryFn: ({ signal }) =>
       api.get<PrinterDevice[]>("printing/devices", { signal }),
     enabled: receiptOpen && canQueuePrint,
-  })
+  });
   const stationsQuery = useQuery({
     queryKey: ["catalog", "stations", "receipt-picker"],
     queryFn: ({ signal }) => api.get<Station[]>("catalog/stations", { signal }),
@@ -158,21 +166,23 @@ export function OrderActivityDetailDialog({
     // Naming the station is a nicety; a reader without catalog access still
     // gets the printer list.
     retry: false,
-  })
+  });
 
-  const printers = (devicesQuery.data ?? []).filter((device) => device.is_active)
+  const printers = (devicesQuery.data ?? []).filter(
+    (device) => device.is_active && device.purpose === "CASHIER",
+  );
   const stationNames = new Map(
     (stationsQuery.data ?? []).map((station) => [station.id, station.name]),
-  )
+  );
 
-  const detail = detailQuery.data ?? null
+  const detail = detailQuery.data ?? null;
 
   // A receipt pulled from the report is by definition not the first copy, so
   // it prints with the reprint banner and is queued as a REPRINT job.
   const receipt: ReceiptDocument | null = detail
     ? {
         kind: "REPRINT",
-        title: "MÜŞTERİ BİLGİ FİŞİ",
+        title: "HESAP ÖZETİ",
         business: {
           name: detail.business_name,
           branch: detail.branch_name,
@@ -195,6 +205,7 @@ export function OrderActivityDetailDialog({
             quantity: item.quantity,
             unitPrice: item.unit_price,
             lineTotal: item.line_total,
+            complimentary: item.is_complimentary,
             modifiers: item.modifiers,
             note: item.note,
           })),
@@ -202,6 +213,9 @@ export function OrderActivityDetailDialog({
           subtotal: detail.subtotal,
           discount: detail.discount_total,
           tax: detail.tax_total,
+          serviceChargeType: detail.service_charge_type,
+          serviceChargeValue: detail.service_charge_value,
+          serviceCharge: detail.service_charge_amount,
           total: detail.total,
           paid: detail.paid_total,
           remaining: detail.remaining,
@@ -214,15 +228,15 @@ export function OrderActivityDetailDialog({
             reference: payment.reference,
           })),
       }
-    : null
+    : null;
 
   const queuePrint = useMutation({
     mutationFn: () => {
-      if (!detail) throw new Error("Sipariş detayı yüklenmedi.")
+      if (!detail) throw new Error("Sipariş detayı yüklenmedi.");
       const printer =
         printerId === AUTO_PRINTER
           ? null
-          : printers.find((device) => device.id === printerId)
+          : printers.find((device) => device.id === printerId);
       return api.post("printing/jobs", {
         order_id: detail.order_id,
         // Left null for AUTO so the API resolves the branch's bill printer.
@@ -237,21 +251,21 @@ export function OrderActivityDetailDialog({
         },
         kind: "REPRINT",
         idempotency_key: `bill-reprint:${detail.order_id}:${crypto.randomUUID()}`,
-      })
+      });
     },
     onSuccess: () => {
-      const printer = printers.find((device) => device.id === printerId)
+      const printer = printers.find((device) => device.id === printerId);
       toast.success("Fiş yazıcı kuyruğuna alındı", {
         description: printer
           ? `${printerLabel(printer, stationNames)} · REPRINT olarak denetim kaydına yazıldı.`
           : "Baskı REPRINT olarak denetim kaydına yazıldı.",
-      })
+      });
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "Baskı işi oluşturulamadı.",
       ),
-  })
+  });
 
   return (
     <>
@@ -259,8 +273,8 @@ export function OrderActivityDetailDialog({
         open={Boolean(orderId)}
         onOpenChange={(open) => {
           if (!open) {
-            setReceiptOpen(false)
-            onClose()
+            setReceiptOpen(false);
+            onClose();
           }
         }}
       >
@@ -315,9 +329,13 @@ export function OrderActivityDetailDialog({
                   {detail.staff_name ?? "Müşteri (QR)"}
                 </Field>
                 <Field label="Şube">{detail.branch_name}</Field>
-                <Field label="Açılış">{formatDateTime(detail.created_at)}</Field>
+                <Field label="Açılış">
+                  {formatDateTime(detail.created_at)}
+                </Field>
                 <Field label="Onay">
-                  {detail.accepted_at ? formatDateTime(detail.accepted_at) : "—"}
+                  {detail.accepted_at
+                    ? formatDateTime(detail.accepted_at)
+                    : "—"}
                 </Field>
                 <Field label="Ödeme">
                   {detail.paid_at ? formatDateTime(detail.paid_at) : "—"}
@@ -329,14 +347,20 @@ export function OrderActivityDetailDialog({
                   <thead className="border-b bg-muted/40 text-left">
                     <tr className="text-[0.68rem] uppercase tracking-[0.1em] text-muted-foreground">
                       <th className="px-3 py-2 font-semibold">Ürün</th>
-                      <th className="px-3 py-2 text-right font-semibold">Adet</th>
-                      <th className="px-3 py-2 text-right font-semibold">Birim</th>
-                      <th className="px-3 py-2 text-right font-semibold">Tutar</th>
+                      <th className="px-3 py-2 text-right font-semibold">
+                        Adet
+                      </th>
+                      <th className="px-3 py-2 text-right font-semibold">
+                        Birim
+                      </th>
+                      <th className="px-3 py-2 text-right font-semibold">
+                        Tutar
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y">
                     {detail.items.map((item, index) => {
-                      const struck = CANCELLED_ITEM_STATUSES.has(item.status)
+                      const struck = CANCELLED_ITEM_STATUSES.has(item.status);
                       return (
                         <tr
                           key={`${item.name}-${index}`}
@@ -372,7 +396,7 @@ export function OrderActivityDetailDialog({
                             {formatMoney(item.line_total, detail.currency)}
                           </td>
                         </tr>
-                      )
+                      );
                     })}
                     {detail.items.length === 0 ? (
                       <tr>
@@ -472,15 +496,17 @@ export function OrderActivityDetailDialog({
 
           <DialogFooter>
             {detail ? (
-              <Button variant="outline" render={<Link href={`/admin/orders?order=${detail.order_id}`} />}>
+              <Button
+                variant="outline"
+                render={
+                  <Link href={`/admin/orders?order=${detail.order_id}`} />
+                }
+              >
                 <ExternalLink className="size-4" />
                 Siparişi aç
               </Button>
             ) : null}
-            <Button
-              onClick={() => setReceiptOpen(true)}
-              disabled={!detail}
-            >
+            <Button onClick={() => setReceiptOpen(true)} disabled={!detail}>
               <Receipt className="size-4" />
               Fiş çıkar
             </Button>
@@ -505,7 +531,10 @@ export function OrderActivityDetailDialog({
                 value={printerId}
                 onValueChange={(value) => setPrinterId(value ?? AUTO_PRINTER)}
               >
-                <SelectTrigger id="receipt-printer" className="h-10 w-full rounded-xl">
+                <SelectTrigger
+                  id="receipt-printer"
+                  className="h-10 w-full rounded-xl"
+                >
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -530,7 +559,7 @@ export function OrderActivityDetailDialog({
         }
       />
     </>
-  )
+  );
 }
 
 /** "Kasa · Termal 1" — the station first, because that is what staff say. */
@@ -540,16 +569,16 @@ function printerLabel(
 ): string {
   const station = printer.preparation_station_id
     ? stationNames.get(printer.preparation_station_id)
-    : null
-  return station ? `${station} · ${printer.name}` : printer.name
+    : null;
+  return station ? `${station} · ${printer.name}` : printer.name;
 }
 
 function Field({
   label,
   children,
 }: {
-  label: string
-  children: React.ReactNode
+  label: string;
+  children: React.ReactNode;
 }) {
   return (
     <div>
@@ -558,7 +587,7 @@ function Field({
       </dt>
       <dd className="truncate">{children}</dd>
     </div>
-  )
+  );
 }
 
 function Amount({
@@ -567,10 +596,10 @@ function Amount({
   currency,
   strong,
 }: {
-  label: string
-  value: string
-  currency: string
-  strong?: boolean
+  label: string;
+  value: string;
+  currency: string;
+  strong?: boolean;
 }) {
   return (
     <div
@@ -582,5 +611,5 @@ function Amount({
       <dt className={cn(!strong && "text-muted-foreground")}>{label}</dt>
       <dd className="tabular-nums">{formatMoney(value, currency)}</dd>
     </div>
-  )
+  );
 }

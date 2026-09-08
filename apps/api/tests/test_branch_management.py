@@ -116,6 +116,27 @@ async def test_branch_pricing_preview_reflects_active_branches(api: ApiContext) 
     assert delta == Decimal(after.json()["additional_branch_price"])
 
 
+async def test_branch_service_charge_settings_round_trip(api: ApiContext) -> None:
+    headers = auth_headers(await login(api))
+    branches = await api.client.get("/api/v1/branches", headers=headers)
+    assert branches.status_code == 200, branches.text
+    branch = branches.json()[0]
+
+    updated = await api.client.patch(
+        f"/api/v1/branches/{branch['id']}",
+        headers=headers,
+        json={
+            "service_charge_enabled": True,
+            "service_charge_type": "PERCENTAGE",
+            "service_charge_value": "10.00",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+    assert updated.json()["service_charge_enabled"] is True
+    assert updated.json()["service_charge_type"] == "PERCENTAGE"
+    assert Decimal(updated.json()["service_charge_value"]) == Decimal("10.00")
+
+
 async def test_multi_branch_manager_reaches_exactly_their_branches(
     api: ApiContext,
 ) -> None:

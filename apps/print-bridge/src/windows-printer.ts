@@ -46,6 +46,7 @@ export class WindowsPrinterTransport implements PrinterTransport {
       job.localPrinterName ??
       this.config.printerNameMap[printerCode] ??
       printerCode;
+    assertSupportedWindowsPrinter(localPrinterName);
     const text = renderReceiptText(job);
 
     const dir = await mkdtemp(join(tmpdir(), "dixora-print-"));
@@ -53,6 +54,13 @@ export class WindowsPrinterTransport implements PrinterTransport {
     try {
       await writeFile(file, text, { encoding: "utf8" });
       for (let copy = 0; copy < job.copies; copy += 1) {
+        log("info", "windows_spool_command_started", {
+          jobId: job.id,
+          printerCode,
+          localPrinterName,
+          copy: copy + 1,
+          copies: job.copies,
+        });
         await this.exec(
           "powershell.exe",
           [
@@ -102,4 +110,16 @@ export class WindowsPrinterDiscovery implements PrinterDiscovery {
 
 function escapeSingleQuoted(value: string): string {
   return value.replace(/'/g, "''");
+}
+
+function assertSupportedWindowsPrinter(localPrinterName: string): void {
+  const normalized = localPrinterName.trim().toLowerCase();
+  if (
+    normalized === "microsoft print to pdf" ||
+    normalized === "microsoft xps document writer"
+  ) {
+    throw new Error(
+      `${localPrinterName} sanal bir dosya yazıcısıdır. Dixora Print Bridge arka planda çalıştığı için kaydetme penceresi gösteremez; gerçek bir yazıcı veya önceden dosya adı istemeyen bir test yazıcısı seçin.`,
+    );
+  }
 }

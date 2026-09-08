@@ -57,7 +57,7 @@ class IyzicoProvider:
         instead of scattering ignores across every call site. The import stays
         lazy so the rest of the app runs without the SDK installed.
         """
-        import iyzipay  # type: ignore[import-untyped]
+        import iyzipay  # type: ignore
 
         return iyzipay
 

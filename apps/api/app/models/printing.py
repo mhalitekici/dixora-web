@@ -27,6 +27,7 @@ class PrinterDevice(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     code: Mapped[str] = mapped_column(String(80), nullable=False)
     name: Mapped[str] = mapped_column(String(120), nullable=False)
+    purpose: Mapped[str] = mapped_column(String(20), default="PREPARATION", nullable=False)
     transport: Mapped[str] = mapped_column(String(40), default="MOCK", nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     last_seen_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -67,9 +68,7 @@ class PrintBridgeEnrollmentCode(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     """
 
     __tablename__ = "print_bridge_enrollment_codes"
-    __table_args__ = (
-        UniqueConstraint("code_hash", name="uq_print_bridge_enrollment_code_hash"),
-    )
+    __table_args__ = (UniqueConstraint("code_hash", name="uq_print_bridge_enrollment_code_hash"),)
 
     tenant_id: Mapped[UUID] = mapped_column(
         ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True
@@ -99,9 +98,7 @@ class PrintBridgePrinterMapping(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "print_bridge_printer_mappings"
     __table_args__ = (
         UniqueConstraint("printer_device_id", name="uq_print_bridge_mapping_device"),
-        UniqueConstraint(
-            "bridge_id", "printer_device_id", name="uq_print_bridge_mapping_pair"
-        ),
+        UniqueConstraint("bridge_id", "printer_device_id", name="uq_print_bridge_mapping_pair"),
     )
 
     tenant_id: Mapped[UUID] = mapped_column(
@@ -128,9 +125,7 @@ class PrintJobAcknowledgement(UUIDPrimaryKeyMixin, TimestampMixin, Base):
 
     __tablename__ = "print_job_acknowledgements"
     __table_args__ = (
-        UniqueConstraint(
-            "tenant_id", "idempotency_key", name="uq_print_job_ack_idempotency"
-        ),
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_print_job_ack_idempotency"),
         UniqueConstraint(
             "print_job_id",
             "bridge_id",

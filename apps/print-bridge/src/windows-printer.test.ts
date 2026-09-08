@@ -20,6 +20,7 @@ function job(overrides: Partial<PrintJobClaim> = {}): PrintJobClaim {
     contentType: "application/vnd.dixora.receipt+json",
     copies: 1,
     isReprint: false,
+    isTestPrint: false,
     attemptCount: 1,
     claimedAt: "2026-09-06T19:42:00Z",
     document: {
@@ -108,6 +109,36 @@ test("reports the windows transport in the print result", async () => {
   const result = await transport.print(job());
 
   assert.equal(result.transport, "windows");
+});
+
+test("rejects Microsoft Print to PDF because it requires an interactive save dialog", async () => {
+  const transport = new WindowsPrinterTransport(
+    testConfig({
+      printerIds: ["PDF"],
+      printerNameMap: { PDF: "Microsoft Print to PDF" },
+    }),
+    fakeExec([]),
+  );
+
+  await assert.rejects(
+    transport.print(job({ printerDeviceId: "PDF" })),
+    /sanal bir dosya yazıcısıdır/,
+  );
+});
+
+test("rejects Microsoft XPS Document Writer because it requires an interactive save dialog", async () => {
+  const transport = new WindowsPrinterTransport(
+    testConfig({
+      printerIds: ["XPS"],
+      printerNameMap: { XPS: "Microsoft XPS Document Writer" },
+    }),
+    fakeExec([]),
+  );
+
+  await assert.rejects(
+    transport.print(job({ printerDeviceId: "XPS" })),
+    /sanal bir dosya yazıcısıdır/,
+  );
 });
 
 test("discovery parses one printer name per Get-Printer line", async () => {

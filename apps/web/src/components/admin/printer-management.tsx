@@ -13,13 +13,14 @@ import {
   Plus,
   Printer,
   RefreshCw,
+  ReceiptText,
   RotateCcw,
   Route,
   TriangleAlert,
   Unlink,
 } from "lucide-react";
 import { useState } from "react";
-import { useForm } from "react-hook-form";
+import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
 
@@ -74,6 +75,7 @@ const printerSchema = z.object({
       /^[A-Za-z][A-Za-z0-9_-]+$/,
       "Harf, rakam, tire ve alt çizgi kullanın.",
     ),
+  purpose: z.enum(["PREPARATION", "CASHIER"]),
   preparation_station_id: z.string(),
   paper_width: z.literal("80"),
 });
@@ -156,9 +158,11 @@ export function PrinterManagement() {
       adminApi.createPrinterDevice({
         branch_id: branchId,
         preparation_station_id:
+          values.purpose === "CASHIER" ||
           values.preparation_station_id === "GENERAL"
             ? null
             : values.preparation_station_id,
+        purpose: values.purpose,
         code: values.code.toUpperCase(),
         name: values.name,
         transport: "BRIDGE",
@@ -345,7 +349,7 @@ export function PrinterManagement() {
       <PageHeader
         eyebrow="Çıktı yönlendirme"
         title="Yazıcılar"
-        description="Hazırlık istasyonlarını şubedeki yerel Print Bridge ve işletim sistemi yazıcılarıyla eşleştirin."
+        description="Mutfak, bar ve kasa çıktılarını şubedeki yerel Print Bridge yazıcılarıyla eşleştirin."
         icon={Printer}
         actions={
           <>
@@ -492,6 +496,17 @@ export function PrinterManagement() {
                           },
                         })
                       }
+                      onPurposeChange={(purpose) =>
+                        updateMutation.mutate({
+                          id: device.id,
+                          input: {
+                            purpose,
+                            ...(purpose === "CASHIER"
+                              ? { preparation_station_id: null }
+                              : {}),
+                          },
+                        })
+                      }
                       onToggle={(isActive) =>
                         updateMutation.mutate({
                           id: device.id,
@@ -526,7 +541,7 @@ export function PrinterManagement() {
                 <EmptyState
                   compact
                   title="Yazıcı cihazı yok"
-                  description="İlk cihazı ekleyip hazırlık istasyonuna yönlendirin."
+                  description="İlk cihazı ekleyip hazırlık veya kasa rolüne yönlendirin."
                   icon={Printer}
                 />
               )}
@@ -700,6 +715,7 @@ function DeviceRow({
   mapping,
   pending,
   onRoute,
+  onPurposeChange,
   onToggle,
   onTest,
   onMappingChange,
@@ -710,6 +726,7 @@ function DeviceRow({
   mapping: PrintBridgePrinterMapping | undefined;
   pending: boolean;
   onRoute: (stationId: string) => void;
+  onPurposeChange: (purpose: "PREPARATION" | "CASHIER") => void;
   onToggle: (active: boolean) => void;
   onTest: () => void;
   onMappingChange: (value: string) => void;
@@ -735,6 +752,12 @@ function DeviceRow({
             <p className="font-medium">{device.name}</p>
             <StatusBadge tone={device.is_active ? "success" : "neutral"}>
               {device.is_active ? "Aktif" : "Kapalı"}
+            </StatusBadge>
+            <StatusBadge
+              tone={device.purpose === "CASHIER" ? "warning" : "neutral"}
+              dot={false}
+            >
+              {device.purpose === "CASHIER" ? "Kasa / hesap" : "Hazırlık"}
             </StatusBadge>
           </div>
           <p className="mt-1 text-xs text-muted-foreground">
@@ -765,7 +788,32 @@ function DeviceRow({
           </Button>
         </div>
       </div>
-      <div className="mt-3 grid gap-2 pl-0 sm:pl-12 lg:grid-cols-2">
+      <div className="mt-3 grid gap-2 pl-0 sm:pl-12 lg:grid-cols-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <ReceiptText
+            className="size-4 shrink-0 text-muted-foreground"
+            aria-hidden="true"
+          />
+          <Select
+            items={[
+              { value: "PREPARATION", label: "Hazırlık fişi" },
+              { value: "CASHIER", label: "Kasa / hesap" },
+            ]}
+            value={device.purpose}
+            onValueChange={(value) =>
+              value && onPurposeChange(value as "PREPARATION" | "CASHIER")
+            }
+            disabled={pending}
+          >
+            <SelectTrigger className="h-9 w-full" aria-label="Yazıcı rolü">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="PREPARATION">Hazırlık fişi</SelectItem>
+              <SelectItem value="CASHIER">Kasa / hesap</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
         <div className="flex min-w-0 items-center gap-2">
           <Route
             className="size-4 shrink-0 text-muted-foreground"
@@ -780,7 +828,7 @@ function DeviceRow({
             ]}
             value={device.preparation_station_id ?? "GENERAL"}
             onValueChange={(value) => value && onRoute(value)}
-            disabled={pending}
+            disabled={pending || device.purpose === "CASHIER"}
           >
             <SelectTrigger className="h-9 w-full">
               <SelectValue />
@@ -1047,18 +1095,20 @@ function PrinterCreateDialog({
     defaultValues: {
       name: "",
       code: "",
+      purpose: "PREPARATION",
       preparation_station_id: "GENERAL",
       paper_width: "80",
     },
   });
+  const purpose = useWatch({ control: form.control, name: "purpose" });
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Yazıcı cihazı ekle</DialogTitle>
           <DialogDescription>
-            Bu kayıt, istasyon çıktısının hangi yerel yazıcıya gideceğini
-            belirler.
+            Bu kayıt, hazırlık veya hesap çıktısının hangi yerel yazıcıya
+            gideceğini belirler.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -1098,10 +1148,40 @@ function PrinterCreateDialog({
             </div>
           </div>
           <div>
+            <Label htmlFor="printer-purpose">Rol</Label>
+            <Select
+              items={[
+                { value: "PREPARATION", label: "Mutfak / bar hazırlık fişi" },
+                { value: "CASHIER", label: "Kasa / hesap fişi" },
+              ]}
+              value={purpose}
+              onValueChange={(value) => {
+                if (!value) return;
+                form.setValue("purpose", value as PrinterValues["purpose"], {
+                  shouldDirty: true,
+                });
+                if (value === "CASHIER") {
+                  form.setValue("preparation_station_id", "GENERAL");
+                }
+              }}
+            >
+              <SelectTrigger id="printer-purpose" className="mt-1.5 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="PREPARATION">
+                  Mutfak / bar hazırlık fişi
+                </SelectItem>
+                <SelectItem value="CASHIER">Kasa / hesap fişi</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+          <div>
             <Label htmlFor="printer-station">Yönlendirilen istasyon</Label>
             <select
               id="printer-station"
               className="mt-1.5 h-10 w-full rounded-lg border bg-background px-3 text-sm"
+              disabled={purpose === "CASHIER"}
               {...form.register("preparation_station_id")}
             >
               <option value="GENERAL">Genel şube kuyruğu</option>

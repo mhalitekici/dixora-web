@@ -17,14 +17,16 @@ function job(overrides: Partial<PrintJobClaim> = {}): PrintJobClaim {
     contentType: "application/vnd.dixora.receipt+json",
     copies: 1,
     isReprint: false,
+    isTestPrint: false,
     attemptCount: 1,
     claimedAt: "2026-09-06T19:42:00Z",
     document: {
-      title: "MUTFAK",
+      title: "Mutfak Fişi",
+      businessName: "Dodo Cafe",
       branchName: "Aleyin Mutfağı",
       stationName: "Mutfak",
       orderNumber: "A1042",
-      tableName: "7",
+      tableName: "Salon 7",
       waiterName: "Ahmet",
       submittedAt: "2026-09-06T19:42:00Z",
       lines: [
@@ -40,14 +42,34 @@ function job(overrides: Partial<PrintJobClaim> = {}): PrintJobClaim {
   };
 }
 
-test("renders branch, station, order, table and waiter", () => {
+test("renders branch, station, order, table and waiter with the new layout", () => {
   const text = renderReceiptText(job());
 
   assert.match(text, /ALEYİN MUTFAĞI/);
-  assert.match(text, /MUTFAK/);
-  assert.match(text, /Sipariş #A1042/);
-  assert.match(text, /Masa: 7/);
-  assert.match(text, /Garson: Ahmet/);
+  assert.match(text, /DODO CAFE/);
+  assert.match(text, /MUTFAK FİŞİ/);
+  assert.match(text, /Sipariş No:\s+A1042/);
+  assert.match(text, /Masa:\s+Salon 7/);
+  assert.match(text, /Garson:\s+Ahmet/);
+  assert.match(text, /^={42}$/m);
+});
+
+test("renders a bar preparation receipt with its own station identity", () => {
+  const text = renderReceiptText(
+    job({
+      printerDeviceId: "BAR",
+      document: {
+        ...job().document,
+        title: "Bar Fişi",
+        stationName: "Bar",
+        lines: [{ name: "Türk Kahvesi", quantity: "2" }],
+      },
+    }),
+  );
+
+  assert.match(text, /BAR FİŞİ/);
+  assert.match(text, /^\s+BAR\s*$/m);
+  assert.match(text, /2 x TÜRK KAHVESİ/);
 });
 
 test("renders quantity, product name, modifiers and item note", () => {
@@ -67,10 +89,10 @@ test("renders quantity, product name, modifiers and item note", () => {
     }),
   );
 
-  assert.match(text, /1x Adana Kebap/);
-  assert.match(text, /- Az acılı/);
-  assert.match(text, /- Soğansız/);
-  assert.match(text, /\* Acil/);
+  assert.match(text, /1 x ADANA KEBAP/);
+  assert.match(text, /\+ Az acılı/);
+  assert.match(text, /\+ Soğansız/);
+  assert.match(text, /Not: Acil/);
 });
 
 test("renders the order-level note carried in the footer", () => {
@@ -80,7 +102,7 @@ test("renders the order-level note carried in the footer", () => {
     }),
   );
 
-  assert.match(text, /Sipariş notu: Hızlı olsun/);
+  assert.match(text, /SİPARİŞ NOTU\s+Hızlı olsun/);
 });
 
 test("marks a reprint distinctly from an original", () => {
@@ -109,7 +131,7 @@ test("preserves Turkish characters without mangling", () => {
   );
 
   assert.match(text, /ŞİRİN ŞÖLEN ÇORBACISI İĞDIR/);
-  assert.match(text, /Türk Kahvesi/);
+  assert.match(text, /TÜRK KAHVESİ/);
 });
 
 test("renders a customer receipt line total using its Turkish currency format", () => {
@@ -131,9 +153,40 @@ test("renders a customer receipt line total using its Turkish currency format", 
     }),
   );
 
-  assert.match(text, /2x İskender Kebap/);
-  assert.match(text, /251,00/);
-  assert.match(text, /Toplam: 251,00 ₺/);
+  assert.match(text, /2 x İSKENDER KEBAP/);
+  assert.match(text, /₺251,00/);
+  assert.match(text, /TOPLAM\s+251,00 ₺/);
+});
+
+test("renders a cashier bill with clear columns and service charge total", () => {
+  const text = renderReceiptText(
+    job({
+      printerDeviceId: "KASA",
+      preparationStationId: null,
+      kitchenTicketId: null,
+      document: {
+        ...job().document,
+        title: "Müşteri Bilgi Fişi",
+        stationName: "KASA",
+        currency: "TRY",
+        lines: [
+          {
+            name: "Türk Kahvesi",
+            quantity: "2",
+            unitPrice: "90.00",
+            lineTotal: "180.00",
+          },
+        ],
+        footer: ["Ara toplam: 180.00", "Servis: 18.00", "Toplam: 198.00"],
+      },
+    }),
+  );
+
+  assert.match(text, /MÜŞTERİ BİLGİ FİŞİ/);
+  assert.match(text, /Ürün\s+Tutar/);
+  assert.match(text, /2 x Türk Kahvesi\s+₺180,00/);
+  assert.match(text, /SERVİS\s+18.00/);
+  assert.match(text, /TOPLAM\s+198.00/);
 });
 
 test("wraps a line longer than the thermal column instead of truncating it", () => {
@@ -154,7 +207,7 @@ test("wraps a line longer than the thermal column instead of truncating it", () 
   for (const line of text.split("\n")) {
     assert.ok(line.length <= 42, `line exceeded 42 columns: "${line}"`);
   }
-  assert.match(text, /Kesinlikle/);
+  assert.match(text, /KESİNLİKLE/);
 });
 
 test("omits table and waiter lines when the order has neither", () => {
@@ -165,4 +218,32 @@ test("omits table and waiter lines when the order has neither", () => {
 
   assert.doesNotMatch(text, /Masa:/);
   assert.doesNotMatch(text, /Garson:/);
+});
+
+test("marks complimentary bill lines as İKRAM while preserving a zero total", () => {
+  const text = renderReceiptText(
+    job({
+      printerDeviceId: "KASA",
+      preparationStationId: null,
+      kitchenTicketId: null,
+      document: {
+        ...job().document,
+        title: "Hesap Özeti",
+        stationName: "KASA",
+        currency: "TRY",
+        lines: [
+          {
+            name: "Türk Kahvesi",
+            quantity: "1",
+            lineTotal: "0.00",
+            complimentary: true,
+          },
+        ],
+        footer: ["Toplam: 0.00"],
+      },
+    }),
+  );
+
+  assert.match(text, /1 x Türk Kahvesi  İKRAM\s+₺0,00/);
+  assert.match(text, /TOPLAM\s+0.00/);
 });

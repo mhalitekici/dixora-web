@@ -103,10 +103,13 @@ export interface ReceiptLine {
   lineTotal?: DecimalString;
   modifiers?: readonly string[];
   note?: string;
+  complimentary?: boolean;
+  adjustmentLabel?: string;
 }
 
 export interface ReceiptDocument {
   title: string;
+  businessName?: string;
   branchName: string;
   stationName: string;
   orderNumber: string;
@@ -125,12 +128,13 @@ export interface PrintJobClaim extends BranchOwned {
    * mapped one. Falls back to the Dixora printer code in the local agent. */
   localPrinterName?: string;
   preparationStationId: UUID | null;
-  orderId: UUID;
+  orderId: UUID | null;
   kitchenTicketId: UUID | null;
   contentType: "application/vnd.dixora.receipt+json";
   document: ReceiptDocument;
   copies: number;
   isReprint: boolean;
+  isTestPrint: boolean;
   attemptCount: number;
   claimedAt: IsoDateTime;
 }

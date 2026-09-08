@@ -31,6 +31,7 @@ from app.models import (
     Modifier,
     ModifierGroup,
     Order,
+    OrderItem,
     Product,
     ProductModifierGroup,
     QrMenuConfig,
@@ -40,6 +41,7 @@ from app.models import (
 )
 from app.models.enums import (
     CampaignAudience,
+    OrderItemStatus,
     OrderSource,
     OrderStatus,
     PaymentStatus,
@@ -167,7 +169,11 @@ async def _active_table_order(
             TableSession.status == TableSessionStatus.OPEN,
             Order.status.notin_([OrderStatus.PAID, OrderStatus.CANCELLED, OrderStatus.VOIDED]),
         )
-        .options(selectinload(Order.payments))
+        .options(
+            selectinload(Order.items).selectinload(OrderItem.modifiers),
+            selectinload(Order.payments),
+            selectinload(Order.table_session).selectinload(TableSession.table),
+        )
         .order_by(Order.created_at.desc())
         .limit(1)
     )
@@ -189,6 +195,19 @@ def _public_active_order_out(order: Order | None) -> PublicActiveOrderOut | None
     )
     return PublicActiveOrderOut(
         status=order.status,
+        currency=order.currency,
+        table_name=order.table_name,
+        items=[
+            item
+            for item in order.items
+            if item.status not in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}
+        ],
+        subtotal=order.subtotal,
+        discount_total=order.discount_total,
+        tax_total=order.tax_total,
+        service_charge_type=order.service_charge_type,
+        service_charge_value=order.service_charge_value,
+        service_charge_amount=order.service_charge_amount,
         total=order.total,
         paid_total=paid_total,
         remaining=max(Decimal("0.00"), order.total - paid_total),

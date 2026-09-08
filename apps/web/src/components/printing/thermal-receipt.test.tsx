@@ -28,11 +28,15 @@ const billDocument: ReceiptDocument = {
       lineTotal: "140.00",
       modifiers: ["Ekstra sos"],
       note: "Az şekerli",
+      complimentary: true,
     },
   ],
   totals: {
     subtotal: "380.00",
     discount: "20.00",
+    serviceChargeType: "PERCENTAGE",
+    serviceChargeValue: "10.00",
+    serviceCharge: "36.00",
     total: "360.00",
   },
   payments: [{ method: "CARD", amount: "360.00" }],
@@ -55,6 +59,7 @@ describe("ThermalReceipt", () => {
     expect(screen.getByText("1 x Cheesecake")).toBeVisible();
     expect(screen.getByText("+ Ekstra sos")).toBeVisible();
     expect(screen.getByText("Not: Az şekerli")).toBeVisible();
+    expect(screen.getByText("İKRAM")).toBeVisible();
     // Unit price is only shown where quantity > 1 (it is redundant otherwise).
     expect(screen.getByText(/Birim/)).toBeVisible();
   });
@@ -63,6 +68,7 @@ describe("ThermalReceipt", () => {
     render(<ThermalReceipt document={billDocument} />);
     expect(screen.getByText("Ara toplam")).toBeVisible();
     expect(screen.getByText("İndirim")).toBeVisible();
+    expect(screen.getByText("Kuver %10")).toBeVisible();
     const total = screen.getByText("TOPLAM").closest(".receipt-row");
     expect(total).not.toBeNull();
     expect(within(total as HTMLElement).getByText("360,00 TL")).toBeVisible();
@@ -75,7 +81,9 @@ describe("ThermalReceipt", () => {
 
   it("prints an original without a duplicate banner", () => {
     render(<ThermalReceipt document={billDocument} />);
-    expect(screen.queryByText(/KOPYA|YENİDEN YAZDIRMA|TEST BASKISI/)).toBeNull();
+    expect(
+      screen.queryByText(/KOPYA|YENİDEN YAZDIRMA|TEST BASKISI/),
+    ).toBeNull();
   });
 
   it("marks a reprint so it cannot be mistaken for the original", () => {

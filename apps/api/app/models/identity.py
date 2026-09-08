@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import JSON, Boolean, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
+from app.models.base import MONEY, ZERO_MONEY, Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.enums import TenantState, ThemeMode, enum_column
 
 if TYPE_CHECKING:
@@ -56,6 +57,11 @@ class Branch(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     address: Mapped[str | None] = mapped_column(String(500), nullable=True)
     phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     working_hours: Mapped[dict[str, object]] = mapped_column(JSON, default=dict, nullable=False)
+    service_charge_enabled: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    service_charge_type: Mapped[str] = mapped_column(
+        String(20), default="PERCENTAGE", nullable=False
+    )
+    service_charge_value: Mapped[Decimal] = mapped_column(MONEY, default=ZERO_MONEY, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     # Archived branches keep every historical order, payment and audit row; they
     # are simply retired from day-to-day operation. Kept alongside `is_active`
@@ -257,9 +263,7 @@ class BusinessRegistrationVerification(UUIDPrimaryKeyMixin, TimestampMixin, Base
     """
 
     __tablename__ = "business_registration_verifications"
-    __table_args__ = (
-        Index("ix_business_registration_email", "email", "consumed_at"),
-    )
+    __table_args__ = (Index("ix_business_registration_email", "email", "consumed_at"),)
 
     business_name: Mapped[str] = mapped_column(String(140), nullable=False)
     business_type: Mapped[str] = mapped_column(String(50), nullable=False)

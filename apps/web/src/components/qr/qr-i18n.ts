@@ -1,16 +1,16 @@
-"use client"
+"use client";
 
-import { useCallback, useSyncExternalStore } from "react"
+import { useCallback, useSyncExternalStore } from "react";
 
-export type QrLocale = "tr" | "en" | "ru"
+export type QrLocale = "tr" | "en" | "ru";
 
 export const QR_LOCALES: { code: QrLocale; label: string }[] = [
   { code: "tr", label: "TR" },
   { code: "en", label: "EN" },
   { code: "ru", label: "RU" },
-]
+];
 
-const STORAGE_KEY = "dixora:qr-menu-locale"
+const STORAGE_KEY = "dixora:qr-menu-locale";
 
 type QrTranslationKey =
   | "search_placeholder"
@@ -82,7 +82,7 @@ type QrTranslationKey =
   | "bill_request_no_active_order"
   | "campaigns_title"
   | "campaign_members_only"
-  | "campaign_label"
+  | "campaign_label";
 
 const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
   tr: {
@@ -95,11 +95,12 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     menu_unreachable_title: "Menüye ulaşılamadı",
     menu_generic_error: "Menü şu anda görüntülenemiyor.",
     retry: "Tekrar dene",
-    view_cart: "Sepeti görüntüle",
+    view_cart: "Sipariş ver",
     product_added: "Ürün sepete eklendi",
     order_request_sent: "Sipariş talebiniz gönderildi",
     order_request_failed: "Sipariş gönderilemedi",
-    order_request_failed_desc: "Lütfen bağlantınızı kontrol edip tekrar deneyin.",
+    order_request_failed_desc:
+      "Lütfen bağlantınızı kontrol edip tekrar deneyin.",
     tagline: "{business} mutfağından güncel lezzetler ve masa servisi.",
     product_not_found: "Ürün bulunamadı",
     product_not_found_desc: "Aramanızı veya kategori filtrenizi değiştirin.",
@@ -126,7 +127,7 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     order_note_placeholder: "Tüm sipariş için eklemek istediğiniz not",
     estimated_total: "Tahmini toplam",
     sending: "Gönderiliyor…",
-    send_order_request: "Sipariş talebini gönder",
+    send_order_request: "Sipariş ver",
     confirm_order_title: "Sipariş talebini onaylıyor musunuz?",
     confirm_order_desc:
       "{count} kalem ürün {table} için personele gönderilecek. Gönderimden sonra değişiklik yapılamaz.",
@@ -149,16 +150,20 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
       "Bu ekran sunucunun son onaylı durumunu gösterir. Güncel bilgi için servis personeline başvurabilirsiniz.",
     back_to_menu: "Menüye dön",
     active_check_title: "Masanızın açık hesabı",
-    active_check_desc: "Siparişiniz bu masaya bağlı kaldığı sürece hesabı buradan isteyebilirsiniz.",
+    active_check_desc:
+      "Siparişiniz bu masaya bağlı kaldığı sürece hesabı buradan isteyebilirsiniz.",
     active_check_total: "Toplam",
     active_check_remaining: "Kalan",
     request_bill: "Hesap iste",
     request_bill_pending: "Hesap isteniyor…",
     request_bill_success: "Hesap talebiniz kasaya iletildi",
     request_bill_failed: "Hesap talebi gönderilemedi",
-    request_bill_failed_desc: "Lütfen bağlantınızı kontrol edip tekrar deneyin.",
-    bill_already_requested: "Hesap talebiniz alındı. Personel ödemeniz için fişi hazırlıyor.",
-    bill_request_no_active_order: "Hesap isteyebilmek için bu masada aktif bir sipariş olmalıdır.",
+    request_bill_failed_desc:
+      "Lütfen bağlantınızı kontrol edip tekrar deneyin.",
+    bill_already_requested:
+      "Hesap talebiniz alındı. Personel ödemeniz için fişi hazırlıyor.",
+    bill_request_no_active_order:
+      "Hesap isteyebilmek için bu masada aktif bir sipariş olmalıdır.",
     campaigns_title: "Kampanyalar",
     campaign_members_only: "Üyelere özel",
     campaign_label: "Kampanya",
@@ -173,7 +178,7 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     menu_unreachable_title: "Menu unavailable",
     menu_generic_error: "The menu can't be shown right now.",
     retry: "Try again",
-    view_cart: "View cart",
+    view_cart: "Place order",
     product_added: "Item added to cart",
     order_request_sent: "Your order request was sent",
     order_request_failed: "Order couldn't be sent",
@@ -204,7 +209,7 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     order_note_placeholder: "Anything you'd like to add for the whole order",
     estimated_total: "Estimated total",
     sending: "Sending…",
-    send_order_request: "Send order request",
+    send_order_request: "Place order",
     confirm_order_title: "Confirm this order request?",
     confirm_order_desc:
       "{count} item(s) will be sent to staff for {table}. It can't be changed after sending.",
@@ -226,7 +231,8 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
       "This screen shows the last confirmed status from the server. Ask staff for the latest update.",
     back_to_menu: "Back to menu",
     active_check_title: "Open check for your table",
-    active_check_desc: "As long as this table stays open, you can request the bill from here.",
+    active_check_desc:
+      "As long as this table stays open, you can request the bill from here.",
     active_check_total: "Total",
     active_check_remaining: "Remaining",
     request_bill: "Request bill",
@@ -234,8 +240,10 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     request_bill_success: "Your bill request was sent to the cashier",
     request_bill_failed: "Bill request couldn't be sent",
     request_bill_failed_desc: "Please check your connection and try again.",
-    bill_already_requested: "Your bill request is already in progress. Staff are preparing it for payment.",
-    bill_request_no_active_order: "An active order is required before you can request the bill.",
+    bill_already_requested:
+      "Your bill request is already in progress. Staff are preparing it for payment.",
+    bill_request_no_active_order:
+      "An active order is required before you can request the bill.",
     campaigns_title: "Offers",
     campaign_members_only: "Members only",
     campaign_label: "Offer",
@@ -250,7 +258,7 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     menu_unreachable_title: "Меню недоступно",
     menu_generic_error: "Меню сейчас невозможно показать.",
     retry: "Повторить",
-    view_cart: "Открыть корзину",
+    view_cart: "Оформить заказ",
     product_added: "Товар добавлен в корзину",
     order_request_sent: "Ваш заказ отправлен",
     order_request_failed: "Не удалось отправить заказ",
@@ -281,7 +289,7 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     order_note_placeholder: "Комментарий ко всему заказу",
     estimated_total: "Примерная сумма",
     sending: "Отправка…",
-    send_order_request: "Отправить заказ",
+    send_order_request: "Оформить заказ",
     confirm_order_title: "Подтвердить отправку заказа?",
     confirm_order_desc:
       "Позиций: {count}. Заказ будет отправлен персоналу для стола {table}. После отправки изменить его нельзя.",
@@ -295,8 +303,7 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     request_status_pending_title: "Ваш запрос передан персоналу",
     request_status_approved_desc:
       "Заказ был подтверждён автоматически и передан на приготовление.",
-    request_status_rejected_desc:
-      "За подробностями обратитесь к персоналу.",
+    request_status_rejected_desc: "За подробностями обратитесь к персоналу.",
     request_status_pending_desc:
       "Персонал проверяет ваш заказ. Приготовление начнётся после подтверждения.",
     request_number_label: "Номер запроса",
@@ -304,7 +311,8 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
       "Этот экран показывает последний подтверждённый статус с сервера. За актуальной информацией обратитесь к персоналу.",
     back_to_menu: "Назад в меню",
     active_check_title: "Открытый счёт вашего стола",
-    active_check_desc: "Пока этот стол открыт, вы можете запросить счёт прямо отсюда.",
+    active_check_desc:
+      "Пока этот стол открыт, вы можете запросить счёт прямо отсюда.",
     active_check_total: "Итого",
     active_check_remaining: "Остаток",
     request_bill: "Запросить счёт",
@@ -312,19 +320,24 @@ const STRINGS: Record<QrLocale, Record<QrTranslationKey, string>> = {
     request_bill_success: "Запрос на счёт отправлен кассе",
     request_bill_failed: "Не удалось отправить запрос на счёт",
     request_bill_failed_desc: "Проверьте соединение и попробуйте снова.",
-    bill_already_requested: "Запрос на счёт уже принят. Персонал готовит чек к оплате.",
-    bill_request_no_active_order: "Сначала нужно оформить активный заказ на этом столе.",
+    bill_already_requested:
+      "Запрос на счёт уже принят. Персонал готовит чек к оплате.",
+    bill_request_no_active_order:
+      "Сначала нужно оформить активный заказ на этом столе.",
     campaigns_title: "Акции",
     campaign_members_only: "Только для участников",
     campaign_label: "Акция",
   },
-}
+};
 
-function interpolate(template: string, params?: Record<string, string | number>): string {
-  if (!params) return template
+function interpolate(
+  template: string,
+  params?: Record<string, string | number>,
+): string {
+  if (!params) return template;
   return template.replace(/\{(\w+)\}/g, (match, key: string) =>
     key in params ? String(params[key]) : match,
-  )
+  );
 }
 
 export function translate(
@@ -332,45 +345,49 @@ export function translate(
   key: QrTranslationKey,
   params?: Record<string, string | number>,
 ): string {
-  return interpolate(STRINGS[locale][key], params)
+  return interpolate(STRINGS[locale][key], params);
 }
 
-const LOCALE_CHANGE_EVENT = "dixora:qr-locale-change"
+const LOCALE_CHANGE_EVENT = "dixora:qr-locale-change";
 
 function subscribe(callback: () => void): () => void {
-  window.addEventListener("storage", callback)
-  window.addEventListener(LOCALE_CHANGE_EVENT, callback)
+  window.addEventListener("storage", callback);
+  window.addEventListener(LOCALE_CHANGE_EVENT, callback);
   return () => {
-    window.removeEventListener("storage", callback)
-    window.removeEventListener(LOCALE_CHANGE_EVENT, callback)
-  }
+    window.removeEventListener("storage", callback);
+    window.removeEventListener(LOCALE_CHANGE_EVENT, callback);
+  };
 }
 
 function getSnapshot(): QrLocale {
   try {
-    const stored = window.localStorage.getItem(STORAGE_KEY)
-    if (stored === "tr" || stored === "en" || stored === "ru") return stored
+    const stored = window.localStorage.getItem(STORAGE_KEY);
+    if (stored === "tr" || stored === "en" || stored === "ru") return stored;
   } catch {
     // Storage can be unavailable in privacy modes; default locale stands.
   }
-  return "tr"
+  return "tr";
 }
 
 function getServerSnapshot(): QrLocale {
-  return "tr"
+  return "tr";
 }
 
 export function useQrLocale(): [QrLocale, (locale: QrLocale) => void] {
-  const locale = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot)
+  const locale = useSyncExternalStore(
+    subscribe,
+    getSnapshot,
+    getServerSnapshot,
+  );
 
   const setLocale = useCallback((next: QrLocale) => {
     try {
-      window.localStorage.setItem(STORAGE_KEY, next)
+      window.localStorage.setItem(STORAGE_KEY, next);
     } catch {
       // Storage can be unavailable in privacy modes; the choice just won't persist.
     }
-    window.dispatchEvent(new Event(LOCALE_CHANGE_EVENT))
-  }, [])
+    window.dispatchEvent(new Event(LOCALE_CHANGE_EVENT));
+  }, []);
 
-  return [locale, setLocale]
+  return [locale, setLocale];
 }

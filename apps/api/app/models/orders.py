@@ -5,7 +5,16 @@ from decimal import Decimal
 from typing import TYPE_CHECKING
 from uuid import UUID
 
-from sqlalchemy import JSON, CheckConstraint, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    CheckConstraint,
+    ForeignKey,
+    Index,
+    String,
+    Text,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models.base import MONEY, ZERO_MONEY, Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -69,6 +78,11 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     subtotal: Mapped[Decimal] = mapped_column(MONEY, default=ZERO_MONEY, nullable=False)
     discount_total: Mapped[Decimal] = mapped_column(MONEY, default=ZERO_MONEY, nullable=False)
     tax_total: Mapped[Decimal] = mapped_column(MONEY, default=ZERO_MONEY, nullable=False)
+    service_charge_type: Mapped[str | None] = mapped_column(String(20), nullable=True)
+    service_charge_value: Mapped[Decimal] = mapped_column(MONEY, default=ZERO_MONEY, nullable=False)
+    service_charge_amount: Mapped[Decimal] = mapped_column(
+        MONEY, default=ZERO_MONEY, nullable=False
+    )
     total: Mapped[Decimal] = mapped_column(MONEY, default=ZERO_MONEY, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
     version: Mapped[int] = mapped_column(default=1, nullable=False)
@@ -123,6 +137,12 @@ class OrderItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     tax_rate_snapshot: Mapped[Decimal] = mapped_column(MONEY, default=ZERO_MONEY, nullable=False)
     discount_snapshot: Mapped[Decimal] = mapped_column(MONEY, default=ZERO_MONEY, nullable=False)
     line_total: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
+    is_complimentary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    complimentary_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    complimentary_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    complimentary_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     status: Mapped[OrderItemStatus] = mapped_column(
         enum_column(OrderItemStatus, "order_item_status"),
         default=OrderItemStatus.DRAFT,

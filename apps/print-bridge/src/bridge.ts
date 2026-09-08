@@ -98,18 +98,17 @@ export class PrintBridge {
   }
 
   private async process(job: PrintJobClaim): Promise<void> {
+    this.state.recordJobStarted();
+    log("info", "job_processing_started", {
+      jobId: job.id,
+      attemptCount: job.attemptCount,
+      printerDeviceId: job.printerDeviceId,
+      localPrinterName: job.localPrinterName,
+    });
+
     const previousEntry = this.journal.getUnacknowledged(job.id);
     if (previousEntry) {
       await this.recoverClaimedJournalEntry(job, previousEntry);
-      return;
-    }
-
-    try {
-      await this.api.markSent(job);
-    } catch (error) {
-      // No journal entry exists yet, so this job has not crossed the local
-      // spool boundary and the server may safely retry it after lease expiry.
-      this.recordFailure(job, safeErrorMessage(error), false);
       return;
     }
 
@@ -129,6 +128,12 @@ export class PrintBridge {
 
     let result: PrintResult;
     try {
+      log("info", "job_spool_started", {
+        jobId: job.id,
+        attemptCount: job.attemptCount,
+        printerDeviceId: job.printerDeviceId,
+        localPrinterName: job.localPrinterName,
+      });
       result = await this.printer.print(job);
     } catch (error) {
       await this.acknowledgeFailure(
@@ -137,6 +142,15 @@ export class PrintBridge {
         true,
       );
       return;
+    }
+
+    try {
+      await this.api.markSent(job);
+    } catch (error) {
+      log("warn", "sent_ack_failed_after_spool", {
+        jobId: job.id,
+        message: safeErrorMessage(error),
+      });
     }
 
     try {

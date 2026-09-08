@@ -18,6 +18,7 @@ const elements = {
   printerList: document.querySelector("#printer-list"),
   refreshPrinters: document.querySelector("#refresh-printers"),
   runtimeError: document.querySelector("#runtime-error"),
+  runtimeLogs: document.querySelector("#runtime-logs"),
   setupError: document.querySelector("#setup-error"),
   setupPanel: document.querySelector("#setup-panel"),
 };
@@ -76,7 +77,8 @@ function render(status) {
   elements.computerName.textContent = status.computerName;
   elements.computerNameInput.value = status.computerName;
   elements.apiUrl.textContent = status.apiUrl ?? "-";
-  elements.apiUrlInput.value = status.apiUrl ?? "http://localhost:8000";
+  elements.apiUrlInput.value =
+    status.apiUrl ?? status.defaultApiUrl ?? "http://localhost:8000";
   elements.cloudStatus.textContent = runtimeLabel(status);
   elements.lastPrint.textContent = formatDate(status.runtime?.lastPrintedAt);
   elements.footerMessage.textContent = connected
@@ -87,6 +89,29 @@ function render(status) {
   const error = status.lastError || status.runtime?.lastError;
   elements.runtimeError.textContent = error ?? "";
   elements.runtimeError.classList.toggle("hidden", !error || !connected);
+  elements.runtimeLogs.textContent = formatLogs(status.logs ?? []);
+}
+
+function formatLogs(logs) {
+  return logs
+    .map((line) => {
+      try {
+        const record = JSON.parse(line);
+        const bits = [
+          record.timestamp,
+          record.level,
+          record.event,
+          record.jobId ? `job=${record.jobId}` : "",
+          record.printerCode ? `printer=${record.printerCode}` : "",
+          record.localPrinterName ? `local=${record.localPrinterName}` : "",
+          record.message ? `message=${record.message}` : "",
+        ].filter(Boolean);
+        return bits.join(" | ");
+      } catch {
+        return line;
+      }
+    })
+    .join("\n");
 }
 
 function showSetup() {

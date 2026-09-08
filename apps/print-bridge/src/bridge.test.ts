@@ -25,6 +25,7 @@ function job(overrides: Partial<PrintJobClaim> = {}): PrintJobClaim {
     contentType: "application/vnd.dixora.receipt+json",
     copies: 1,
     isReprint: false,
+    isTestPrint: false,
     attemptCount: 1,
     claimedAt: "2026-09-06T19:42:00Z",
     document: {
@@ -156,4 +157,98 @@ test("keeps sending a heartbeat when local printer discovery has a temporary err
   await privateBridge.heartbeatIfDue();
 
   assert.deepEqual(inventories, [["MUTFAK"], ["MUTFAK"]]);
+});
+
+test("prints and still acknowledges printed when SENT acknowledgement fails", async (context) => {
+  const path = await journalPath(context);
+  let physicalPrints = 0;
+  let printed = false;
+  const bridge = new PrintBridge(
+    testConfig({ journalPath: path }),
+    api({
+      claimJobs: async () => [job()],
+      markSent: async () => {
+        throw new Error("temporary ack failure");
+      },
+      markPrinted: async () => {
+        printed = true;
+      },
+    }),
+    printer(async () => {
+      physicalPrints += 1;
+      return result;
+    }),
+    new BridgeState("bridge-1"),
+    new PrintJournal(path),
+  );
+
+  await bridge.poll();
+
+  assert.equal(physicalPrints, 1);
+  assert.equal(printed, true);
+});
+
+test("marks a claimed job failed when the local transport rejects it", async (context) => {
+  const path = await journalPath(context);
+  let failedMessage = "";
+  let failedManualRetryRequired = false;
+  const bridge = new PrintBridge(
+    testConfig({ journalPath: path }),
+    api({
+      claimJobs: async () => [job()],
+      markFailed: async (
+        _job: PrintJobClaim,
+        message: string,
+        manualRetryRequired: boolean,
+      ) => {
+        failedMessage = message;
+        failedManualRetryRequired = manualRetryRequired;
+      },
+    }),
+    printer(async () => {
+      throw new Error("spooler rejected the job");
+    }),
+    new BridgeState("bridge-1"),
+    new PrintJournal(path),
+  );
+
+  await bridge.poll();
+
+  assert.match(failedMessage, /spooler rejected the job/);
+  assert.equal(failedManualRetryRequired, true);
+});
+
+test("sends a test print without order id to the transport", async (context) => {
+  const path = await journalPath(context);
+  let printedIsTestPrint = false;
+  let printedOrderId: string | null | undefined;
+  const testPrinter: PrinterTransport = {
+    print: async (claimed) => {
+      printedIsTestPrint = claimed.isTestPrint;
+      printedOrderId = claimed.orderId;
+      return result;
+    },
+  };
+  const bridge = new PrintBridge(
+    testConfig({ journalPath: path }),
+    api({
+      claimJobs: async () => [
+        job({
+          orderId: null,
+          kitchenTicketId: null,
+          isTestPrint: true,
+        }),
+      ],
+      markSent: async () => undefined,
+      markPrinted: async () => undefined,
+    }),
+    testPrinter,
+    new BridgeState("bridge-1"),
+    new PrintJournal(path),
+  );
+
+  await bridge.poll();
+
+  assert.equal(printedIsTestPrint, true);
+  assert.equal(printedOrderId, null);
 });

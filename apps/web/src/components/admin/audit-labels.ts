@@ -65,6 +65,11 @@ export const auditActionLabels: Record<string, string> = {
   "order.items_appended": "Siparişe ürün eklendi",
   "order.bill_requested": "Hesap istendi",
   "order.item_cancelled": "Sipariş kalemi iptal edildi",
+  "order.item_quantity_increased": "Sipariş kalemi adedi artırıldı",
+  "order.item_quantity_decreased": "Sipariş kalemi adedi azaltıldı",
+  "order.item_removed": "Sipariş kalemi silindi",
+  "order.item_complimentary_set": "Sipariş kalemi ikram olarak işaretlendi",
+  "order.item_complimentary_removed": "Sipariş kaleminden ikram kaldırıldı",
   "order.voided": "Sipariş iptal edildi",
   "payment.recorded": "Ödeme alındı",
   "check.split_by_amount": "Hesap tutara göre bölündü",
@@ -158,7 +163,9 @@ export function auditActionLabel(action: string): string {
   return humanised.charAt(0).toLocaleUpperCase("tr-TR") + humanised.slice(1);
 }
 
-export function auditResourceLabel(resourceType: string | null | undefined): string | null {
+export function auditResourceLabel(
+  resourceType: string | null | undefined,
+): string | null {
   if (!resourceType) return null;
   return resourceLabels[resourceType] ?? resourceType.replace(/[._]/g, " ");
 }

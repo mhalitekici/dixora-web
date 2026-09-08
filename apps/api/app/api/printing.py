@@ -33,8 +33,9 @@ from app.models import (
     PrinterDevice,
     PrintJob,
     PrintJobAcknowledgement,
+    Tenant,
 )
-from app.models.enums import OrderStatus, PaymentStatus, PrintJobStatus
+from app.models.enums import OrderItemStatus, OrderStatus, PaymentStatus, PrintJobStatus
 from app.schemas import (
     BridgeHeartbeat,
     BridgeHeartbeatOut,
@@ -66,9 +67,7 @@ from app.services.orders import (
 router = APIRouter(prefix="/printing", tags=["printing"])
 PrintReader = Annotated[Identity, Depends(require_permissions("printing.read"))]
 PrintManager = Annotated[Identity, Depends(require_permissions("printing.manage"))]
-PlatformHealthReader = Annotated[
-    Identity, Depends(require_permissions("platform.system.read"))
-]
+PlatformHealthReader = Annotated[Identity, Depends(require_permissions("platform.system.read"))]
 
 # How long a bridge holds an uncontested lease on a job it has claimed. Chosen
 # to comfortably exceed one poll interval plus a slow physical print, while
@@ -114,8 +113,7 @@ def _bridge_out(
         is_online=bridge.is_active and _bridge_is_online(bridge.last_seen_at),
         created_at=bridge.created_at,
         printer_mappings=[
-            PrintBridgePrinterMappingOut.model_validate(mapping)
-            for mapping in (mappings or [])
+            PrintBridgePrinterMappingOut.model_validate(mapping) for mapping in (mappings or [])
         ],
     )
 
@@ -196,6 +194,12 @@ async def create_printer_device(
         branch_id=branch_id,
         station_id=payload.preparation_station_id,
     )
+    if payload.purpose == "CASHIER" and payload.preparation_station_id is not None:
+        raise DomainError(
+            "cashier_printer_station_not_allowed",
+            "A cashier printer cannot be assigned to a preparation station",
+            status_code=422,
+        )
     device = PrinterDevice(
         tenant_id=tenant_id,
         branch_id=branch_id,
@@ -209,7 +213,11 @@ async def create_printer_device(
         action="printing.device_created",
         resource_type="printer_device",
         resource_id=device.id,
-        new_value={"code": device.code, "transport": device.transport},
+        new_value={
+            "code": device.code,
+            "purpose": device.purpose,
+            "transport": device.transport,
+        },
     )
     await db.commit()
     return PrinterDeviceOut.model_validate(device)
@@ -242,10 +250,19 @@ async def update_printer_device(
             branch_id=device.branch_id,
             station_id=data["preparation_station_id"],
         )
+    next_purpose = str(data.get("purpose", device.purpose))
+    next_station_id = data.get("preparation_station_id", device.preparation_station_id)
+    if next_purpose == "CASHIER" and next_station_id is not None:
+        raise DomainError(
+            "cashier_printer_station_not_allowed",
+            "A cashier printer cannot be assigned to a preparation station",
+            status_code=422,
+        )
     previous = {
         "name": device.name,
         "is_active": device.is_active,
         "transport": device.transport,
+        "purpose": device.purpose,
     }
     for key, value in data.items():
         setattr(device, key, value)
@@ -260,6 +277,7 @@ async def update_printer_device(
             "name": device.name,
             "is_active": device.is_active,
             "transport": device.transport,
+            "purpose": device.purpose,
         },
     )
     await db.commit()
@@ -523,7 +541,30 @@ async def _first_active_printer_id(
                 PrinterDevice.tenant_id == tenant_id,
                 PrinterDevice.branch_id == branch_id,
                 PrinterDevice.is_active.is_(True),
+                PrinterDevice.purpose == "PREPARATION",
                 PrinterDevice.preparation_station_id == station_id,
+            )
+            .order_by(PrinterDevice.created_at)
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+
+
+async def _cashier_printer_id(
+    db: DbSession,
+    *,
+    tenant_id: UUID,
+    branch_id: UUID,
+) -> UUID | None:
+    return (
+        await db.execute(
+            select(PrinterDevice.id)
+            .where(
+                PrinterDevice.tenant_id == tenant_id,
+                PrinterDevice.branch_id == branch_id,
+                PrinterDevice.is_active.is_(True),
+                PrinterDevice.purpose == "CASHIER",
+                PrinterDevice.preparation_station_id.is_(None),
             )
             .order_by(PrinterDevice.created_at)
             .limit(1)
@@ -540,6 +581,46 @@ async def _resolve_print_defaults(
 ) -> tuple[UUID | None, UUID | None]:
     station_id = payload.preparation_station_id
     printer_device_id = payload.printer_device_id
+    payload_type = str(payload.payload.get("type") or "").upper()
+    if payload_type == "BILL":
+        if station_id is not None:
+            raise DomainError(
+                "cashier_printer_station_not_allowed",
+                "A bill cannot be routed to a preparation station",
+                status_code=422,
+            )
+        if printer_device_id is not None:
+            cashier_printer_id = (
+                await db.execute(
+                    select(PrinterDevice.id).where(
+                        PrinterDevice.id == printer_device_id,
+                        PrinterDevice.tenant_id == tenant_id,
+                        PrinterDevice.branch_id == branch_id,
+                        PrinterDevice.is_active.is_(True),
+                        PrinterDevice.purpose == "CASHIER",
+                        PrinterDevice.preparation_station_id.is_(None),
+                    )
+                )
+            ).scalar_one_or_none()
+            if cashier_printer_id is None:
+                raise DomainError(
+                    "cashier_printer_required",
+                    "Bills must be routed to a cashier receipt printer",
+                    status_code=422,
+                )
+            return None, printer_device_id
+        cashier_printer_id = await _cashier_printer_id(
+            db,
+            tenant_id=tenant_id,
+            branch_id=branch_id,
+        )
+        if cashier_printer_id is None:
+            raise DomainError(
+                "cashier_printer_not_configured",
+                "No active cashier receipt printer is configured for this branch",
+                status_code=409,
+            )
+        return station_id, cashier_printer_id
     if printer_device_id is not None:
         return station_id, printer_device_id
     if station_id is not None:
@@ -549,29 +630,6 @@ async def _resolve_print_defaults(
             branch_id=branch_id,
             station_id=station_id,
         )
-
-    payload_type = str(payload.payload.get("type") or "").upper()
-    if payload_type == "BILL":
-        general_printer_id = await _first_active_printer_id(
-            db,
-            tenant_id=tenant_id,
-            branch_id=branch_id,
-            station_id=None,
-        )
-        if general_printer_id is not None:
-            return station_id, general_printer_id
-        return station_id, (
-            await db.execute(
-                select(PrinterDevice.id)
-                .where(
-                    PrinterDevice.tenant_id == tenant_id,
-                    PrinterDevice.branch_id == branch_id,
-                    PrinterDevice.is_active.is_(True),
-                )
-                .order_by(PrinterDevice.created_at)
-                .limit(1)
-            )
-        ).scalar_one_or_none()
     return station_id, printer_device_id
 
 
@@ -589,12 +647,10 @@ async def _build_bill_payload(
         await mark_order_bill_requested(db, order=order)
 
     branch = await _scoped_branch(db, tenant_id=order.tenant_id, branch_id=order.branch_id)
+    tenant = await db.get(Tenant, order.tenant_id)
+    assert tenant is not None
     paid_total = sum(
-        (
-            payment.amount
-            for payment in order.payments
-            if payment.status == PaymentStatus.COMPLETED
-        ),
+        (payment.amount for payment in order.payments if payment.status == PaymentStatus.COMPLETED),
         Decimal("0.00"),
     )
     remaining = max(Decimal("0.00"), order.total - paid_total)
@@ -606,7 +662,8 @@ async def _build_bill_payload(
         "copies": 1,
         "is_reprint": kind == "REPRINT",
         "document": {
-            "title": "MÜŞTERİ BİLGİ FİŞİ",
+            "title": "HESAP ÖZETİ",
+            "business_name": tenant.name,
             "branch_name": branch.name,
             "station_name": "KASA",
             "order_number": order_bill_reference(order.id),
@@ -629,13 +686,16 @@ async def _build_bill_payload(
                         for modifier in item.modifiers
                     ],
                     "note": item.note,
+                    "complimentary": item.is_complimentary,
                 }
                 for item in order.items
+                if item.status not in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}
             ],
             "footer": [
                 f"Ara toplam: {order.subtotal}",
                 f"İndirim: {order.discount_total}",
                 f"Vergi: {order.tax_total}",
+                f"Servis: {order.service_charge_amount}",
                 f"Toplam: {order.total}",
                 f"Ödenen: {paid_total}",
                 f"Kalan: {remaining}",
@@ -643,9 +703,9 @@ async def _build_bill_payload(
         },
         "receipt": {
             "kind": kind,
-            "title": "MÜŞTERİ BİLGİ FİŞİ",
+            "title": "HESAP ÖZETİ",
             "business": {
-                "name": branch.name,
+                "name": tenant.name,
                 "branch": branch.name,
                 "address": branch.address,
                 "phone": branch.phone,
@@ -672,13 +732,18 @@ async def _build_bill_payload(
                         for modifier in item.modifiers
                     ],
                     "note": item.note,
+                    "complimentary": item.is_complimentary,
                 }
                 for item in order.items
+                if item.status not in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}
             ],
             "totals": {
                 "subtotal": str(order.subtotal),
                 "discount": str(order.discount_total),
                 "tax": str(order.tax_total),
+                "serviceChargeType": order.service_charge_type,
+                "serviceChargeValue": str(order.service_charge_value),
+                "serviceCharge": str(order.service_charge_amount),
                 "total": str(order.total),
                 "paid": str(paid_total),
                 "remaining": str(remaining),
@@ -893,10 +958,7 @@ async def list_bridges(
     mappings_by_bridge: dict[UUID, list[PrintBridgePrinterMapping]] = {}
     for mapping in mappings:
         mappings_by_bridge.setdefault(mapping.bridge_id, []).append(mapping)
-    return [
-        _bridge_out(bridge, mappings_by_bridge.get(bridge.id, []))
-        for bridge in bridges
-    ]
+    return [_bridge_out(bridge, mappings_by_bridge.get(bridge.id, [])) for bridge in bridges]
 
 
 @router.put(
@@ -1169,11 +1231,7 @@ async def enroll_bridge(payload: PrintBridgeEnrollRequest, db: DbSession) -> Pri
         )
     ).scalar_one_or_none()
     now = datetime.now(UTC)
-    invalid = (
-        record is None
-        or record.consumed_at is not None
-        or as_utc(record.expires_at) <= now
-    )
+    invalid = record is None or record.consumed_at is not None or as_utc(record.expires_at) <= now
     if invalid:
         raise DomainError(
             "invalid_enrollment_code",
@@ -1249,9 +1307,7 @@ async def platform_bridge_summary(
     del identity  # authorization only; this view is intentionally cross-tenant
     total = (
         await db.execute(
-            select(func.count(PrintBridgeClient.id)).where(
-                PrintBridgeClient.is_active.is_(True)
-            )
+            select(func.count(PrintBridgeClient.id)).where(PrintBridgeClient.is_active.is_(True))
         )
     ).scalar_one()
     cutoff = datetime.now(UTC) - timedelta(seconds=BRIDGE_ONLINE_WINDOW_SECONDS)
@@ -1318,9 +1374,7 @@ async def claim_print_job(
     # Eligible to claim: the ordinary PENDING/FAILED pool, plus any job whose
     # lease has lapsed — a bridge that claimed it and then crashed or lost its
     # connection before acknowledging never gets to hold a job forever.
-    lease_expired = PrintJob.lease_expires_at.is_not(None) & (
-        PrintJob.lease_expires_at < now
-    )
+    lease_expired = PrintJob.lease_expires_at.is_not(None) & (PrintJob.lease_expires_at < now)
     base_predicates = [
         PrintJob.tenant_id == bridge.tenant_id,
         PrintJob.branch_id == bridge.branch_id,
@@ -1561,9 +1615,7 @@ async def bridge_heartbeat(
     # Keep the exact OS-reported spelling. CUPS printer names can be
     # case-sensitive, while the folded key only prevents duplicate inventory
     # rows from a noisy discovery command.
-    bridge.printer_inventory = sorted(
-        inventory_by_folded_name.values(), key=str.casefold
-    )
+    bridge.printer_inventory = sorted(inventory_by_folded_name.values(), key=str.casefold)
     await db.commit()
     return BridgeHeartbeatOut(bridge_id=bridge.id, server_time=now)
 

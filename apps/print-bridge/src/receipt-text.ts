@@ -3,85 +3,117 @@ import type { PrintJobClaim, ReceiptLine } from "@dixora/shared-types";
 /**
  * Renders one normalized receipt document into plain 80mm-column text.
  *
- * Deliberately plain text, not raw ESC/POS byte sequences: every transport
- * this bridge ships (Windows `Out-Printer`, macOS `lp`) hands a *generic*
- * text/PDF job to the OS print spooler rather than talking to the printer's
- * command set directly, so the same renderer output works unmodified on any
- * printer the operating system already treats as installed — brand, USB or
- * network, doesn't matter. See "Known limits" in docs/printing.md for what
- * that trades away (no programmatic paper cut).
+ * The desktop bridge sends text jobs through the operating system spooler
+ * rather than raw ESC/POS bytes. That keeps any installed Windows/macOS printer
+ * usable, while this renderer owns the alignment, Turkish casing and hierarchy.
  */
 const COLUMN_WIDTH = 42; // Standard for an 80mm thermal head at 12cpi.
 const RULE = "-".repeat(COLUMN_WIDTH);
+const HEAVY_RULE = "=".repeat(COLUMN_WIDTH);
 
 export function renderReceiptText(job: PrintJobClaim): string {
   const doc = job.document;
   const lines: string[] = [];
+  const isBill = doc.stationName.toLocaleUpperCase("tr").includes("KASA");
 
-  // Plain .toUpperCase() turns Turkish "i" into "I", not "İ" — a receipt
-  // header for "Aleyin Mutfağı" would silently misspell the business name.
-  lines.push(...center(job.document.branchName.toLocaleUpperCase("tr")));
-  lines.push(...center(doc.title));
+  lines.push(HEAVY_RULE);
+  if (doc.businessName) {
+    lines.push(...center(doc.businessName.toLocaleUpperCase("tr")));
+  }
+  lines.push(...center(doc.branchName.toLocaleUpperCase("tr")));
+  lines.push(...center(doc.title.toLocaleUpperCase("tr")));
+  if (doc.stationName && doc.stationName !== doc.title) {
+    lines.push(...center(doc.stationName.toLocaleUpperCase("tr")));
+  }
   if (job.isReprint) {
     lines.push(...center(job.copies > 1 ? "KOPYA" : "TEKRAR YAZDIRILDI"));
   }
-  lines.push("");
-  lines.push(`Sipariş #${doc.orderNumber}`);
+  if (job.isTestPrint) {
+    lines.push(...center("TEST ÇIKTISI"));
+  }
+  lines.push(HEAVY_RULE);
+  lines.push(meta("Sipariş No", doc.orderNumber));
   if (doc.tableName) {
-    lines.push(`Masa: ${doc.tableName}`);
+    lines.push(meta("Masa", doc.tableName));
   }
   if (doc.waiterName) {
-    lines.push(`Garson: ${doc.waiterName}`);
+    lines.push(meta("Garson", doc.waiterName));
   }
-  lines.push(`Saat: ${formatTime(doc.submittedAt)}`);
+  lines.push(meta("Saat", formatTime(doc.submittedAt)));
+  lines.push(meta("Tarih", formatDate(doc.submittedAt)));
   lines.push(RULE);
 
+  if (isBill) {
+    lines.push(twoColumns("Ürün", "Tutar"));
+    lines.push(RULE);
+  }
+
   for (const line of doc.lines) {
-    lines.push(...renderLine(line, doc.currency));
+    lines.push(...renderLine(line, doc.currency, !isBill));
   }
 
   if (doc.footer && doc.footer.length > 0) {
     lines.push(RULE);
     for (const footerLine of doc.footer) {
-      lines.push(...wrap(footerLine));
+      lines.push(...renderFooterLine(footerLine));
     }
   }
 
-  lines.push(RULE);
-  lines.push(...center(new Date().toLocaleString("tr-TR")));
-  // Trailing blank lines give the auto-cutter (when the printer/driver honours
-  // one) enough feed to clear the blade before the next job starts.
+  lines.push(HEAVY_RULE);
+  lines.push(...center(`Basım: ${new Date().toLocaleString("tr-TR")}`));
   lines.push("", "", "");
 
   return lines.join("\n");
 }
 
-function renderLine(line: ReceiptLine, currency?: string): string[] {
+function renderLine(
+  line: ReceiptLine,
+  currency?: string,
+  emphasizeName = false,
+): string[] {
   const out: string[] = [];
-  const quantity = `${line.quantity}x`;
-  const head = `${quantity} ${line.name}`.trim();
+  if (line.adjustmentLabel) {
+    out.push(
+      ...center(`*** ${line.adjustmentLabel.toLocaleUpperCase("tr")} ***`),
+    );
+  }
+  const name = emphasizeName ? line.name.toLocaleUpperCase("tr") : line.name;
+  const complimentary = line.complimentary ? "  İKRAM" : "";
+  const head = `${line.quantity} x ${name}${complimentary}`.trim();
   const price = line.lineTotal ?? line.unitPrice;
   const priceText = price ? formatAmount(price, currency) : undefined;
-  const headWithPrice = priceText ? `${head}  ${priceText}` : head;
 
-  if (headWithPrice.length <= COLUMN_WIDTH) {
-    out.push(headWithPrice);
+  if (priceText) {
+    out.push(...renderPricedLine(head, priceText));
   } else {
     out.push(...wrap(head));
-    if (priceText) {
-      out.push(...wrap(`   ${priceText}`));
-    }
   }
   for (const modifier of line.modifiers ?? []) {
-    out.push(...wrap(`   - ${modifier}`));
+    out.push(...wrap(`  + ${modifier}`));
   }
   if (line.note) {
-    out.push(...wrap(`   * ${line.note}`));
+    out.push(...wrap(`  Not: ${line.note}`));
   }
   return out;
 }
 
-/** Turkish text is never truncated silently — it wraps onto the next line. */
+function renderPricedLine(left: string, right: string): string[] {
+  if (left.length + right.length + 1 <= COLUMN_WIDTH) {
+    return [twoColumns(left, right)];
+  }
+  return [...wrap(left), twoColumns("", right)];
+}
+
+function renderFooterLine(line: string): string[] {
+  const separator = line.indexOf(":");
+  if (separator === -1) return wrap(line);
+  const label = line.slice(0, separator).trim();
+  const value = line.slice(separator + 1).trim();
+  if (!value) return wrap(line);
+  return [twoColumns(label.toLocaleUpperCase("tr"), value)];
+}
+
+/** Turkish text is never truncated silently; it wraps onto the next line. */
 function wrap(text: string): string[] {
   const words = text.split(" ");
   const wrapped: string[] = [];
@@ -119,6 +151,18 @@ function center(text: string): string[] {
   });
 }
 
+function meta(label: string, value: string): string {
+  return twoColumns(`${label}:`, value);
+}
+
+function twoColumns(left: string, right: string): string {
+  if (left.length + right.length + 1 > COLUMN_WIDTH) {
+    const room = Math.max(0, COLUMN_WIDTH - right.length - 1);
+    return `${left.slice(0, room)} ${right}`.trimEnd();
+  }
+  return `${left}${" ".repeat(COLUMN_WIDTH - left.length - right.length)}${right}`;
+}
+
 function formatAmount(amount: string, currency?: string): string {
   const numeric = Number(amount);
   if (!Number.isFinite(numeric)) {
@@ -148,5 +192,15 @@ function formatTime(iso: string): string {
   return parsed.toLocaleTimeString("tr-TR", {
     hour: "2-digit",
     minute: "2-digit",
+  });
+}
+
+function formatDate(iso: string): string {
+  const parsed = new Date(iso);
+  if (Number.isNaN(parsed.getTime())) return iso;
+  return parsed.toLocaleDateString("tr-TR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
   });
 }

@@ -1,19 +1,27 @@
 "use client";
 
-import { useQuery } from "@tanstack/react-query";
-import { ArrowLeft, Circle, Loader2, QrCode, ReceiptText } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { ArrowLeft, Circle, Loader2, MoveRight, QrCode, ReceiptText } from "lucide-react";
 import Link from "next/link";
+import { useState } from "react";
+import { toast } from "sonner";
 
 import { StatusBadge } from "@/components/shared/status-badge";
 import { StaffLoyaltyPanel } from "@/components/loyalty/staff-loyalty-panel";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 
 type Order = {
   id: string;
+  table_id?: string | null;
   status: string;
   source: string;
   customer_name?: string | null;
   total: string | number;
+  subtotal?: string | number;
+  discount_total?: string | number;
+  tax_total?: string | number;
+  service_charge_amount?: string | number;
   created_at: string;
   items: Array<{
     id: string;
@@ -23,6 +31,12 @@ type Order = {
     status: string;
     note?: string | null;
   }>;
+};
+
+type DiningTable = {
+  id: string;
+  name: string;
+  state: string;
 };
 
 // Cafe-friendly order status: the kitchen (PREPARING/READY/SERVED) timeline
@@ -48,6 +62,10 @@ const currency = new Intl.NumberFormat("tr-TR", {
 });
 
 export function OrderStatusView({ orderId }: { orderId: string }) {
+  const queryClient = useQueryClient();
+  const [transferItemId, setTransferItemId] = useState("");
+  const [destinationTableId, setDestinationTableId] = useState("");
+  const [transferQuantity, setTransferQuantity] = useState("1");
   const query = useQuery({
     queryKey: ["waiter", "orders", orderId],
     queryFn: async () => {
@@ -57,6 +75,40 @@ export function OrderStatusView({ orderId }: { orderId: string }) {
       return data as Order;
     },
     refetchInterval: 5_000,
+  });
+  const tablesQuery = useQuery({
+    queryKey: ["waiter", "tables"],
+    queryFn: async () => {
+      const response = await fetch("/api/backend/tables");
+      const data = (await response.json().catch(() => null)) as DiningTable[] | { detail?: string } | null;
+      if (!response.ok) throw new Error((data as { detail?: string } | null)?.detail ?? "Masalar yüklenemedi.");
+      return data as DiningTable[];
+    },
+  });
+  const transferMutation = useMutation({
+    mutationFn: async () => {
+      const response = await fetch(`/api/backend/orders/${orderId}/items/transfer`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          destination_table_id: destinationTableId,
+          items: [{ item_id: transferItemId, quantity: transferQuantity }],
+          idempotency_key: `waiter-item-transfer-${crypto.randomUUID()}`,
+          reason: "Waiter item transfer",
+        }),
+      });
+      const data = (await response.json().catch(() => null)) as { detail?: string } | null;
+      if (!response.ok) throw new Error(data?.detail ?? "Kalem taşınamadı.");
+    },
+    onSuccess: async () => {
+      toast.success("Kalem taşındı.");
+      setTransferItemId("");
+      setDestinationTableId("");
+      setTransferQuantity("1");
+      await queryClient.invalidateQueries({ queryKey: ["waiter", "orders", orderId] });
+      await queryClient.invalidateQueries({ queryKey: ["waiter", "tables"] });
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "Kalem taşınamadı."),
   });
 
   if (query.isLoading) {
@@ -87,6 +139,13 @@ export function OrderStatusView({ orderId }: { orderId: string }) {
 
   const order = query.data;
   const status = statusMeta[order.status] ?? { label: order.status, tone: "neutral" as const, hint: "" };
+  const activeItems = order.items.filter((item) => !["CANCELLED", "VOIDED"].includes(item.status));
+  const destinationTables = (tablesQuery.data ?? []).filter((table) => table.id !== order.table_id && table.state !== "DISABLED");
+  const selectedTransferItem = activeItems.find((item) => item.id === transferItemId);
+  const canTransfer =
+    Boolean(selectedTransferItem && destinationTableId) &&
+    Number(transferQuantity) > 0 &&
+    Number(transferQuantity) <= Number(selectedTransferItem?.quantity ?? 0);
 
   return (
     <div className="mx-auto max-w-2xl">
@@ -153,9 +212,52 @@ export function OrderStatusView({ orderId }: { orderId: string }) {
             </article>
           ))}
         </div>
+        <footer className="space-y-1 border-t p-4 text-xs">
+          <div className="flex justify-between text-muted-foreground">
+            <span>Ara toplam</span>
+            <span>{currency.format(Number(order.subtotal ?? order.total))}</span>
+          </div>
+          {Number(order.service_charge_amount ?? 0) > 0 ? (
+            <div className="flex justify-between text-muted-foreground">
+              <span>Servis</span>
+              <span>{currency.format(Number(order.service_charge_amount ?? 0))}</span>
+            </div>
+          ) : null}
+          <div className="flex justify-between font-semibold">
+            <span>Toplam</span>
+            <span>{currency.format(Number(order.total))}</span>
+          </div>
+        </footer>
       </section>
 
       <div className="mt-3">
+        <section className="mb-3 rounded-2xl border bg-card p-4">
+          <div className="mb-3 flex items-center gap-2">
+            <MoveRight className="size-4 text-muted-foreground" />
+            <h2 className="text-sm font-semibold">Kalem taşı</h2>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-[1fr_1fr_6rem_auto]">
+            <select className="h-10 rounded-md border bg-background px-3 text-sm" value={transferItemId} onChange={(event) => setTransferItemId(event.target.value)}>
+              <option value="">Kalem seç</option>
+              {activeItems.map((item) => (
+                <option key={item.id} value={item.id}>
+                  {Number(item.quantity)}x {item.product_name_snapshot}
+                </option>
+              ))}
+            </select>
+            <select className="h-10 rounded-md border bg-background px-3 text-sm" value={destinationTableId} onChange={(event) => setDestinationTableId(event.target.value)}>
+              <option value="">Hedef masa</option>
+              {destinationTables.map((table) => (
+                <option key={table.id} value={table.id}>{table.name}</option>
+              ))}
+            </select>
+            <Input value={transferQuantity} onChange={(event) => setTransferQuantity(event.target.value)} type="number" min="0.01" step="0.01" aria-label="Taşınacak adet" />
+            <Button type="button" disabled={!canTransfer || transferMutation.isPending} onClick={() => transferMutation.mutate()}>
+              {transferMutation.isPending ? <Loader2 className="animate-spin" /> : <MoveRight />}
+              Taşı
+            </Button>
+          </div>
+        </section>
         <StaffLoyaltyPanel
           orderId={order.id}
           items={order.items}
