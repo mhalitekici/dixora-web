@@ -4,6 +4,22 @@ from tests.conftest import ApiContext, auth_headers, login, seeded_resources
 from tests.test_orders import _create_burger_order
 
 
+async def _create_cashier_printer(api: ApiContext, headers: dict[str, str]) -> dict:
+    response = await api.client.post(
+        "/api/v1/printing/devices",
+        headers=headers,
+        json={
+            "code": "KASA",
+            "name": "Kasa Yazıcısı",
+            "purpose": "CASHIER",
+            "transport": "MOCK",
+            "settings": {"paper_width": 80},
+        },
+    )
+    assert response.status_code == 201, response.text
+    return response.json()
+
+
 async def test_kitchen_user_can_read_and_manage_printing(api: ApiContext) -> None:
     tokens = await login(
         api,
@@ -83,6 +99,7 @@ async def test_bill_print_original_is_idempotent_and_reprint_is_distinct(
     tokens = await login(api)
     headers = auth_headers(tokens)
     resources = await seeded_resources(api, headers)
+    cashier_printer = await _create_cashier_printer(api, headers)
     order = await _create_burger_order(
         api,
         headers,
@@ -100,9 +117,9 @@ async def test_bill_print_original_is_idempotent_and_reprint_is_distinct(
     first = await api.client.post("/api/v1/printing/jobs", json=original_payload, headers=headers)
     assert first.status_code == 201, first.text
     assert first.json()["kind"] == "ORIGINAL"
-    assert first.json()["printer_device_id"] is not None
+    assert first.json()["printer_device_id"] == cashier_printer["id"]
     assert first.json()["payload"]["content_type"] == "application/vnd.dixora.receipt+json"
-    assert first.json()["payload"]["document"]["title"] == "MÜŞTERİ BİLGİ FİŞİ"
+    assert first.json()["payload"]["document"]["title"] == "HESAP ÖZETİ"
 
     order_after_first_print = await api.client.get(f"/api/v1/orders/{order['id']}", headers=headers)
     assert order_after_first_print.status_code == 200, order_after_first_print.text
@@ -140,6 +157,7 @@ async def test_print_jobs_order_id_filter_is_tenant_scoped(api: ApiContext) -> N
     owner = await login(api)
     owner_headers = auth_headers(owner)
     resources = await seeded_resources(api, owner_headers)
+    await _create_cashier_printer(api, owner_headers)
     order = await _create_burger_order(
         api,
         owner_headers,
@@ -186,11 +204,13 @@ async def test_printer_device_management_is_tenant_and_branch_scoped(
         json={
             "code": "RECEIPT-01",
             "name": "Cashier Receipt Printer",
+            "purpose": "CASHIER",
             "transport": "MOCK",
             "settings": {"paper_width": 80},
         },
     )
     assert created.status_code == 201, created.text
+    assert created.json()["purpose"] == "CASHIER"
     updated = await api.client.patch(
         f"/api/v1/printing/devices/{created.json()['id']}",
         headers=headers,
@@ -200,3 +220,44 @@ async def test_printer_device_management_is_tenant_and_branch_scoped(
     devices = await api.client.get("/api/v1/printing/devices", headers=headers)
     assert devices.status_code == 200
     assert any(device["code"] == "RECEIPT-01" for device in devices.json())
+
+
+async def test_bill_print_requires_explicit_cashier_printer(api: ApiContext) -> None:
+    headers = auth_headers(await login(api))
+    resources = await seeded_resources(api, headers)
+    order = await _create_burger_order(
+        api,
+        headers,
+        table_id=resources["tables"][14]["id"],
+        product_id=resources["burger"]["id"],
+        key="print-bill-no-cashier-printer-0001",
+    )
+    devices = (await api.client.get("/api/v1/printing/devices", headers=headers)).json()
+    kitchen_printer = next(device for device in devices if device["code"] == "MOCK-KITCHEN")
+    wrong_route = await api.client.post(
+        "/api/v1/printing/jobs",
+        headers=headers,
+        json={
+            "order_id": order["id"],
+            "printer_device_id": kitchen_printer["id"],
+            "payload": {"type": "BILL", "order_id": order["id"]},
+            "kind": "ORIGINAL",
+            "idempotency_key": f"bill-wrong-printer:{order['id']}",
+        },
+    )
+    assert wrong_route.status_code == 422
+    assert wrong_route.json()["error"]["code"] == "cashier_printer_required"
+
+    response = await api.client.post(
+        "/api/v1/printing/jobs",
+        headers=headers,
+        json={
+            "order_id": order["id"],
+            "payload": {"type": "BILL", "order_id": order["id"]},
+            "kind": "ORIGINAL",
+            "idempotency_key": f"bill-no-printer:{order['id']}",
+        },
+    )
+
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "cashier_printer_not_configured"

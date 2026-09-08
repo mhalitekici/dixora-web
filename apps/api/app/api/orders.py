@@ -34,8 +34,12 @@ from app.schemas import (
     DiscountRequestCreate,
     ItemCheckSplitRequest,
     OrderCreate,
+    OrderItemActionRequest,
     OrderItemOut,
+    OrderItemRemoveRequest,
     OrderItemsAppend,
+    OrderItemTransferOut,
+    OrderItemTransferRequest,
     OrderOut,
     Page,
     PaymentCreate,
@@ -58,12 +62,15 @@ from app.services.orders import (
     load_order,
     mark_order_bill_requested,
     merge_table_order,
+    mutate_order_item,
     plan_amount_split,
     reject_cancellation,
     reject_discount,
+    remove_unprinted_order_item,
     request_cancellation,
     request_discount,
     split_check_by_items,
+    transfer_order_items,
     transfer_order_table,
 )
 
@@ -555,6 +562,82 @@ async def split_order_items(
     split_order = await load_order(db, require_tenant(identity), split_order.id)
     await _broadcast(request, split_order)
     return OrderOut.model_validate(split_order)
+
+
+@router.post("/{order_id}/items/transfer", response_model=OrderItemTransferOut)
+async def transfer_items(
+    order_id: UUID,
+    payload: OrderItemTransferRequest,
+    request: Request,
+    identity: TableTransferer,
+    db: DbSession,
+) -> OrderItemTransferOut:
+    source_order = await _scoped_order(identity, db, order_id, lock=True)
+    source_order, destination_order = await transfer_order_items(
+        db,
+        source_order=source_order,
+        destination_table_id=payload.destination_table_id,
+        items=payload.items,
+        idempotency_key=payload.idempotency_key,
+        reason=payload.reason,
+        identity=identity,
+    )
+    await db.commit()
+    await _broadcast(request, source_order)
+    await _broadcast(request, destination_order)
+    return OrderItemTransferOut(
+        source_order=OrderOut.model_validate(source_order),
+        destination_order=OrderOut.model_validate(destination_order),
+    )
+
+
+@router.patch("/{order_id}/items/{item_id}", response_model=OrderOut)
+async def update_order_item(
+    order_id: UUID,
+    item_id: UUID,
+    payload: OrderItemActionRequest,
+    request: Request,
+    identity: OrderManager,
+    db: DbSession,
+) -> OrderOut:
+    order = await _scoped_order(identity, db, order_id, lock=True)
+    order = await mutate_order_item(
+        db,
+        order=order,
+        item_id=item_id,
+        action=payload.action,
+        expected_version=payload.expected_version,
+        idempotency_key=payload.idempotency_key,
+        reason=payload.reason,
+        identity=identity,
+    )
+    await db.commit()
+    await _broadcast(request, order)
+    return OrderOut.model_validate(order)
+
+
+@router.delete("/{order_id}/items/{item_id}", response_model=OrderOut)
+async def remove_order_item(
+    order_id: UUID,
+    item_id: UUID,
+    payload: OrderItemRemoveRequest,
+    request: Request,
+    identity: OrderManager,
+    db: DbSession,
+) -> OrderOut:
+    order = await _scoped_order(identity, db, order_id, lock=True)
+    order = await remove_unprinted_order_item(
+        db,
+        order=order,
+        item_id=item_id,
+        expected_version=payload.expected_version,
+        idempotency_key=payload.idempotency_key,
+        reason=payload.reason,
+        identity=identity,
+    )
+    await db.commit()
+    await _broadcast(request, order)
+    return OrderOut.model_validate(order)
 
 
 @router.post("/{order_id}/split/amount", response_model=AmountCheckSplitOut)

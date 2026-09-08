@@ -67,13 +67,13 @@ export function ThermalReceipt({
       <div className="receipt-rule" />
 
       <dl className="receipt-meta">
-        {meta.reference ? (
-          <Row label="Fiş No" value={meta.reference} />
-        ) : null}
+        {meta.reference ? <Row label="Fiş No" value={meta.reference} /> : null}
         {meta.tableName ? <Row label="Masa" value={meta.tableName} /> : null}
         {meta.roomNumber ? <Row label="Oda" value={meta.roomNumber} /> : null}
         {meta.guestName ? <Row label="Misafir" value={meta.guestName} /> : null}
-        {meta.staffName ? <Row label="Personel" value={meta.staffName} /> : null}
+        {meta.staffName ? (
+          <Row label="Personel" value={meta.staffName} />
+        ) : null}
         {meta.checkedInAt ? (
           <Row label="Giriş" value={dateTime(meta.checkedInAt)} />
         ) : null}
@@ -91,8 +91,13 @@ export function ThermalReceipt({
             <div className="receipt-line">
               <span className="receipt-line-name">
                 {quantity(line.quantity)} x {line.name}
+                {line.complimentary ? (
+                  <strong className="receipt-comp"> İKRAM</strong>
+                ) : null}
               </span>
-              <span className="receipt-line-total">{amount(line.lineTotal)}</span>
+              <span className="receipt-line-total">
+                {amount(line.lineTotal)}
+              </span>
             </div>
             {line.unitPrice != null && Number(line.quantity) !== 1 ? (
               <p className="receipt-line-sub">Birim {amount(line.unitPrice)}</p>
@@ -100,7 +105,9 @@ export function ThermalReceipt({
             {line.modifiers?.length ? (
               <p className="receipt-line-sub">+ {line.modifiers.join(", ")}</p>
             ) : null}
-            {line.note ? <p className="receipt-line-sub">Not: {line.note}</p> : null}
+            {line.note ? (
+              <p className="receipt-line-sub">Not: {line.note}</p>
+            ) : null}
           </li>
         ))}
         {doc.lines.length === 0 ? (
@@ -121,6 +128,16 @@ export function ThermalReceipt({
         ) : null}
         {totals.tax != null && Number(totals.tax) > 0 ? (
           <Row label="KDV" value={amount(totals.tax)} />
+        ) : null}
+        {totals.serviceCharge != null && Number(totals.serviceCharge) > 0 ? (
+          <Row
+            label={
+              totals.serviceChargeType === "PERCENTAGE"
+                ? `Kuver %${quantity(totals.serviceChargeValue ?? 0)}`
+                : "Kuver / servis"
+            }
+            value={amount(totals.serviceCharge)}
+          />
         ) : null}
         <Row label="TOPLAM" value={amount(totals.total)} strong />
       </dl>

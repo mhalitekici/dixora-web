@@ -81,13 +81,7 @@ export type OrderStatus =
   | "VOIDED";
 
 export type OrderSource =
-  | "WAITER"
-  | "CASHIER"
-  | "QR"
-  | "TAKEAWAY"
-  | "DELIVERY"
-  | "KIOSK"
-  | "API";
+  "WAITER" | "CASHIER" | "QR" | "TAKEAWAY" | "DELIVERY" | "KIOSK" | "API";
 
 export type OrderItemModifier = {
   id: string;
@@ -131,6 +125,9 @@ export type Order = {
   subtotal: string;
   discount_total: string;
   tax_total: string;
+  service_charge_type: string | null;
+  service_charge_value: string;
+  service_charge_amount: string;
   total: string;
   version: number;
   created_at: string;
@@ -164,12 +161,7 @@ export type Station = {
 };
 
 export type PrintJobStatus =
-  | "PENDING"
-  | "CLAIMED"
-  | "SENT"
-  | "PRINTED"
-  | "FAILED"
-  | "CANCELLED";
+  "PENDING" | "CLAIMED" | "SENT" | "PRINTED" | "FAILED" | "CANCELLED";
 
 export type PrintJob = {
   id: string;
@@ -193,12 +185,7 @@ export type PrintJob = {
 };
 
 export type KitchenTicketStatus =
-  | "NEW"
-  | "ACCEPTED"
-  | "PREPARING"
-  | "READY"
-  | "COMPLETED"
-  | "CANCELLED";
+  "NEW" | "ACCEPTED" | "PREPARING" | "READY" | "COMPLETED" | "CANCELLED";
 
 export type KitchenTicketItem = {
   id: string;
@@ -235,6 +222,9 @@ export type Branch = {
   address: string | null;
   phone: string | null;
   working_hours: WorkingHours;
+  service_charge_enabled: boolean;
+  service_charge_type: string;
+  service_charge_value: string;
   is_active: boolean;
   archived_at: string | null;
 };
@@ -333,6 +323,7 @@ export type PrinterDevice = {
   preparation_station_id: string | null;
   code: string;
   name: string;
+  purpose: "PREPARATION" | "CASHIER";
   transport: string;
   is_active: boolean;
   last_seen_at: string | null;
@@ -457,7 +448,8 @@ export type Tenant = {
   name: string;
   slug: string;
   business_type: string;
-  state: "TRIAL" | "ACTIVE" | "PAST_DUE" | "SUSPENDED" | "CANCELLED" | "ARCHIVED";
+  state:
+    "TRIAL" | "ACTIVE" | "PAST_DUE" | "SUSPENDED" | "CANCELLED" | "ARCHIVED";
   is_active: boolean;
   default_currency: string;
   prevent_negative_stock: boolean;

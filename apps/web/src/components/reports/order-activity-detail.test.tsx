@@ -38,6 +38,9 @@ const detail: OrderActivityDetail = {
   paid_at: "2026-08-08T19:10:00Z",
   subtotal: "380.00",
   discount_total: "20.00",
+  service_charge_type: null,
+  service_charge_value: "0.00",
+  service_charge_amount: "0.00",
   tax_total: "0.00",
   total: "360.00",
   paid_total: "300.00",
@@ -50,6 +53,7 @@ const detail: OrderActivityDetail = {
       discount: "0.00",
       line_total: "240.00",
       status: "SERVED",
+      is_complimentary: false,
       note: null,
       modifiers: ["2x Ekstra shot"],
     },
@@ -60,6 +64,7 @@ const detail: OrderActivityDetail = {
       discount: "0.00",
       line_total: "140.00",
       status: "SERVED",
+      is_complimentary: false,
       note: "Az şekerli",
       modifiers: [],
     },
@@ -70,6 +75,7 @@ const detail: OrderActivityDetail = {
       discount: "0.00",
       line_total: "90.00",
       status: "CANCELLED",
+      is_complimentary: false,
       note: null,
       modifiers: [],
     },
@@ -96,7 +102,8 @@ const devices = [
     id: "pr-kasa",
     name: "Termal 1",
     code: "KASA1",
-    preparation_station_id: "st-kasa",
+    preparation_station_id: null,
+    purpose: "CASHIER" as const,
     is_active: true,
   },
   {
@@ -104,6 +111,7 @@ const devices = [
     name: "Mutfak Yazıcı",
     code: "MUT1",
     preparation_station_id: "st-mutfak",
+    purpose: "PREPARATION" as const,
     is_active: true,
   },
   {
@@ -111,6 +119,7 @@ const devices = [
     name: "Arızalı Yazıcı",
     code: "OLD1",
     preparation_station_id: null,
+    purpose: "PREPARATION" as const,
     is_active: false,
   },
 ];
@@ -205,18 +214,17 @@ describe("OrderActivityDetailDialog", () => {
     });
   });
 
-  it("routes the reprint to the station the manager picked", async () => {
+  it("routes the reprint to the cashier printer the manager picked", async () => {
     const user = userEvent.setup();
     const { posted } = setup();
     await user.click(await screen.findByRole("button", { name: /Fiş çıkar/ }));
     await user.click(await screen.findByRole("combobox"));
-    await user.click(await screen.findByRole("option", { name: /Mutfak · Mutfak Yazıcı/ }));
+    await user.click(await screen.findByRole("option", { name: /Termal 1/ }));
     await user.click(screen.getByRole("button", { name: /Yazıcıya gönder/ }));
 
     expect(posted[0].body).toMatchObject({
-      printer_device_id: "pr-mutfak",
-      // Sent alongside so the job is filed against the right station.
-      preparation_station_id: "st-mutfak",
+      printer_device_id: "pr-kasa",
+      preparation_station_id: null,
     });
   });
 
@@ -225,7 +233,10 @@ describe("OrderActivityDetailDialog", () => {
     setup();
     await user.click(await screen.findByRole("button", { name: /Fiş çıkar/ }));
     await user.click(await screen.findByRole("combobox"));
-    expect(await screen.findByRole("option", { name: /Termal 1/ })).toBeVisible();
+    expect(
+      await screen.findByRole("option", { name: /Termal 1/ }),
+    ).toBeVisible();
+    expect(screen.queryByRole("option", { name: /Mutfak Yazıcı/ })).toBeNull();
     expect(screen.queryByRole("option", { name: /Arızalı/ })).toBeNull();
   });
 
@@ -235,7 +246,9 @@ describe("OrderActivityDetailDialog", () => {
     await user.click(await screen.findByRole("button", { name: /Fiş çıkar/ }));
     // The browser print path stays; only the bridge queue is withheld.
     expect(await screen.findByRole("button", { name: /Yazdır/ })).toBeVisible();
-    expect(screen.queryByRole("button", { name: /Yazıcıya gönder/ })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /Yazıcıya gönder/ }),
+    ).toBeNull();
     expect(screen.queryByRole("combobox")).toBeNull();
   });
 });

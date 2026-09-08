@@ -25,9 +25,10 @@ const job: PrintJobClaim = {
     submittedAt: "2026-07-30T20:00:00.000Z",
     lines: [{ name: "Burger", quantity: "1" }],
   },
-  copies: 1,
-  isReprint: false,
-  attemptCount: 1,
+    copies: 1,
+    isReprint: false,
+    isTestPrint: false,
+    attemptCount: 1,
   claimedAt: "2026-07-30T20:00:00.000Z",
 };
 

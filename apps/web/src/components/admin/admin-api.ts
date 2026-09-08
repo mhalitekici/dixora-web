@@ -41,33 +41,47 @@ export const adminKeys = {
   orders: (status: string, offset: number, limit: number) =>
     [...adminKeys.root, "orders", status, offset, limit] as const,
   order: (id: string) => [...adminKeys.root, "order", id] as const,
-  qrRequests: (status: string) => [...adminKeys.root, "qr-requests", status] as const,
+  qrRequests: (status: string) =>
+    [...adminKeys.root, "qr-requests", status] as const,
   approvalRequests: (status: string, approvalType: string) =>
     [...adminKeys.root, "approval-requests", status, approvalType] as const,
-  approvalPendingCount: () => [...adminKeys.root, "approval-requests", "pending-count"] as const,
-  shiftHistory: (limit: number) => [...adminKeys.root, "shift-history", limit] as const,
-  stations: (branchId = "current") => [...adminKeys.root, "stations", branchId] as const,
-  printJobs: (branchId = "current") => [...adminKeys.root, "print-jobs", branchId] as const,
+  approvalPendingCount: () =>
+    [...adminKeys.root, "approval-requests", "pending-count"] as const,
+  shiftHistory: (limit: number) =>
+    [...adminKeys.root, "shift-history", limit] as const,
+  stations: (branchId = "current") =>
+    [...adminKeys.root, "stations", branchId] as const,
+  printJobs: (branchId = "current") =>
+    [...adminKeys.root, "print-jobs", branchId] as const,
   printerDevices: (branchId: string) =>
     [...adminKeys.root, "printer-devices", branchId] as const,
   printBridges: (branchId: string) =>
     [...adminKeys.root, "print-bridges", branchId] as const,
   kitchenTickets: (stationId: string, includeCompleted: boolean) =>
-    [...adminKeys.root, "kitchen-tickets", stationId, includeCompleted] as const,
+    [
+      ...adminKeys.root,
+      "kitchen-tickets",
+      stationId,
+      includeCompleted,
+    ] as const,
   employees: () => [...adminKeys.root, "employees"] as const,
   branches: () => [...adminKeys.root, "branches"] as const,
   branchUsage: () => [...adminKeys.root, "branch-usage"] as const,
   branchPricing: () => [...adminKeys.root, "branch-pricing"] as const,
   roles: () => [...adminKeys.root, "roles"] as const,
   permissions: () => [...adminKeys.root, "permissions"] as const,
-  report: (from: string, to: string) => [...adminKeys.root, "report", from, to] as const,
-  audit: (action: string, limit: number) => [...adminKeys.root, "audit", action, limit] as const,
+  report: (from: string, to: string) =>
+    [...adminKeys.root, "report", from, to] as const,
+  audit: (action: string, limit: number) =>
+    [...adminKeys.root, "audit", action, limit] as const,
   businesses: () => [...adminKeys.root, "businesses"] as const,
 };
 
 export const adminApi = {
-  dashboard: (signal?: AbortSignal) => api.get<DashboardSummary>("dashboard", { signal }),
-  tables: (signal?: AbortSignal) => api.get<DiningTable[]>("tables", { signal }),
+  dashboard: (signal?: AbortSignal) =>
+    api.get<DashboardSummary>("dashboard", { signal }),
+  tables: (signal?: AbortSignal) =>
+    api.get<DiningTable[]>("tables", { signal }),
   orders: (
     input: { status?: OrderStatus; offset?: number; limit?: number } = {},
     signal?: AbortSignal,
@@ -80,26 +94,37 @@ export const adminApi = {
       },
       signal,
     }),
-  order: (id: string, signal?: AbortSignal) => api.get<Order>(`orders/${id}`, { signal }),
+  order: (id: string, signal?: AbortSignal) =>
+    api.get<Order>(`orders/${id}`, { signal }),
   acceptOrder: (id: string) => api.post<Order>(`orders/${id}/accept`),
   qrRequests: (status?: QrRequestStatus, signal?: AbortSignal) =>
     api.get<QrRequest[]>("qr/requests", { search: { status }, signal }),
-  approveQrRequest: (id: string) => api.post<QrRequest>(`qr/requests/${id}/approve`),
-  rejectQrRequest: (id: string) => api.post<QrRequest>(`qr/requests/${id}/reject`),
+  approveQrRequest: (id: string) =>
+    api.post<QrRequest>(`qr/requests/${id}/approve`),
+  rejectQrRequest: (id: string) =>
+    api.post<QrRequest>(`qr/requests/${id}/reject`),
   approvalRequests: (
-    input: { status?: ApprovalStatus | "ALL"; approvalType?: ApprovalType | "ALL" } = {},
+    input: {
+      status?: ApprovalStatus | "ALL";
+      approvalType?: ApprovalType | "ALL";
+    } = {},
     signal?: AbortSignal,
   ) =>
     api.get<ApprovalRequest[]>("orders/approval-requests", {
       search: {
-        status: input.status && input.status !== "ALL" ? input.status : undefined,
+        status:
+          input.status && input.status !== "ALL" ? input.status : undefined,
         approval_type:
-          input.approvalType && input.approvalType !== "ALL" ? input.approvalType : undefined,
+          input.approvalType && input.approvalType !== "ALL"
+            ? input.approvalType
+            : undefined,
       },
       signal,
     }),
   approvalPendingCount: (signal?: AbortSignal) =>
-    api.get<{ pending: number }>("orders/approval-requests/pending-count", { signal }),
+    api.get<{ pending: number }>("orders/approval-requests/pending-count", {
+      signal,
+    }),
   approveDiscountRequest: (id: string) =>
     api.post<ApprovalRequest>(`orders/discount-requests/${id}/approve`),
   rejectDiscountRequest: (id: string) =>
@@ -115,8 +140,12 @@ export const adminApi = {
       search: { branch_id: branchId },
       signal,
     }),
-  createStation: (input: { branch_id: string; name: string; code: string; sort_order: number }) =>
-    api.post<Station>("catalog/stations", input),
+  createStation: (input: {
+    branch_id: string;
+    name: string;
+    code: string;
+    sort_order: number;
+  }) => api.post<Station>("catalog/stations", input),
   printJobs: (signal?: AbortSignal, branchId?: string) =>
     api.get<PrintJob[]>("printing/jobs", {
       search: { branch_id: branchId },
@@ -132,6 +161,7 @@ export const adminApi = {
     preparation_station_id: string | null;
     code: string;
     name: string;
+    purpose: "PREPARATION" | "CASHIER";
     transport: string;
     settings: Record<string, unknown>;
   }) => api.post<PrinterDevice>("printing/devices", input),
@@ -139,6 +169,7 @@ export const adminApi = {
     id: string,
     input: {
       name?: string;
+      purpose?: "PREPARATION" | "CASHIER";
       preparation_station_id?: string | null;
       transport?: string;
       is_active?: boolean;
@@ -147,13 +178,17 @@ export const adminApi = {
   ) => api.patch<PrinterDevice>(`printing/devices/${id}`, input),
   testPrinterDevice: (id: string) =>
     api.post<PrintJob>(`printing/devices/${id}/test`),
-  retryPrintJob: (id: string) => api.post<PrintJob>(`printing/jobs/${id}/retry`),
+  retryPrintJob: (id: string) =>
+    api.post<PrintJob>(`printing/jobs/${id}/retry`),
   printBridges: (branchId: string, signal?: AbortSignal) =>
     api.get<PrintBridge[]>("printing/bridges", {
       search: { branch_id: branchId },
       signal,
     }),
-  createPrintBridgeEnrollment: (input: { branch_id: string; ttl_minutes?: number }) =>
+  createPrintBridgeEnrollment: (input: {
+    branch_id: string;
+    ttl_minutes?: number;
+  }) =>
     api.post<PrintBridgeEnrollment>("printing/bridges/enrollment-codes", input),
   mapBridgePrinter: (
     bridgeId: string,
@@ -165,7 +200,9 @@ export const adminApi = {
       { local_printer_name: localPrinterName },
     ),
   unmapBridgePrinter: (bridgeId: string, printerDeviceId: string) =>
-    api.delete<void>(`printing/bridges/${bridgeId}/printer-mappings/${printerDeviceId}`),
+    api.delete<void>(
+      `printing/bridges/${bridgeId}/printer-mappings/${printerDeviceId}`,
+    ),
   revokePrintBridge: (bridgeId: string) =>
     api.post<PrintBridge>(`printing/bridges/${bridgeId}/revoke`),
   kitchenTickets: (
@@ -182,7 +219,8 @@ export const adminApi = {
   updateKitchenTicket: (id: string, status: KitchenTicketStatus) =>
     api.patch<KitchenTicket>(`kitchen/tickets/${id}/status`, { status }),
   employees: (signal?: AbortSignal) => api.get<Employee[]>("users", { signal }),
-  createEmployee: (input: EmployeeCreateInput) => api.post<Employee>("users", input),
+  createEmployee: (input: EmployeeCreateInput) =>
+    api.post<Employee>("users", input),
   updateEmployee: (id: string, input: EmployeeUpdateInput) =>
     api.patch<Employee>(`users/${id}`, input),
   resetEmployeePassword: (id: string, password: string) =>
@@ -191,8 +229,10 @@ export const adminApi = {
     api.put<void>(`users/${id}/pin`, { pin }),
   roles: (signal?: AbortSignal) => api.get<Role[]>("roles", { signal }),
   createRole: (input: RoleCreateInput) => api.post<Role>("roles", input),
-  updateRole: (id: string, input: RoleUpdateInput) => api.patch<Role>(`roles/${id}`, input),
-  permissions: (signal?: AbortSignal) => api.get<string[]>("permissions", { signal }),
+  updateRole: (id: string, input: RoleUpdateInput) =>
+    api.patch<Role>(`roles/${id}`, input),
+  permissions: (signal?: AbortSignal) =>
+    api.get<string[]>("permissions", { signal }),
   salesSummary: (from: string, to: string, signal?: AbortSignal) =>
     api.get<SalesSummary>("reports/sales-summary", {
       search: { date_from: from, date_to: to },
@@ -216,8 +256,7 @@ export const adminApi = {
       prevent_negative_stock: boolean;
       theme_mode: Tenant["theme_mode"];
     },
-  ) =>
-    api.patch<Tenant>(`businesses/${id}`, input),
+  ) => api.patch<Tenant>(`businesses/${id}`, input),
   branches: (signal?: AbortSignal) => api.get<Branch[]>("branches", { signal }),
   branchUsage: (signal?: AbortSignal) =>
     api.get<BranchUsage>("branches/usage", { signal }),
@@ -233,6 +272,9 @@ export const adminApi = {
     address: string | null;
     phone: string | null;
     working_hours: Branch["working_hours"];
+    service_charge_enabled?: boolean;
+    service_charge_type?: string;
+    service_charge_value?: string;
   }) => api.post<Branch>("branches", input),
   updateBranch: (
     id: string,
@@ -242,6 +284,9 @@ export const adminApi = {
       address?: string | null;
       phone?: string | null;
       working_hours?: Branch["working_hours"];
+      service_charge_enabled?: boolean;
+      service_charge_type?: string;
+      service_charge_value?: string;
       is_active?: boolean;
     },
   ) => api.patch<Branch>(`branches/${id}`, input),

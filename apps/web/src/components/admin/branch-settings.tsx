@@ -55,6 +55,9 @@ const branchSchema = z.object({
     z.literal(""),
     z.string().trim().regex(/^[0-9+()\s.-]{7,32}$/, "Geçerli bir telefon girin."),
   ]),
+  service_charge_enabled: z.boolean(),
+  service_charge_type: z.enum(["PERCENTAGE", "FIXED"]),
+  service_charge_value: z.coerce.number().min(0).max(999999),
 });
 
 type BranchValues = z.infer<typeof branchSchema>;
@@ -275,6 +278,9 @@ export function BranchSettings() {
             address: values.address || null,
             phone: values.phone || null,
             working_hours: workingHours,
+            service_charge_enabled: values.service_charge_enabled,
+            service_charge_type: values.service_charge_type,
+            service_charge_value: values.service_charge_value.toFixed(2),
           })
         }
       />
@@ -306,6 +312,9 @@ function BranchEditor({
       timezone: branch.timezone,
       address: branch.address ?? "",
       phone: branch.phone ?? "",
+      service_charge_enabled: branch.service_charge_enabled,
+      service_charge_type: branch.service_charge_type === "FIXED" ? "FIXED" : "PERCENTAGE",
+      service_charge_value: Number(branch.service_charge_value ?? 0),
     },
   });
 
@@ -319,6 +328,9 @@ function BranchEditor({
           address: values.address || null,
           phone: values.phone || null,
           working_hours: workingHours,
+          service_charge_enabled: values.service_charge_enabled,
+          service_charge_type: values.service_charge_type,
+          service_charge_value: values.service_charge_value.toFixed(2),
         }),
       )}
     >
@@ -389,6 +401,9 @@ function BranchCreateDialog({
       timezone: "Europe/Istanbul",
       address: "",
       phone: "",
+      service_charge_enabled: false,
+      service_charge_type: "PERCENTAGE",
+      service_charge_value: 0,
     },
   });
 
@@ -458,6 +473,31 @@ function BranchFields({
         <Label htmlFor="branch-address">Adres</Label>
         <Textarea id="branch-address" className="mt-1.5" rows={3} {...form.register("address")} />
         <FieldError>{form.formState.errors.address?.message}</FieldError>
+      </div>
+      <div className="sm:col-span-2 rounded-xl border p-3">
+        <div className="flex items-center justify-between gap-3">
+          <div>
+            <Label htmlFor="branch-service-charge">Kuver / servis ücreti</Label>
+            <p className="mt-1 text-xs text-muted-foreground">Yeni siparişlere şube bazlı snapshot olarak uygulanır.</p>
+          </div>
+          <Switch
+            id="branch-service-charge"
+            checked={form.watch("service_charge_enabled")}
+            onCheckedChange={(checked) =>
+              form.setValue("service_charge_enabled", checked, { shouldDirty: true })
+            }
+          />
+        </div>
+        {form.watch("service_charge_enabled") ? (
+          <div className="mt-3 grid gap-3 sm:grid-cols-[1fr_10rem]">
+            <select className="h-10 rounded-md border bg-background px-3 text-sm" {...form.register("service_charge_type")}>
+              <option value="PERCENTAGE">Yüzde</option>
+              <option value="FIXED">Sabit tutar</option>
+            </select>
+            <Input type="number" min="0" step="0.01" {...form.register("service_charge_value")} />
+          </div>
+        ) : null}
+        <FieldError>{form.formState.errors.service_charge_value?.message}</FieldError>
       </div>
     </div>
   );

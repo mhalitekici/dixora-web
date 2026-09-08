@@ -2,6 +2,7 @@ import type { PrintJobClaim, PrintResult } from "@dixora/shared-types";
 
 import type { BridgeConfig } from "./config.js";
 import {
+  malformedClaimReference,
   PRINTING_API,
   parseClaimedJobs,
   type BridgeUpdateRequest,
@@ -26,7 +27,14 @@ export class PrintBridgeApiClient {
       if (payload === undefined || payload === null) {
         break;
       }
-      jobs.push(...parseClaimedJobs([payload]));
+      try {
+        jobs.push(...parseClaimedJobs([payload]));
+      } catch (error) {
+        await this.markMalformedClaimFailed(
+          payload,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
     }
 
     return jobs;
@@ -142,6 +150,36 @@ export class PrintBridgeApiClient {
           attemptCount,
           "failed",
         ),
+      },
+      method: "PATCH",
+    });
+  }
+
+  private async markMalformedClaimFailed(
+    payload: unknown,
+    reason: string,
+  ): Promise<void> {
+    const reference = malformedClaimReference(payload);
+    if (!reference) {
+      throw new Error(`Claimed print job could not be parsed: ${reason}`);
+    }
+    const request: BridgeUpdateRequest = {
+      attempt_count: reference.attemptCount,
+      error: `Print Bridge job validation failed: ${reason}`,
+      manual_retry_required: true,
+      status: "FAILED",
+    };
+    await this.request(PRINTING_API.update(reference.id), {
+      body: JSON.stringify(request),
+      headers: {
+        "Content-Type": "application/json",
+        "Idempotency-Key": [
+          "print-bridge",
+          this.config.bridgeId,
+          reference.id,
+          reference.attemptCount,
+          "validation-failed",
+        ].join(":"),
       },
       method: "PATCH",
     });

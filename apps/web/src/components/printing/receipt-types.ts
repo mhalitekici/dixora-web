@@ -26,6 +26,7 @@ export interface ReceiptLine {
   /** Chosen modifiers, already snapshotted. */
   modifiers?: string[];
   note?: string | null;
+  complimentary?: boolean;
 }
 
 export interface ReceiptPayment {
@@ -38,6 +39,9 @@ export interface ReceiptTotals {
   subtotal?: string | number | null;
   discount?: string | number | null;
   tax?: string | number | null;
+  serviceChargeType?: string | null;
+  serviceChargeValue?: string | number | null;
+  serviceCharge?: string | number | null;
   total: string | number;
   paid?: string | number | null;
   remaining?: string | number | null;

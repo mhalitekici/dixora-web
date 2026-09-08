@@ -1,3 +1,5 @@
+import { appendFileSync } from "node:fs";
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export function log(
@@ -20,5 +22,14 @@ export function log(
     console.warn(output);
   } else {
     console.log(output);
+  }
+
+  const logPath = process.env.PRINT_BRIDGE_LOG_PATH;
+  if (logPath) {
+    try {
+      appendFileSync(logPath, `${output}\n`, "utf8");
+    } catch {
+      // Logging must never interrupt printing or acknowledgement.
+    }
   }
 }

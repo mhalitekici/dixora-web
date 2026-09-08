@@ -254,6 +254,8 @@ async def test_qr_request_requires_staff_approval_then_uses_unified_order_engine
     assert bill_request.status_code == 201, bill_request.text
     assert bill_request.json()["status"] == "REQUESTED"
     assert bill_request.json()["order"]["status"] == "BILL_REQUESTED"
+    assert bill_request.json()["order"]["items"]
+    assert Decimal(bill_request.json()["order"]["subtotal"]) >= Decimal("0.00")
 
     order_after_bill = await api.client.get(f"/api/v1/orders/{order_id}", headers=headers)
     assert order_after_bill.status_code == 200, order_after_bill.text

@@ -5,7 +5,7 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 
-from app.models import StockBalance, StockMovement
+from app.models import AuditLog, StockBalance, StockMovement
 from tests.conftest import (
     ApiContext,
     auth_headers,
@@ -88,6 +88,254 @@ async def test_order_lifecycle_append_only_new_items_and_active_table_lookup(
     assert len(batches) == 2
     assert {item["batch_number"] for item in batches} == {1, 2}
     assert all(len(item["items"]) == 1 for item in batches)
+
+
+async def test_branch_service_charge_is_snapshotted_into_order_total(
+    api: ApiContext,
+) -> None:
+    tokens = await login(api)
+    headers = auth_headers(tokens)
+    resources = await seeded_resources(api, headers)
+    branches = await api.client.get("/api/v1/branches", headers=headers)
+    branch_id = branches.json()[0]["id"]
+    updated = await api.client.patch(
+        f"/api/v1/branches/{branch_id}",
+        headers=headers,
+        json={
+            "service_charge_enabled": True,
+            "service_charge_type": "PERCENTAGE",
+            "service_charge_value": "10.00",
+        },
+    )
+    assert updated.status_code == 200, updated.text
+
+    order = await _create_burger_order(
+        api,
+        headers,
+        table_id=resources["tables"][2]["id"],
+        product_id=resources["burger"]["id"],
+        key="service-charge-order-0001",
+    )
+    assert Decimal(order["subtotal"]) == Decimal("360.00")
+    assert Decimal(order["service_charge_amount"]) == Decimal("36.00")
+    assert Decimal(order["total"]) == Decimal("396.00")
+
+
+async def test_cashier_item_quantity_and_complimentary_flow_is_versioned_and_audited(
+    api: ApiContext,
+) -> None:
+    headers = auth_headers(await login(api))
+    resources = await seeded_resources(api, headers)
+    branch_id = (await api.client.get("/api/v1/branches", headers=headers)).json()[0]["id"]
+    configured = await api.client.patch(
+        f"/api/v1/branches/{branch_id}",
+        headers=headers,
+        json={
+            "service_charge_enabled": True,
+            "service_charge_type": "PERCENTAGE",
+            "service_charge_value": "10.00",
+        },
+    )
+    assert configured.status_code == 200, configured.text
+    order = await _create_burger_order(
+        api,
+        headers,
+        table_id=resources["tables"][3]["id"],
+        product_id=resources["burger"]["id"],
+        quantity="2",
+        key="cashier-item-actions-0001",
+    )
+    item = order["items"][0]
+
+    increased = await api.client.patch(
+        f"/api/v1/orders/{order['id']}/items/{item['id']}",
+        headers=headers,
+        json={
+            "action": "INCREASE",
+            "expected_version": order["version"],
+            "idempotency_key": "cashier-item-increase-0001",
+        },
+    )
+    assert increased.status_code == 200, increased.text
+    increased_order = increased.json()
+    assert Decimal(increased_order["items"][0]["quantity"]) == Decimal("3.00")
+    assert Decimal(increased_order["subtotal"]) == Decimal("1080.00")
+    assert Decimal(increased_order["service_charge_amount"]) == Decimal("108.00")
+
+    stale = await api.client.patch(
+        f"/api/v1/orders/{order['id']}/items/{item['id']}",
+        headers=headers,
+        json={
+            "action": "DECREASE",
+            "expected_version": order["version"],
+            "idempotency_key": "cashier-item-stale-0001",
+        },
+    )
+    assert stale.status_code == 409
+    assert stale.json()["error"]["code"] == "order_version_conflict"
+
+    complimentary = await api.client.patch(
+        f"/api/v1/orders/{order['id']}/items/{item['id']}",
+        headers=headers,
+        json={
+            "action": "SET_COMPLIMENTARY",
+            "expected_version": increased_order["version"],
+            "idempotency_key": "cashier-item-comp-0001",
+            "reason": "Müşteri memnuniyeti",
+        },
+    )
+    assert complimentary.status_code == 200, complimentary.text
+    comp_order = complimentary.json()
+    comp_item = comp_order["items"][0]
+    assert comp_item["is_complimentary"] is True
+    assert Decimal(comp_item["unit_price"]) == Decimal("360.00")
+    assert Decimal(comp_item["line_total"]) == Decimal("0.00")
+    assert Decimal(comp_order["subtotal"]) == Decimal("0.00")
+    assert Decimal(comp_order["service_charge_amount"]) == Decimal("0.00")
+    assert Decimal(comp_order["total"]) == Decimal("0.00")
+
+    cashier_printer = await api.client.post(
+        "/api/v1/printing/devices",
+        headers=headers,
+        json={
+            "code": "KASA-COMP",
+            "name": "Kasa Hesap Yazıcısı",
+            "purpose": "CASHIER",
+            "transport": "MOCK",
+        },
+    )
+    assert cashier_printer.status_code == 201, cashier_printer.text
+    bill = await api.client.post(
+        "/api/v1/printing/jobs",
+        headers=headers,
+        json={
+            "order_id": order["id"],
+            "payload": {"type": "BILL", "order_id": order["id"]},
+            "kind": "ORIGINAL",
+            "idempotency_key": "cashier-comp-bill-0001",
+        },
+    )
+    assert bill.status_code == 201, bill.text
+    bill_line = bill.json()["payload"]["document"]["lines"][0]
+    assert bill_line["complimentary"] is True
+    assert Decimal(bill_line["line_total"]) == Decimal("0.00")
+    assert bill.json()["printer_device_id"] == cashier_printer.json()["id"]
+    after_bill = await api.client.get(f"/api/v1/orders/{order['id']}", headers=headers)
+    assert after_bill.status_code == 200, after_bill.text
+
+    restored = await api.client.patch(
+        f"/api/v1/orders/{order['id']}/items/{item['id']}",
+        headers=headers,
+        json={
+            "action": "REMOVE_COMPLIMENTARY",
+            "expected_version": after_bill.json()["version"],
+            "idempotency_key": "cashier-item-uncomp-0001",
+            "reason": "İkram kaldırıldı",
+        },
+    )
+    assert restored.status_code == 200, restored.text
+    restored_order = restored.json()
+    assert restored_order["items"][0]["is_complimentary"] is False
+    assert Decimal(restored_order["subtotal"]) == Decimal("1080.00")
+    assert Decimal(restored_order["total"]) == Decimal("1188.00")
+
+    decreased = await api.client.patch(
+        f"/api/v1/orders/{order['id']}/items/{item['id']}",
+        headers=headers,
+        json={
+            "action": "DECREASE",
+            "expected_version": restored_order["version"],
+            "idempotency_key": "cashier-item-decrease-0001",
+        },
+    )
+    assert decreased.status_code == 200, decreased.text
+    assert Decimal(decreased.json()["items"][0]["quantity"]) == Decimal("2.00")
+    assert Decimal(decreased.json()["total"]) == Decimal("792.00")
+
+    async with api.database.session_factory() as db:
+        actions = set(
+            (await db.execute(select(AuditLog.action).where(AuditLog.resource_id == item["id"])))
+            .scalars()
+            .all()
+        )
+    assert {
+        "order.item_quantity_increased",
+        "order.item_quantity_decreased",
+        "order.item_complimentary_set",
+        "order.item_complimentary_removed",
+    } <= actions
+
+
+async def test_remove_unprinted_item_and_require_cancellation_after_preparation(
+    api: ApiContext,
+) -> None:
+    owner_headers = auth_headers(await login(api))
+    resources = await seeded_resources(api, owner_headers)
+    draft_response = await api.client.post(
+        "/api/v1/orders",
+        headers=owner_headers,
+        json={
+            "table_id": resources["tables"][4]["id"],
+            "items": [{"product_id": resources["burger"]["id"], "quantity": "1"}],
+            "idempotency_key": "unprinted-remove-order-0001",
+            "auto_accept": False,
+        },
+    )
+    assert draft_response.status_code == 201, draft_response.text
+    draft = draft_response.json()
+    removed = await api.client.request(
+        "DELETE",
+        f"/api/v1/orders/{draft['id']}/items/{draft['items'][0]['id']}",
+        headers=owner_headers,
+        json={
+            "expected_version": draft["version"],
+            "idempotency_key": "unprinted-remove-item-0001",
+            "reason": "Yanlış ürün",
+        },
+    )
+    assert removed.status_code == 200, removed.text
+    assert removed.json()["items"][0]["status"] == "VOIDED"
+    assert Decimal(removed.json()["total"]) == Decimal("0.00")
+
+    accepted = await _create_burger_order(
+        api,
+        owner_headers,
+        table_id=resources["tables"][5]["id"],
+        product_id=resources["burger"]["id"],
+        key="printed-remove-order-0001",
+    )
+    requires_cancel = await api.client.request(
+        "DELETE",
+        f"/api/v1/orders/{accepted['id']}/items/{accepted['items'][0]['id']}",
+        headers=owner_headers,
+        json={
+            "expected_version": accepted["version"],
+            "idempotency_key": "printed-remove-item-0001",
+            "reason": "Yanlış ürün",
+        },
+    )
+    assert requires_cancel.status_code == 409
+    assert requires_cancel.json()["error"]["code"] == "item_cancellation_required"
+
+    cashier_headers = auth_headers(
+        await login(
+            api,
+            username="cashier@dixora.test",
+            password="DixoraLab!2026",
+        )
+    )
+    forbidden = await api.client.patch(
+        f"/api/v1/orders/{accepted['id']}/items/{accepted['items'][0]['id']}",
+        headers=cashier_headers,
+        json={
+            "action": "SET_COMPLIMENTARY",
+            "expected_version": accepted["version"],
+            "idempotency_key": "cashier-comp-forbidden-0001",
+            "reason": "Yetkisiz ikram",
+        },
+    )
+    assert forbidden.status_code == 403
+    assert forbidden.json()["error"]["code"] == "permission_denied"
 
 
 async def test_recipe_stock_deduction_is_decimal_safe_and_idempotent(api: ApiContext) -> None:
@@ -261,3 +509,50 @@ async def test_table_merge_preserves_destination_and_voids_source(api: ApiContex
     assert Decimal(merged.json()["total"]) == Decimal("720.00")
     source_after = await api.client.get(f"/api/v1/orders/{source['id']}", headers=headers)
     assert source_after.json()["status"] == "VOIDED"
+
+
+async def test_item_transfer_moves_partial_quantity_to_destination_table(
+    api: ApiContext,
+) -> None:
+    tokens = await login(api)
+    headers = auth_headers(tokens)
+    resources = await seeded_resources(api, headers)
+    source_table, destination_table = resources["tables"][7:9]
+    order = await _create_burger_order(
+        api,
+        headers,
+        table_id=source_table["id"],
+        product_id=resources["burger"]["id"],
+        quantity="2",
+        key="item-transfer-source-0001",
+    )
+
+    transfer = await api.client.post(
+        f"/api/v1/orders/{order['id']}/items/transfer",
+        headers=headers,
+        json={
+            "destination_table_id": destination_table["id"],
+            "items": [{"item_id": order["items"][0]["id"], "quantity": "1"}],
+            "idempotency_key": "item-transfer-key-0001",
+            "reason": "Guest moved one item",
+        },
+    )
+    assert transfer.status_code == 200, transfer.text
+    body = transfer.json()
+    assert body["source_order"]["id"] == order["id"]
+    assert Decimal(body["source_order"]["subtotal"]) == Decimal("360.00")
+    assert Decimal(body["destination_order"]["subtotal"]) == Decimal("360.00")
+    assert body["destination_order"]["table_id"] == destination_table["id"]
+
+    replay = await api.client.post(
+        f"/api/v1/orders/{order['id']}/items/transfer",
+        headers=headers,
+        json={
+            "destination_table_id": destination_table["id"],
+            "items": [{"item_id": order["items"][0]["id"], "quantity": "1"}],
+            "idempotency_key": "item-transfer-key-0001",
+            "reason": "Guest moved one item",
+        },
+    )
+    assert replay.status_code == 200
+    assert replay.json()["destination_order"]["id"] == body["destination_order"]["id"]

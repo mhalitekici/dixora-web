@@ -20,6 +20,7 @@ function job(overrides: Partial<PrintJobClaim> = {}): PrintJobClaim {
     contentType: "application/vnd.dixora.receipt+json",
     copies: 1,
     isReprint: false,
+    isTestPrint: false,
     attemptCount: 1,
     claimedAt: "2026-09-06T19:42:00Z",
     document: {

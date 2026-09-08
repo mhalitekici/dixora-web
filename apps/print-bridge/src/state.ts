@@ -24,8 +24,11 @@ export class BridgeState {
 
   public recordPollSuccess(): void {
     this.status = "ok";
-    this.lastError = null;
     this.lastSuccessfulPollAt = new Date().toISOString();
+  }
+
+  public recordJobStarted(): void {
+    this.status = "ok";
   }
 
   public recordPollFailure(message: string): void {
@@ -35,6 +38,7 @@ export class BridgeState {
 
   public recordPrinted(): void {
     this.processedJobs += 1;
+    this.lastError = null;
   }
 
   public recordLastPrintedAt(): void {

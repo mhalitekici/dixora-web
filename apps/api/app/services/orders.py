@@ -56,7 +56,13 @@ from app.models.enums import (
     TableSessionStatus,
     TableState,
 )
-from app.schemas import DiscountRequestCreate, OrderCreate, OrderItemInput, PaymentCreate
+from app.schemas import (
+    DiscountRequestCreate,
+    OrderCreate,
+    OrderItemInput,
+    OrderItemTransferLine,
+    PaymentCreate,
+)
 from app.services.audit import add_audit_log
 from app.services.loyalty import accrue_paid_order, reverse_order_redemptions
 
@@ -65,6 +71,46 @@ CENT = Decimal("0.01")
 
 def money(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+def apply_branch_service_charge_snapshot(order: Order, branch: Branch) -> None:
+    if branch.service_charge_enabled and branch.service_charge_value > 0:
+        order.service_charge_type = branch.service_charge_type
+        order.service_charge_value = money(branch.service_charge_value)
+    else:
+        order.service_charge_type = None
+        order.service_charge_value = Decimal("0.00")
+    recalculate_order_totals(order)
+
+
+def recalculate_order_totals(order: Order) -> None:
+    subtotal = money(order.subtotal)
+    discount_total = money(order.discount_total)
+    tax_total = money(order.tax_total)
+    service_charge = Decimal("0.00")
+    if order.service_charge_type == "PERCENTAGE" and order.service_charge_value > 0:
+        base = max(Decimal("0.00"), subtotal - discount_total)
+        service_charge = money(base * order.service_charge_value / Decimal("100"))
+    elif order.service_charge_type == "FIXED" and order.service_charge_value > 0:
+        service_charge = money(order.service_charge_value)
+    order.service_charge_amount = service_charge
+    order.total = money(
+        max(Decimal("0.00"), subtotal - discount_total + tax_total + service_charge)
+    )
+
+
+def _item_snapshot(item: OrderItem) -> dict[str, object]:
+    return {
+        "quantity": str(item.quantity),
+        "line_total": str(item.line_total),
+        "is_complimentary": item.is_complimentary,
+        "complimentary_by_user_id": (
+            str(item.complimentary_by_user_id) if item.complimentary_by_user_id else None
+        ),
+        "complimentary_at": (item.complimentary_at.isoformat() if item.complimentary_at else None),
+        "complimentary_reason": item.complimentary_reason,
+        "status": item.status.value,
+    }
 
 
 async def _build_kitchen_ticket_payload(
@@ -86,14 +132,14 @@ async def _build_kitchen_ticket_payload(
     """
     branch = await db.get(Branch, order.branch_id)
     assert branch is not None
+    tenant = await db.get(Tenant, order.tenant_id)
+    assert tenant is not None
 
     waiter_name: str | None = None
     lookup_user_id = actor_user_id or order.created_by_user_id
     if lookup_user_id is not None:
         waiter_name = (
-            await db.execute(
-                select(User.display_name).where(User.id == lookup_user_id)
-            )
+            await db.execute(select(User.display_name).where(User.id == lookup_user_id))
         ).scalar_one_or_none()
 
     order_note = (
@@ -114,16 +160,15 @@ async def _build_kitchen_ticket_payload(
     if item_ids:
         for modifier_row in (
             await db.execute(
-                select(OrderItemModifier).where(
-                    OrderItemModifier.order_item_id.in_(item_ids)
-                )
+                select(OrderItemModifier).where(OrderItemModifier.order_item_id.in_(item_ids))
             )
         ).scalars():
             modifiers_by_item[modifier_row.order_item_id].append(modifier_row)
 
     now = datetime.now(UTC)
     document: dict[str, object] = {
-        "title": (station.name if station else "GENEL").upper(),
+        "title": f"{station.name if station else 'GENEL'} FİŞİ".upper(),
+        "business_name": tenant.name,
         "branch_name": branch.name,
         "station_name": station.name if station else "Genel",
         "order_number": order_bill_reference(order.id),
@@ -143,6 +188,7 @@ async def _build_kitchen_ticket_payload(
                     for modifier in modifiers_by_item.get(item.id, [])
                 ],
                 "note": item.note,
+                "complimentary": item.is_complimentary,
             }
             for item in items
         ],
@@ -174,6 +220,7 @@ async def _station_printer_id(
                 PrinterDevice.tenant_id == tenant_id,
                 PrinterDevice.branch_id == branch_id,
                 PrinterDevice.preparation_station_id == station_id,
+                PrinterDevice.purpose == "PREPARATION",
                 PrinterDevice.is_active.is_(True),
             )
             .order_by(PrinterDevice.created_at)
@@ -368,6 +415,9 @@ async def create_order(
     if existing is not None:
         return await load_order(db, tenant_id, existing.id), True
 
+    branch = await db.get(Branch, branch_id)
+    if branch is None or branch.tenant_id != tenant_id:
+        raise DomainError("branch_not_found", "Branch not found", status_code=404)
     table_session: TableSession | None = None
     if payload.table_id is not None:
         table_session = await _get_or_create_table_session(
@@ -547,7 +597,7 @@ async def create_order(
             )
         subtotal += line_total
     order.subtotal = money(subtotal)
-    order.total = money(subtotal)
+    apply_branch_service_charge_snapshot(order, branch)
     await db.flush()
     order = await load_order(db, tenant_id, order.id, lock=True)
     await submit_order(db, order)
@@ -739,7 +789,7 @@ async def append_order_items(
         new_items.append(order_item)
         subtotal_delta += line_total
     order.subtotal = money(order.subtotal + subtotal_delta)
-    order.total = money(order.subtotal - order.discount_total + order.tax_total)
+    recalculate_order_totals(order)
     await db.flush()
 
     # Existing movement keys make this safe for every previously accepted item.
@@ -834,6 +884,323 @@ async def append_order_items(
                 table.version += 1
     await db.flush()
     return await load_order(db, tenant_id, order.id), False
+
+
+async def _queue_item_adjustment_print(
+    db: AsyncSession,
+    *,
+    order: Order,
+    item: OrderItem,
+    actor_user_id: UUID,
+    idempotency_key: str,
+    quantity: Decimal,
+    label: str,
+) -> None:
+    if item.preparation_station_id is None:
+        return
+    was_sent_to_preparation = (
+        await db.execute(
+            select(KitchenTicketItem.id)
+            .where(
+                KitchenTicketItem.tenant_id == order.tenant_id,
+                KitchenTicketItem.order_item_id == item.id,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if was_sent_to_preparation is None:
+        return
+    station = await db.get(PreparationStation, item.preparation_station_id)
+    if station is None:
+        return
+    payload = await _build_kitchen_ticket_payload(
+        db,
+        order=order,
+        station=station,
+        items=[item],
+        actor_user_id=actor_user_id,
+        kind=PrintJobKind.COPY,
+    )
+    document = cast(dict[str, object], payload["document"])
+    document["title"] = f"{station.name} DÜZELTME"
+    lines = cast(list[dict[str, object]], document["lines"])
+    lines[0]["quantity"] = str(quantity)
+    lines[0]["adjustment_label"] = label
+    lines[0]["complimentary"] = item.is_complimentary
+    document["footer"] = [label]
+    printer_device_id = await _station_printer_id(
+        db,
+        tenant_id=order.tenant_id,
+        branch_id=order.branch_id,
+        station_id=station.id,
+    )
+    db.add(
+        PrintJob(
+            tenant_id=order.tenant_id,
+            branch_id=order.branch_id,
+            preparation_station_id=station.id,
+            printer_device_id=printer_device_id,
+            order_id=order.id,
+            payload=payload,
+            status=PrintJobStatus.PENDING,
+            kind=PrintJobKind.COPY,
+            idempotency_key=f"item-adjustment:{idempotency_key}:station:{station.id}",
+        )
+    )
+
+
+async def mutate_order_item(
+    db: AsyncSession,
+    *,
+    order: Order,
+    item_id: UUID,
+    action: str,
+    expected_version: int,
+    idempotency_key: str,
+    reason: str | None,
+    identity: Identity,
+) -> Order:
+    existing = (
+        await db.execute(
+            select(OrderOperation).where(
+                OrderOperation.tenant_id == order.tenant_id,
+                OrderOperation.idempotency_key == idempotency_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return await load_order(db, order.tenant_id, order.id)
+    if order.version != expected_version:
+        raise DomainError(
+            "order_version_conflict",
+            "Order changed on another device. Refresh and try again",
+            status_code=409,
+        )
+    if order.status in {OrderStatus.PAID, OrderStatus.CANCELLED, OrderStatus.VOIDED}:
+        raise DomainError("order_not_editable", "Closed orders cannot be edited", status_code=409)
+    if any(payment.status == PaymentStatus.COMPLETED for payment in order.payments):
+        raise DomainError(
+            "order_has_payments",
+            "Items cannot be edited after a payment has been recorded",
+            status_code=409,
+        )
+    item = next((candidate for candidate in order.items if candidate.id == item_id), None)
+    if item is None:
+        raise DomainError("order_item_not_found", "Order item not found", status_code=404)
+    if item.status in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}:
+        raise DomainError(
+            "order_item_not_editable", "Cancelled items cannot be edited", status_code=409
+        )
+
+    before = _item_snapshot(item)
+    print_quantity = item.quantity
+    print_label: str | None = None
+    audit_action: str
+    if action == "INCREASE":
+        item.quantity = money(item.quantity + Decimal("1"))
+        if not item.is_complimentary:
+            item.line_total = money(item.unit_price * item.quantity)
+            order.subtotal = money(order.subtotal + item.unit_price)
+        print_quantity = Decimal("1")
+        print_label = "ADET ARTTIRILDI"
+        audit_action = "order.item_quantity_increased"
+    elif action == "DECREASE":
+        if item.quantity <= Decimal("1"):
+            raise DomainError(
+                "quantity_remove_required",
+                "Use remove for an item with quantity one",
+                status_code=409,
+            )
+        item.quantity = money(item.quantity - Decimal("1"))
+        if not item.is_complimentary:
+            item.line_total = money(item.unit_price * item.quantity)
+            order.subtotal = money(max(Decimal("0.00"), order.subtotal - item.unit_price))
+        print_quantity = Decimal("-1")
+        print_label = "ADET AZALTILDI"
+        audit_action = "order.item_quantity_decreased"
+    elif action == "SET_COMPLIMENTARY":
+        if (
+            not identity.is_super_admin
+            and "*" not in identity.permissions
+            and "orders.comp" not in identity.permissions
+        ):
+            raise DomainError(
+                "permission_denied",
+                "You do not have permission to mark complimentary items",
+                status_code=403,
+                details={"missing_permissions": ["orders.comp"]},
+            )
+        trimmed_reason = (reason or "").strip()
+        if len(trimmed_reason) < 3:
+            raise DomainError(
+                "complimentary_reason_required",
+                "A complimentary reason of at least 3 characters is required",
+                status_code=422,
+            )
+        if item.is_complimentary:
+            return await load_order(db, order.tenant_id, order.id)
+        order.subtotal = money(max(Decimal("0.00"), order.subtotal - item.line_total))
+        item.line_total = Decimal("0.00")
+        item.is_complimentary = True
+        item.complimentary_by_user_id = identity.user_id
+        item.complimentary_at = datetime.now(UTC)
+        item.complimentary_reason = trimmed_reason
+        print_label = "İKRAM"
+        audit_action = "order.item_complimentary_set"
+    elif action == "REMOVE_COMPLIMENTARY":
+        if (
+            not identity.is_super_admin
+            and "*" not in identity.permissions
+            and "orders.comp" not in identity.permissions
+        ):
+            raise DomainError(
+                "permission_denied",
+                "You do not have permission to remove complimentary items",
+                status_code=403,
+                details={"missing_permissions": ["orders.comp"]},
+            )
+        if not item.is_complimentary:
+            return await load_order(db, order.tenant_id, order.id)
+        item.line_total = money(item.unit_price * item.quantity)
+        order.subtotal = money(order.subtotal + item.line_total)
+        item.is_complimentary = False
+        item.complimentary_by_user_id = None
+        item.complimentary_at = None
+        item.complimentary_reason = None
+        print_label = "İKRAM KALDIRILDI"
+        audit_action = "order.item_complimentary_removed"
+    else:
+        raise DomainError("invalid_item_action", "Unsupported item action", status_code=422)
+
+    recalculate_order_totals(order)
+    order.version += 1
+    after = _item_snapshot(item)
+    db.add(
+        OrderOperation(
+            tenant_id=order.tenant_id,
+            branch_id=order.branch_id,
+            order_id=order.id,
+            actor_user_id=identity.user_id,
+            operation=action,
+            idempotency_key=idempotency_key,
+            result={
+                "order_id": str(order.id),
+                "item_id": str(item.id),
+                "order_version": order.version,
+                "before": before,
+                "after": after,
+            },
+        )
+    )
+    add_audit_log(
+        db,
+        identity=identity,
+        action=audit_action,
+        resource_type="order_item",
+        resource_id=item.id,
+        previous_value=before,
+        new_value=after,
+        reason=(reason or print_label or action),
+    )
+    if print_label is not None:
+        await _queue_item_adjustment_print(
+            db,
+            order=order,
+            item=item,
+            actor_user_id=identity.user_id,
+            idempotency_key=idempotency_key,
+            quantity=print_quantity,
+            label=print_label,
+        )
+    await db.flush()
+    return await load_order(db, order.tenant_id, order.id)
+
+
+async def remove_unprinted_order_item(
+    db: AsyncSession,
+    *,
+    order: Order,
+    item_id: UUID,
+    expected_version: int,
+    idempotency_key: str,
+    reason: str,
+    identity: Identity,
+) -> Order:
+    existing = (
+        await db.execute(
+            select(OrderOperation).where(
+                OrderOperation.tenant_id == order.tenant_id,
+                OrderOperation.idempotency_key == idempotency_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        return await load_order(db, order.tenant_id, order.id)
+    if order.version != expected_version:
+        raise DomainError(
+            "order_version_conflict",
+            "Order changed on another device. Refresh and try again",
+            status_code=409,
+        )
+    item = next((candidate for candidate in order.items if candidate.id == item_id), None)
+    if item is None:
+        raise DomainError("order_item_not_found", "Order item not found", status_code=404)
+    if item.status in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}:
+        raise DomainError(
+            "order_item_not_editable", "Cancelled items cannot be removed", status_code=409
+        )
+    was_sent_to_preparation = (
+        await db.execute(
+            select(KitchenTicketItem.id)
+            .where(
+                KitchenTicketItem.tenant_id == order.tenant_id,
+                KitchenTicketItem.order_item_id == item.id,
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if was_sent_to_preparation is not None:
+        raise DomainError(
+            "item_cancellation_required",
+            "This item was sent to preparation and requires cancellation",
+            status_code=409,
+        )
+    before = _item_snapshot(item)
+    order.subtotal = money(max(Decimal("0.00"), order.subtotal - item.line_total))
+    item.status = OrderItemStatus.VOIDED
+    item.line_total = Decimal("0.00")
+    recalculate_order_totals(order)
+    order.version += 1
+    after = _item_snapshot(item)
+    db.add(
+        OrderOperation(
+            tenant_id=order.tenant_id,
+            branch_id=order.branch_id,
+            order_id=order.id,
+            actor_user_id=identity.user_id,
+            operation="REMOVE_UNPRINTED_ITEM",
+            idempotency_key=idempotency_key,
+            result={
+                "order_id": str(order.id),
+                "item_id": str(item.id),
+                "order_version": order.version,
+                "before": before,
+                "after": after,
+            },
+        )
+    )
+    add_audit_log(
+        db,
+        identity=identity,
+        action="order.item_removed",
+        resource_type="order_item",
+        resource_id=item.id,
+        previous_value=before,
+        new_value=after,
+        reason=reason,
+    )
+    await db.flush()
+    return await load_order(db, order.tenant_id, order.id)
 
 
 async def _deduct_inventory(
@@ -1337,7 +1704,7 @@ async def approve_discount(
         )
     )
     order.discount_total = money(order.discount_total + amount)
-    order.total = money(max(Decimal("0"), order.subtotal - order.discount_total + order.tax_total))
+    recalculate_order_totals(order)
     order.version += 1
     approval.status = ApprovalStatus.APPROVED
     approval.resolved_by_user_id = identity.user_id
@@ -1622,9 +1989,7 @@ async def merge_table_order(
         item.status = OrderItemStatus.VOIDED
         transferred_total += item.line_total
     destination_order.subtotal = money(destination_order.subtotal + transferred_total)
-    destination_order.total = money(
-        destination_order.subtotal - destination_order.discount_total + destination_order.tax_total
-    )
+    recalculate_order_totals(destination_order)
     destination_order.version += 1
     source_order.status = OrderStatus.VOIDED
     source_order.version += 1
@@ -1724,17 +2089,19 @@ async def split_check_by_items(
         customer_name=order.customer_name,
         currency=order.currency,
         subtotal=split_subtotal,
-        total=split_subtotal,
+        service_charge_type=order.service_charge_type,
+        service_charge_value=order.service_charge_value,
         idempotency_key=f"item-split:{idempotency_key}",
         submitted_at=order.submitted_at,
         accepted_at=order.accepted_at,
     )
     db.add(split_order)
     await db.flush()
+    recalculate_order_totals(split_order)
     for item in selected_items:
         item.order_id = split_order.id
     order.subtotal = money(order.subtotal - split_subtotal)
-    order.total = money(order.subtotal - order.discount_total + order.tax_total)
+    recalculate_order_totals(order)
     order.version += 1
     db.add(
         OrderOperation(
@@ -1760,6 +2127,242 @@ async def split_check_by_items(
     )
     await db.flush()
     return await load_order(db, order.tenant_id, split_order.id)
+
+
+async def transfer_order_items(
+    db: AsyncSession,
+    *,
+    source_order: Order,
+    destination_table_id: UUID,
+    items: list[OrderItemTransferLine],
+    idempotency_key: str,
+    reason: str,
+    identity: Identity,
+) -> tuple[Order, Order]:
+    existing_operation = (
+        await db.execute(
+            select(OrderOperation).where(
+                OrderOperation.tenant_id == source_order.tenant_id,
+                OrderOperation.idempotency_key == idempotency_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing_operation is not None:
+        destination_id = UUID(str(existing_operation.result["destination_order_id"]))
+        return (
+            await load_order(db, source_order.tenant_id, source_order.id),
+            await load_order(db, source_order.tenant_id, destination_id),
+        )
+    if source_order.table_session_id is None:
+        raise DomainError(
+            "table_session_missing", "Order is not assigned to a table", status_code=409
+        )
+    if source_order.status in {OrderStatus.PAID, OrderStatus.CANCELLED, OrderStatus.VOIDED}:
+        raise DomainError(
+            "order_not_editable", "Paid or closed orders cannot be transferred", status_code=409
+        )
+    paid_count = (
+        await db.execute(
+            select(func.count(Payment.id)).where(
+                Payment.tenant_id == source_order.tenant_id,
+                Payment.order_id == source_order.id,
+                Payment.status == PaymentStatus.COMPLETED,
+            )
+        )
+    ).scalar_one()
+    if paid_count or source_order.discount_total:
+        raise DomainError(
+            "item_transfer_financial_conflict",
+            "Orders with payments or discounts cannot transfer individual items",
+            status_code=409,
+        )
+    destination_table = (
+        await db.execute(
+            select(DiningTable)
+            .where(
+                DiningTable.id == destination_table_id,
+                DiningTable.tenant_id == source_order.tenant_id,
+                DiningTable.branch_id == source_order.branch_id,
+                DiningTable.is_active.is_(True),
+                DiningTable.state != TableState.DISABLED,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if destination_table is None:
+        raise DomainError(
+            "destination_table_not_found", "Destination table not found", status_code=404
+        )
+    if source_order.table_id == destination_table.id:
+        raise DomainError("same_table_transfer", "Items are already on this table", status_code=409)
+    destination_session = (
+        await db.execute(
+            select(TableSession).where(
+                TableSession.tenant_id == source_order.tenant_id,
+                TableSession.table_id == destination_table.id,
+                TableSession.status == TableSessionStatus.OPEN,
+            )
+        )
+    ).scalar_one_or_none()
+    if destination_session is None:
+        destination_session = TableSession(
+            tenant_id=source_order.tenant_id,
+            branch_id=source_order.branch_id,
+            table_id=destination_table.id,
+            opened_by_user_id=identity.user_id,
+        )
+        db.add(destination_session)
+        await db.flush()
+    destination_order_id = (
+        await db.execute(
+            select(Order.id)
+            .where(
+                Order.tenant_id == source_order.tenant_id,
+                Order.table_session_id == destination_session.id,
+                Order.status.notin_([OrderStatus.PAID, OrderStatus.CANCELLED, OrderStatus.VOIDED]),
+            )
+            .order_by(Order.created_at.desc())
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if destination_order_id is None:
+        destination_order = Order(
+            tenant_id=source_order.tenant_id,
+            branch_id=source_order.branch_id,
+            table_session_id=destination_session.id,
+            created_by_user_id=identity.user_id,
+            source=source_order.source,
+            status=source_order.status,
+            customer_name=source_order.customer_name,
+            currency=source_order.currency,
+            service_charge_type=source_order.service_charge_type,
+            service_charge_value=source_order.service_charge_value,
+            idempotency_key=f"item-transfer:{idempotency_key}",
+            submitted_at=source_order.submitted_at,
+            accepted_at=source_order.accepted_at,
+        )
+        db.add(destination_order)
+        await db.flush()
+    else:
+        destination_order = await load_order(
+            db, source_order.tenant_id, destination_order_id, lock=True
+        )
+
+    requested = {line.item_id: line.quantity for line in items}
+    selected_items = [item for item in source_order.items if item.id in requested]
+    if len(selected_items) != len(requested):
+        raise DomainError(
+            "order_item_not_found", "One or more order items were not found", status_code=404
+        )
+
+    transferred_total = Decimal("0.00")
+    transferred_lines: list[dict[str, str]] = []
+    for item in selected_items:
+        if item.status in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}:
+            raise DomainError(
+                "order_item_not_transferable",
+                "Cancelled items cannot be transferred",
+                status_code=409,
+            )
+        quantity = requested[item.id]
+        if quantity > item.quantity:
+            raise DomainError(
+                "invalid_transfer_quantity",
+                "Transfer quantity exceeds item quantity",
+                status_code=409,
+            )
+        line_total = Decimal("0.00") if item.is_complimentary else money(item.unit_price * quantity)
+        clone = OrderItem(
+            tenant_id=item.tenant_id,
+            branch_id=item.branch_id,
+            order_id=destination_order.id,
+            product_id=item.product_id,
+            preparation_station_id=item.preparation_station_id,
+            product_name_snapshot=item.product_name_snapshot,
+            unit_price=item.unit_price,
+            quantity=quantity,
+            tax_rate_snapshot=item.tax_rate_snapshot,
+            discount_snapshot=item.discount_snapshot,
+            line_total=line_total,
+            is_complimentary=item.is_complimentary,
+            complimentary_by_user_id=item.complimentary_by_user_id,
+            complimentary_at=item.complimentary_at,
+            complimentary_reason=item.complimentary_reason,
+            status=item.status,
+            note=item.note,
+            submitted_at=item.submitted_at,
+        )
+        db.add(clone)
+        await db.flush()
+        for modifier in item.modifiers:
+            db.add(
+                OrderItemModifier(
+                    tenant_id=modifier.tenant_id,
+                    order_item_id=clone.id,
+                    modifier_id=modifier.modifier_id,
+                    name_snapshot=modifier.name_snapshot,
+                    price_delta_snapshot=modifier.price_delta_snapshot,
+                    quantity=modifier.quantity,
+                )
+            )
+        if quantity == item.quantity:
+            item.status = OrderItemStatus.VOIDED
+        else:
+            item.quantity = money(item.quantity - quantity)
+            item.line_total = (
+                Decimal("0.00") if item.is_complimentary else money(item.unit_price * item.quantity)
+            )
+        transferred_total += line_total
+        transferred_lines.append({"item_id": str(item.id), "quantity": str(quantity)})
+
+    source_order.subtotal = money(max(Decimal("0.00"), source_order.subtotal - transferred_total))
+    destination_order.subtotal = money(destination_order.subtotal + transferred_total)
+    recalculate_order_totals(source_order)
+    recalculate_order_totals(destination_order)
+    source_order.version += 1
+    destination_order.version += 1
+    if all(
+        item.status in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}
+        for item in source_order.items
+    ):
+        source_order.status = OrderStatus.VOIDED
+        await _release_table_if_no_open_checks(db, source_order)
+    destination_table.state = TableState.PREPARING
+    destination_table.version += 1
+    db.add(
+        OrderOperation(
+            tenant_id=source_order.tenant_id,
+            branch_id=source_order.branch_id,
+            order_id=source_order.id,
+            actor_user_id=identity.user_id,
+            operation="ORDER_ITEM_TRANSFER",
+            idempotency_key=idempotency_key,
+            result={
+                "source_order_id": str(source_order.id),
+                "destination_order_id": str(destination_order.id),
+                "destination_table_id": str(destination_table.id),
+                "items": transferred_lines,
+            },
+        )
+    )
+    add_audit_log(
+        db,
+        identity=identity,
+        action="order.items_transferred",
+        resource_type="order",
+        resource_id=source_order.id,
+        new_value={
+            "destination_order_id": str(destination_order.id),
+            "destination_table_id": str(destination_table.id),
+            "items": transferred_lines,
+        },
+        reason=reason,
+    )
+    await db.flush()
+    return (
+        await load_order(db, source_order.tenant_id, source_order.id),
+        await load_order(db, source_order.tenant_id, destination_order.id),
+    )
 
 
 async def plan_amount_split(
@@ -1876,9 +2479,7 @@ async def _release_table_if_no_open_checks(db: AsyncSession, order: Order) -> No
                 Order.tenant_id == order.tenant_id,
                 Order.table_session_id == order.table_session_id,
                 Order.id != order.id,
-                Order.status.notin_(
-                    [OrderStatus.PAID, OrderStatus.CANCELLED, OrderStatus.VOIDED]
-                ),
+                Order.status.notin_([OrderStatus.PAID, OrderStatus.CANCELLED, OrderStatus.VOIDED]),
             )
         )
     ).scalar_one()
@@ -2035,12 +2636,7 @@ async def approve_cancellation(
     else:
         cancelled_amount = sum((item.line_total for item in target_items), Decimal("0"))
         order.subtotal = money(max(Decimal("0"), order.subtotal - cancelled_amount))
-        order.total = money(
-            max(
-                Decimal("0"),
-                order.subtotal - order.discount_total + order.tax_total,
-            )
-        )
+        recalculate_order_totals(order)
         if all(
             item.status in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}
             for item in order.items

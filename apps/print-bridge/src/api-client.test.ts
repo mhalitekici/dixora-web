@@ -144,3 +144,88 @@ test("lets a scoped bridge claim from its server-side printer mappings", async (
 
   assert.equal(requestedPath, "/api/v1/printing/bridge/claim");
 });
+
+test("marks a malformed claimed job failed when it has enough acknowledgement data", async (context) => {
+  const requests: Array<{
+    body: Record<string, unknown> | undefined;
+    method: string | undefined;
+    path: string | undefined;
+  }> = [];
+  const server = createServer((request, response) => {
+    let body = "";
+    request.on("data", (chunk: Buffer) => {
+      body += chunk.toString("utf8");
+    });
+    request.on("end", () => {
+      requests.push({
+        body: body ? (JSON.parse(body) as Record<string, unknown>) : undefined,
+        method: request.method,
+        path: request.url,
+      });
+      response.setHeader("Content-Type", "application/json");
+      if (request.url?.startsWith("/api/v1/printing/bridge/claim")) {
+        response.end(
+          JSON.stringify({
+            id: "job-bad",
+            tenant_id: "tenant-1",
+            branch_id: "branch-1",
+            printer_device_id: "printer-device-1",
+            printer_code: "MOCK-KITCHEN",
+            order_id: null,
+            kitchen_ticket_id: null,
+            payload: {
+              content_type: "application/vnd.dixora.receipt+json",
+              document: {
+                title: "MUTFAK",
+                branch_name: "Dixora",
+                station_name: "Mutfak",
+                order_number: "A100",
+                submitted_at: "2026-07-30T20:00:00Z",
+                lines: [{ name: "Burger", quantity: "1" }],
+              },
+            },
+            kind: "ORIGINAL",
+            attempt_count: 2,
+            claimed_at: "2026-07-30T20:00:00Z",
+            created_at: "2026-07-30T19:59:00Z",
+          }),
+        );
+        return;
+      }
+      response.end("{}");
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  context.after(
+    () =>
+      new Promise<void>((resolve, reject) => {
+        server.close((error) => (error ? reject(error) : resolve()));
+      }),
+  );
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+
+  const client = new PrintBridgeApiClient(
+    testConfig({
+      apiKey: "",
+      apiToken: "bridge-secret",
+      apiUrl: `http://127.0.0.1:${address.port}`,
+      bridgeId: "bridge-1",
+      maxClaim: 1,
+      printerIds: ["MOCK-KITCHEN"],
+    }),
+  );
+
+  const jobs = await client.claimJobs();
+
+  assert.deepEqual(jobs, []);
+  const failedRequest = requests.find((request) => request.method === "PATCH");
+  assert.equal(
+    failedRequest?.path,
+    "/api/v1/printing/bridge/jobs/job-bad",
+  );
+  assert.equal(failedRequest?.body?.status, "FAILED");
+  assert.equal(failedRequest?.body?.attempt_count, 2);
+  assert.equal(failedRequest?.body?.manual_retry_required, true);
+  assert.match(String(failedRequest?.body?.error), /order_id/);
+});

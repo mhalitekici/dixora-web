@@ -1,4 +1,4 @@
-"use client"
+"use client";
 
 import {
   CheckCircle2,
@@ -7,15 +7,15 @@ import {
   Send,
   ShoppingBag,
   Trash2,
-} from "lucide-react"
-import { useState } from "react"
+} from "lucide-react";
+import { useState } from "react";
 
-import { translate, type QrLocale } from "@/components/qr/qr-i18n"
+import { translate, type QrLocale } from "@/components/qr/qr-i18n";
 import {
   cartLineTotalMinor,
   cartTotalMinor,
   formatMinorMoney,
-} from "@/components/qr/qr-utils"
+} from "@/components/qr/qr-utils";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -27,8 +27,8 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
   AlertDialogTrigger,
-} from "@/components/ui/alert-dialog"
-import { Button } from "@/components/ui/button"
+} from "@/components/ui/alert-dialog";
+import { Button } from "@/components/ui/button";
 import {
   Drawer,
   DrawerContent,
@@ -36,21 +36,21 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
-} from "@/components/ui/drawer"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import { useCartStore } from "@/stores/cart-store"
+} from "@/components/ui/drawer";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { useCartStore } from "@/stores/cart-store";
 
 interface CartDrawerProps {
-  open: boolean
-  onOpenChange: (open: boolean) => void
-  currency: string
-  tableName: string | null
-  orderingEnabled: boolean
-  customerNotesEnabled: boolean
-  submitting: boolean
-  onSubmit: (customerNote: string) => void
-  locale: QrLocale
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  currency: string;
+  tableName: string | null;
+  orderingEnabled: boolean;
+  customerNotesEnabled: boolean;
+  submitting: boolean;
+  onSubmit: (customerNote: string) => void;
+  locale: QrLocale;
 }
 
 export function CartDrawer({
@@ -64,18 +64,14 @@ export function CartDrawer({
   onSubmit,
   locale,
 }: CartDrawerProps) {
-  const lines = useCartStore((state) => state.lines)
-  const setQuantity = useCartStore((state) => state.setQuantity)
-  const removeLine = useCartStore((state) => state.removeLine)
-  const [customerNote, setCustomerNote] = useState("")
-  const total = cartTotalMinor(lines)
+  const lines = useCartStore((state) => state.lines);
+  const setQuantity = useCartStore((state) => state.setQuantity);
+  const removeLine = useCartStore((state) => state.removeLine);
+  const [customerNote, setCustomerNote] = useState("");
+  const total = cartTotalMinor(lines);
 
   return (
-    <Drawer
-      open={open}
-      onOpenChange={onOpenChange}
-      showSwipeHandle
-    >
+    <Drawer open={open} onOpenChange={onOpenChange} showSwipeHandle>
       <DrawerContent className="mx-auto max-w-2xl">
         <DrawerHeader className="border-b px-5 pb-4 text-left">
           <DrawerTitle className="flex items-center gap-2 text-xl font-semibold">
@@ -94,7 +90,9 @@ export function CartDrawer({
             <div className="grid min-h-52 place-items-center rounded-2xl border border-dashed bg-muted/30 p-6 text-center">
               <div>
                 <ShoppingBag className="mx-auto size-8 text-muted-foreground/60" />
-                <p className="mt-3 font-semibold">{translate(locale, "cart_empty")}</p>
+                <p className="mt-3 font-semibold">
+                  {translate(locale, "cart_empty")}
+                </p>
                 <p className="mt-1 text-sm text-muted-foreground">
                   {translate(locale, "cart_empty_desc")}
                 </p>
@@ -171,7 +169,9 @@ export function CartDrawer({
 
           {customerNotesEnabled && lines.length > 0 ? (
             <div className="space-y-2 pt-2">
-              <Label htmlFor="qr-customer-note">{translate(locale, "order_note_label")}</Label>
+              <Label htmlFor="qr-customer-note">
+                {translate(locale, "order_note_label")}
+              </Label>
               <Textarea
                 id="qr-customer-note"
                 value={customerNote}
@@ -186,7 +186,9 @@ export function CartDrawer({
 
         <DrawerFooter className="border-t bg-card px-5 py-4">
           <div className="mb-1 flex items-center justify-between">
-            <span className="text-sm text-muted-foreground">{translate(locale, "estimated_total")}</span>
+            <span className="text-sm text-muted-foreground">
+              {translate(locale, "estimated_total")}
+            </span>
             <strong className="text-xl">
               {formatMinorMoney(total, currency)}
             </strong>
@@ -196,7 +198,7 @@ export function CartDrawer({
               render={
                 <Button
                   type="button"
-                  className="h-12 w-full rounded-xl bg-[var(--qr-primary)] text-[var(--qr-on-primary)] hover:opacity-90"
+                  className="h-14 w-full rounded-xl bg-[var(--qr-primary)] text-base font-bold text-[var(--qr-on-primary)] hover:opacity-90 disabled:opacity-60"
                   disabled={
                     !orderingEnabled || lines.length === 0 || submitting
                   }
@@ -204,26 +206,34 @@ export function CartDrawer({
               }
             >
               <Send />
-              {submitting ? translate(locale, "sending") : translate(locale, "send_order_request")}
+              {submitting
+                ? translate(locale, "sending")
+                : translate(locale, "send_order_request")}
             </AlertDialogTrigger>
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogMedia className="bg-emerald-500/10 text-emerald-700">
                   <CheckCircle2 />
                 </AlertDialogMedia>
-                <AlertDialogTitle>{translate(locale, "confirm_order_title")}</AlertDialogTitle>
+                <AlertDialogTitle>
+                  {translate(locale, "confirm_order_title")}
+                </AlertDialogTitle>
                 <AlertDialogDescription>
                   {translate(locale, "confirm_order_desc", {
                     count: lines.length,
-                    table: tableName || translate(locale, "selected_table_fallback"),
+                    table:
+                      tableName || translate(locale, "selected_table_fallback"),
                   })}
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel>{translate(locale, "back_to_cart")}</AlertDialogCancel>
+                <AlertDialogCancel>
+                  {translate(locale, "back_to_cart")}
+                </AlertDialogCancel>
                 <AlertDialogAction
                   onClick={() => onSubmit(customerNote)}
                   disabled={submitting}
+                  className="bg-[var(--qr-primary)] text-[var(--qr-on-primary)] hover:opacity-90"
                 >
                   <Send />
                   {translate(locale, "confirm_and_send")}
@@ -239,5 +249,5 @@ export function CartDrawer({
         </DrawerFooter>
       </DrawerContent>
     </Drawer>
-  )
+  );
 }

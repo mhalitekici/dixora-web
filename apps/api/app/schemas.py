@@ -292,6 +292,11 @@ class BranchCreate(BaseModel):
     address: str | None = Field(default=None, max_length=500)
     phone: str | None = Field(default=None, pattern=r"^[0-9+()\s.-]{7,32}$", max_length=32)
     working_hours: WorkingHours = Field(default_factory=dict)
+    service_charge_enabled: bool = False
+    service_charge_type: Literal["PERCENTAGE", "FIXED"] = "PERCENTAGE"
+    service_charge_value: Decimal = Field(
+        default=Decimal("0.00"), ge=0, max_digits=14, decimal_places=2
+    )
 
 
 class BranchOut(ORMModel):
@@ -303,6 +308,9 @@ class BranchOut(ORMModel):
     address: str | None
     phone: str | None
     working_hours: WorkingHours
+    service_charge_enabled: bool
+    service_charge_type: str
+    service_charge_value: Decimal
     is_active: bool
     archived_at: datetime | None = None
 
@@ -343,6 +351,11 @@ class BranchUpdate(BaseModel):
     address: str | None = Field(default=None, max_length=500)
     phone: str | None = Field(default=None, pattern=r"^[0-9+()\s.-]{7,32}$", max_length=32)
     working_hours: WorkingHours | None = None
+    service_charge_enabled: bool | None = None
+    service_charge_type: Literal["PERCENTAGE", "FIXED"] | None = None
+    service_charge_value: Decimal | None = Field(
+        default=None, ge=0, max_digits=14, decimal_places=2
+    )
     is_active: bool | None = None
 
 
@@ -975,6 +988,10 @@ class OrderItemOut(ORMModel):
     tax_rate_snapshot: Decimal
     discount_snapshot: Decimal
     line_total: Decimal
+    is_complimentary: bool = False
+    complimentary_by_user_id: UUID | None = None
+    complimentary_at: datetime | None = None
+    complimentary_reason: str | None = None
     status: OrderItemStatus
     note: str | None
     modifiers: list[OrderItemModifierOut] = []
@@ -1002,6 +1019,9 @@ class OrderOut(ORMModel):
     subtotal: Decimal
     discount_total: Decimal
     tax_total: Decimal
+    service_charge_type: str | None = None
+    service_charge_value: Decimal = Decimal("0.00")
+    service_charge_amount: Decimal = Decimal("0.00")
     total: Decimal
     version: int
     created_at: datetime
@@ -1122,6 +1142,36 @@ class TableMergeRequest(BaseModel):
 class ItemCheckSplitRequest(BaseModel):
     item_ids: list[UUID] = Field(min_length=1)
     idempotency_key: str = Field(min_length=8, max_length=160)
+
+
+class OrderItemTransferLine(BaseModel):
+    item_id: UUID
+    quantity: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+
+
+class OrderItemTransferRequest(BaseModel):
+    destination_table_id: UUID
+    items: list[OrderItemTransferLine] = Field(min_length=1)
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    reason: str = Field(min_length=3, max_length=255)
+
+
+class OrderItemTransferOut(BaseModel):
+    source_order: OrderOut
+    destination_order: OrderOut
+
+
+class OrderItemActionRequest(BaseModel):
+    action: Literal["INCREASE", "DECREASE", "SET_COMPLIMENTARY", "REMOVE_COMPLIMENTARY"]
+    expected_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    reason: str | None = Field(default=None, max_length=255)
+
+
+class OrderItemRemoveRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    reason: str = Field(min_length=3, max_length=255)
 
 
 class AmountCheckSplitRequest(BaseModel):
@@ -1387,6 +1437,15 @@ class PublicCampaignOut(BaseModel):
 
 class PublicActiveOrderOut(BaseModel):
     status: OrderStatus
+    currency: str = "TRY"
+    table_name: str | None = None
+    items: list[OrderItemOut] = []
+    subtotal: Decimal = Decimal("0.00")
+    discount_total: Decimal = Decimal("0.00")
+    tax_total: Decimal = Decimal("0.00")
+    service_charge_type: str | None = None
+    service_charge_value: Decimal = Decimal("0.00")
+    service_charge_amount: Decimal = Decimal("0.00")
     total: Decimal
     paid_total: Decimal
     remaining: Decimal
@@ -1628,6 +1687,7 @@ class PrinterDeviceCreate(BaseModel):
     branch_id: UUID | None = None
     code: str = Field(pattern=r"^[A-Z][A-Z0-9_-]{1,79}$")
     name: str = Field(min_length=1, max_length=120)
+    purpose: Literal["PREPARATION", "CASHIER"] = "PREPARATION"
     preparation_station_id: UUID | None = None
     transport: str = Field(default="MOCK", max_length=40)
     settings: dict[str, object] = {}
@@ -1635,6 +1695,7 @@ class PrinterDeviceCreate(BaseModel):
 
 class PrinterDeviceUpdate(BaseModel):
     name: str | None = Field(default=None, min_length=1, max_length=120)
+    purpose: Literal["PREPARATION", "CASHIER"] | None = None
     preparation_station_id: UUID | None = None
     transport: str | None = Field(default=None, max_length=40)
     is_active: bool | None = None
@@ -1648,6 +1709,7 @@ class PrinterDeviceOut(ORMModel):
     preparation_station_id: UUID | None
     code: str
     name: str
+    purpose: str
     transport: str
     is_active: bool
     last_seen_at: datetime | None
@@ -1799,9 +1861,7 @@ class DeliveryOrderCreate(BaseModel):
     items: list[OrderItemInput] = Field(min_length=1)
     idempotency_key: str = Field(min_length=8, max_length=160)
     customer_name: str | None = Field(default=None, max_length=160)
-    customer_phone: str | None = Field(
-        default=None, pattern=r"^[0-9+()\s.-]{7,32}$", max_length=32
-    )
+    customer_phone: str | None = Field(default=None, pattern=r"^[0-9+()\s.-]{7,32}$", max_length=32)
     address_line: str | None = Field(default=None, max_length=500)
     district: str | None = Field(default=None, max_length=120)
     neighbourhood: str | None = Field(default=None, max_length=120)
@@ -1924,6 +1984,7 @@ class OrderActivityItemOut(BaseModel):
     unit_price: Decimal
     discount: Decimal
     line_total: Decimal
+    is_complimentary: bool
     status: str
     note: str | None
     # Already rendered as "2x Ekstra peynir" so every surface reads the same.
@@ -1963,6 +2024,9 @@ class OrderActivityDetailOut(OrderActivityOut):
     subtotal: Decimal
     discount_total: Decimal
     tax_total: Decimal
+    service_charge_type: str | None
+    service_charge_value: Decimal
+    service_charge_amount: Decimal
     paid_total: Decimal
     remaining: Decimal
     items: list[OrderActivityItemOut]

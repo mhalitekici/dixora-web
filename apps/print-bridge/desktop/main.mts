@@ -28,8 +28,10 @@ interface EnrollmentInput {
 interface DesktopStatus {
   apiUrl: string | null;
   computerName: string;
+  defaultApiUrl: string;
   enrolled: boolean;
   lastError: string | null;
+  logs: readonly string[];
   platform: "windows" | "macos" | "linux";
   printers: readonly string[];
   runtime: ReturnType<BridgeRuntime["state"]["snapshot"]> | null;
@@ -37,6 +39,8 @@ interface DesktopStatus {
 
 const desktopDirectory = dirname(fileURLToPath(import.meta.url));
 const startedInBackground = process.argv.includes("--background");
+const DEVELOPMENT_API_URL = "http://localhost:8000";
+const PRODUCTION_API_URL = "https://dixoratech.com";
 
 let mainWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
@@ -53,8 +57,28 @@ function dataPaths() {
   return {
     credentials: join(root, "credentials.json"),
     journal: join(root, "journal.json"),
+    log: join(root, "bridge.log"),
     settings: join(root, "settings.json"),
   };
+}
+
+function defaultApiUrl(): string {
+  return app.isPackaged ? PRODUCTION_API_URL : DEVELOPMENT_API_URL;
+}
+
+function shouldReplaceStaleLocalhostApiUrl(apiUrl: string): boolean {
+  if (!app.isPackaged) return false;
+  try {
+    const url = new URL(apiUrl);
+    return (
+      url.protocol === "http:" &&
+      ["localhost", "127.0.0.1", "::1", "host.docker.internal"].includes(
+        url.hostname,
+      )
+    );
+  } catch {
+    return false;
+  }
 }
 
 function configureAgentEnvironment(nextSettings: DesktopSettings): void {
@@ -66,6 +90,7 @@ function configureAgentEnvironment(nextSettings: DesktopSettings): void {
   process.env.PRINT_BRIDGE_VERSION = app.getVersion();
   process.env.PRINT_BRIDGE_CREDENTIALS_PATH = paths.credentials;
   process.env.PRINT_BRIDGE_JOURNAL_PATH = paths.journal;
+  process.env.PRINT_BRIDGE_LOG_PATH = paths.log;
 
   // A desktop installation must use its own enrolled credential, never a
   // developer token inherited from the shell that opened the app.
@@ -85,12 +110,18 @@ async function loadSettings(): Promise<DesktopSettings | null> {
     ) {
       return null;
     }
+    const apiUrl = validateApiUrl(value.apiUrl);
     return {
-      apiUrl: validateApiUrl(value.apiUrl),
+      apiUrl: shouldReplaceStaleLocalhostApiUrl(apiUrl)
+        ? defaultApiUrl()
+        : apiUrl,
       computerName: normalizeComputerName(value.computerName),
     };
   } catch {
-    return null;
+    return {
+      apiUrl: defaultApiUrl(),
+      computerName: hostname(),
+    };
   }
 }
 
@@ -178,12 +209,26 @@ async function desktopStatus(): Promise<DesktopStatus> {
   return {
     apiUrl: settings?.apiUrl ?? null,
     computerName: settings?.computerName ?? hostname(),
+    defaultApiUrl: defaultApiUrl(),
     enrolled,
     lastError,
+    logs: await readRecentLogs(),
     platform: bridgePlatformLabel(),
     printers: lastPrinters,
     runtime: runtime?.state.snapshot() ?? null,
   };
+}
+
+async function readRecentLogs(limit = 80): Promise<string[]> {
+  try {
+    const raw = await readFile(dataPaths().log, "utf8");
+    return raw
+      .split(/\r?\n/)
+      .filter((line) => line.trim().length > 0)
+      .slice(-limit);
+  } catch {
+    return [];
+  }
 }
 
 async function enroll(input: EnrollmentInput): Promise<DesktopStatus> {
@@ -345,7 +390,10 @@ app.whenReady().then(async () => {
     app.setAppUserModelId("com.dixora.print-bridge");
   }
   settings = await loadSettings();
-  if (settings) configureAgentEnvironment(settings);
+  if (settings) {
+    await saveSettings(settings);
+    configureAgentEnvironment(settings);
+  }
   registerIpcHandlers();
   tray = createTray();
   mainWindow = createWindow();

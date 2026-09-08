@@ -18,10 +18,17 @@ istasyon için kalıcı bir baskı işi oluşturulur. Örneğin burger `Mutfak`,
 `Bar` cihazına gider. Fiş yeniden basımları da aynı job kaydı ve denetim izi
 üzerinden ilerler.
 
-Kasa/garson hesap fişleri ve sipariş hareketi detayındaki fiş önizlemesi bu
-hazırlık fişlerinden ayrıdır. İşletme adı, masa, garson, tarih, içerik ve toplam
-tutarı gösteren müşteri bilgi fişi, ilgili ekranın açık yazıcısına normal iş
-akışıyla gönderilir.
+Kasa hesap fişleri hazırlık fişlerinden ayrıdır. `purpose=CASHIER` rolündeki
+aktif cihaz, şubenin tek hesap fişi rotasıdır; yazıcı adı veya cihaz kodundan
+tahmin yapılmaz. İşletme ve şube adı, masa, garson, tarih, ikram satırları,
+kuver/servis ve backend toplamlarını gösteren hesap özeti bu rotaya normal iş
+akışıyla gönderilir. Kasa rotası yoksa iş kuyruğa alınmaz ve panel kullanıcıyı
+**Ayarlar > Yazıcılar** bölümüne yönlendirir.
+
+Kasiyer basılmış bir ürünün adedini veya ikram durumunu değiştirdiğinde yeni bir
+ORIGINAL sipariş fişi üretilmez. İlgili hazırlık istasyonuna idempotent bir
+`COPY` düzeltme işi düşer; üzerinde `ADET ARTTIRILDI`, `ADET AZALTILDI`, `İKRAM`
+veya `İKRAM KALDIRILDI` etiketi bulunur.
 
 ## Güvenli teslimat
 
@@ -74,7 +81,7 @@ Bu komut şunları yapar:
 4. Uygulama Windows yazıcılarını listeler ve arka planda çalışmaya başlar.
    Pencere kapatıldığında sistem tepsisinde kalır; sonraki Windows oturumunda
    otomatik başlar.
-5. Web panelinde heartbeat geldikten sonra `MUTFAK` ve `BAR` cihazlarını
+5. Web panelinde heartbeat geldikten sonra `MUTFAK`, `BAR` ve `KASA` cihazlarını
    görünen yerel yazıcı adlarıyla eşleyin, ardından **Test çıktısı al** ile
    gerçek fişi doğrulayın.
 
@@ -86,6 +93,28 @@ code-signing sertifikasıyla imzalanmalıdır.
 Windows taşıması `Get-Printer` ile yüklü yazıcıları keşfeder ve `Out-Printer`
 ile Windows spooler'a UTF-8 metin işi verir. USB, ağ ve sürücüyle kurulmuş
 yazıcılar, Windows'ta görünüyorsa desteklenir.
+
+`Microsoft Print to PDF` ve `Microsoft XPS Document Writer` arka planda çalışan
+Print Bridge için güvenilir test yazıcısı değildir. Bu sürücüler dosya adı
+seçmek için etkileşimli kaydetme penceresi ister; bridge tray/background
+oturumunda bu pencereyi gösteremez. Bu yazıcılar seçilirse bridge işi fiziksel
+spooler'a vermeden `FAILED` yapar ve hata mesajını masaüstü penceresinde
+gösterir.
+
+Gerçek yazıcı olmadan Windows kabul testi için `Generic / Text Only` sürücüsüyle
+normal spooler'a giden geçici bir test yazıcısı oluşturun:
+
+```powershell
+Add-PrinterPort -Name "NUL:"
+Add-PrinterDriver -Name "Generic / Text Only"
+Add-Printer -Name "Dixora Test Printer" -DriverName "Generic / Text Only" -PortName "NUL:"
+```
+
+Alternatif olarak Windows **Printers & scanners** ekranından **Add manually** ile
+`Generic / Text Only` sürücüsünü kurup yazıcıyı bir local test portuna bağlayın.
+Canlı panelde Dixora cihaz eşlemesinin yerel yazıcı adını `Dixora Test Printer`
+yapıp **Test çıktısı al** çalıştırın; iş `FAILED` yerine `Yazdırıldı` durumuna
+geçmelidir.
 
 ## macOS masaüstü uygulaması
 
@@ -157,7 +186,8 @@ ile CUPS spooler'a gönderir.
 - Windows veya macOS masaüstü uygulamasını indirir; kullanıcıya terminal komutu göstermez.
 - Bridge bağlantı kodu oluşturur veya aktif bridge'i iptal eder.
 - Bridge heartbeat'inden gelen Windows/macOS yazıcı envanterini görür.
-- Her Dixora cihazını bir hazırlık istasyonuna ve tek bir `bridge + yerel OS
+- Her Dixora cihazına **Hazırlık fişi** veya **Kasa / hesap** rolü verir;
+  hazırlık cihazını bir istasyona, her cihazı tek bir `bridge + yerel OS
 yazıcısı` eşlemesine bağlar.
 - Eşleme yoksa test baskısını çalıştıramaz; yanlış şubeye veya tanımsız bir
   yazıcıya job düşmez.
@@ -169,6 +199,8 @@ gözlem verisidir; merkezden şube ağına health probe yapılmaz.
 ## Fiş biçimi
 
 Fiziksel taşıma 80 mm termal fiş için 42 sütunluk UTF-8 düz metin üretir.
+İşletme/şube ve fiş türü çift çizgiyle ayrılır; hazırlık ürünleri büyük harfle,
+hesap satırları sağa hizalı tutarla, ikramlar `İKRAM · 0,00 TL` olarak görünür.
 Başlıkta `toLocaleUpperCase("tr")` kullanılır; böylece `İ`, `ı`, `Ş`, `Ğ`, `Ç`
 gibi Türkçe karakterler bozulmaz. Uzun ürün isimleri, notlar ve modifiyerler
 kesilmek yerine satıra sarılır.

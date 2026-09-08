@@ -224,9 +224,7 @@ async def sales_analytics(
         total_discount += order_discount
         bucket = _bucket_start(paid_at, granularity)
         bucket_sales[bucket] = bucket_sales.get(bucket, ZERO_MONEY) + order_total
-        bucket_discounts[bucket] = (
-            bucket_discounts.get(bucket, ZERO_MONEY) + order_discount
-        )
+        bucket_discounts[bucket] = bucket_discounts.get(bucket, ZERO_MONEY) + order_discount
         bucket_orders[bucket] = bucket_orders.get(bucket, 0) + 1
         source = (
             source_value
@@ -255,18 +253,15 @@ async def sales_analytics(
             )
             .join(
                 Order,
-                (Order.id == OrderItem.order_id)
-                & (Order.tenant_id == OrderItem.tenant_id),
+                (Order.id == OrderItem.order_id) & (Order.tenant_id == OrderItem.tenant_id),
             )
             .join(
                 Product,
-                (Product.id == OrderItem.product_id)
-                & (Product.tenant_id == OrderItem.tenant_id),
+                (Product.id == OrderItem.product_id) & (Product.tenant_id == OrderItem.tenant_id),
             )
             .join(
                 Category,
-                (Category.id == Product.category_id)
-                & (Category.tenant_id == Product.tenant_id),
+                (Category.id == Product.category_id) & (Category.tenant_id == Product.tenant_id),
             )
             .where(
                 *order_predicates,
@@ -318,8 +313,7 @@ async def sales_analytics(
             select(KitchenTicket.started_at, KitchenTicket.ready_at)
             .join(
                 Order,
-                (Order.id == KitchenTicket.order_id)
-                & (Order.tenant_id == KitchenTicket.tenant_id),
+                (Order.id == KitchenTicket.order_id) & (Order.tenant_id == KitchenTicket.tenant_id),
             )
             .where(
                 *order_predicates,
@@ -338,10 +332,9 @@ async def sales_analytics(
         and (duration := _duration_minutes(started_at, ready_at)) is not None
     ]
     average_preparation_minutes = (
-        (
-            sum(preparation_durations, Decimal("0"))
-            / Decimal(len(preparation_durations))
-        ).quantize(MONEY_QUANTUM, rounding=ROUND_HALF_UP)
+        (sum(preparation_durations, Decimal("0")) / Decimal(len(preparation_durations))).quantize(
+            MONEY_QUANTUM, rounding=ROUND_HALF_UP
+        )
         if preparation_durations
         else None
     )
@@ -356,9 +349,7 @@ async def sales_analytics(
                 bucket=cursor,
                 gross_sales=_money(bucket_sales.get(cursor, ZERO_MONEY)),
                 paid_orders=bucket_orders.get(cursor, 0),
-                discount_total=_money(
-                    bucket_discounts.get(cursor, ZERO_MONEY)
-                ),
+                discount_total=_money(bucket_discounts.get(cursor, ZERO_MONEY)),
             )
         )
         cursor += step
@@ -408,9 +399,7 @@ async def sales_analytics(
         gross_sales=gross_sales,
         paid_orders=paid_orders,
         average_order_value=(
-            _money(gross_sales / Decimal(paid_orders))
-            if paid_orders
-            else ZERO_MONEY
+            _money(gross_sales / Decimal(paid_orders)) if paid_orders else ZERO_MONEY
         ),
         total_discount=_money(total_discount),
         cancelled_items=cancelled_items,
@@ -463,9 +452,7 @@ async def order_activity(
         .outerjoin(TableSession, TableSession.id == Order.table_session_id)
         .outerjoin(DiningTable, DiningTable.id == TableSession.table_id)
         .outerjoin(staff, staff.id == Order.created_by_user_id)
-        .outerjoin(
-            LoyaltyMembership, LoyaltyMembership.id == Order.loyalty_membership_id
-        )
+        .outerjoin(LoyaltyMembership, LoyaltyMembership.id == Order.loyalty_membership_id)
         .outerjoin(DeliveryOrder, DeliveryOrder.order_id == Order.id)
         .where(Order.tenant_id == tenant_id, Order.branch_id == selected_branch)
     )
@@ -487,9 +474,7 @@ async def order_activity(
             staff_name=row.staff_name,
             member_code=row.member_code,
             delivery_channel=(
-                DeliveryChannel(row.delivery_channel).value
-                if row.delivery_channel
-                else None
+                DeliveryChannel(row.delivery_channel).value if row.delivery_channel else None
             ),
             customer_name=row.delivery_customer,
             total=row.total,
@@ -545,11 +530,7 @@ async def order_activity_detail(
     # Only completed money counts as paid; a failed attempt still belongs on the
     # list, so it is reported with its status rather than dropped.
     paid_total = sum(
-        (
-            payment.amount
-            for payment in order.payments
-            if payment.status == PaymentStatus.COMPLETED
-        ),
+        (payment.amount for payment in order.payments if payment.status == PaymentStatus.COMPLETED),
         ZERO_MONEY,
     )
     recorder_ids = {
@@ -599,6 +580,9 @@ async def order_activity_detail(
         subtotal=order.subtotal,
         discount_total=order.discount_total,
         tax_total=order.tax_total,
+        service_charge_type=order.service_charge_type,
+        service_charge_value=order.service_charge_value,
+        service_charge_amount=order.service_charge_amount,
         total=order.total,
         paid_total=_money(paid_total),
         remaining=_money(max(ZERO_MONEY, order.total - paid_total)),
@@ -609,6 +593,7 @@ async def order_activity_detail(
                 unit_price=item.unit_price,
                 discount=item.discount_snapshot,
                 line_total=item.line_total,
+                is_complimentary=item.is_complimentary,
                 status=OrderItemStatus(item.status).value,
                 note=item.note,
                 modifiers=[

@@ -1,4 +1,4 @@
-"use client"
+"use client";
 
 import {
   AlertCircle,
@@ -6,41 +6,38 @@ import {
   Search,
   ShoppingBag,
   UtensilsCrossed,
-} from "lucide-react"
-import type { CSSProperties } from "react"
-import { useEffect, useMemo, useRef, useState } from "react"
-import { toast } from "sonner"
+} from "lucide-react";
+import type { CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { toast } from "sonner";
 
-import { CartDrawer } from "@/components/qr/cart-drawer"
-import { BillRequestDrawer } from "@/components/qr/bill-request-drawer"
-import { QrBrandIntro } from "@/components/qr/qr-brand-intro"
-import { QrCampaignBanner } from "@/components/qr/qr-campaign-banner"
+import { CartDrawer } from "@/components/qr/cart-drawer";
+import { BillRequestDrawer } from "@/components/qr/bill-request-drawer";
+import { QrBrandIntro } from "@/components/qr/qr-brand-intro";
+import { QrCampaignBanner } from "@/components/qr/qr-campaign-banner";
 import {
   useCreatePublicBillRequest,
   useCreatePublicQrRequest,
   usePublicQrMenu,
-} from "@/components/qr/qr-hooks"
-import { ProductDrawer } from "@/components/qr/product-drawer"
-import { PublicMenuCatalog } from "@/components/qr/public-menu-catalog"
-import { PublicMenuHeader } from "@/components/qr/public-menu-header"
-import { QrRequestStatus } from "@/components/qr/request-status"
-import type { PublicQrRequestDto, QrProductDto } from "@/components/qr/types"
-import { readableForeground } from "@/components/qr/qr-utils"
-import { translate, useQrLocale } from "@/components/qr/qr-i18n"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Skeleton } from "@/components/ui/skeleton"
-import { ApiError } from "@/lib/api"
-import { cn } from "@/lib/utils"
-import {
-  selectCartItemCount,
-  useCartStore,
-} from "@/stores/cart-store"
+} from "@/components/qr/qr-hooks";
+import { ProductDrawer } from "@/components/qr/product-drawer";
+import { PublicMenuCatalog } from "@/components/qr/public-menu-catalog";
+import { PublicMenuHeader } from "@/components/qr/public-menu-header";
+import { QrRequestStatus } from "@/components/qr/request-status";
+import type { PublicQrRequestDto, QrProductDto } from "@/components/qr/types";
+import { readableForeground } from "@/components/qr/qr-utils";
+import { translate, useQrLocale } from "@/components/qr/qr-i18n";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ApiError } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { selectCartItemCount, useCartStore } from "@/stores/cart-store";
 
 interface PublicMenuProps {
-  businessSlug: string
-  branchSlug: string
-  tableToken?: string | null
+  businessSlug: string;
+  branchSlug: string;
+  tableToken?: string | null;
 }
 
 export function PublicMenu({
@@ -48,65 +45,76 @@ export function PublicMenu({
   branchSlug,
   tableToken = null,
 }: PublicMenuProps) {
-  const [locale, setLocale] = useQrLocale()
-  const menuQuery = usePublicQrMenu(businessSlug, branchSlug, tableToken, locale)
-  const createRequest = useCreatePublicQrRequest(businessSlug, branchSlug)
-  const createBillRequest = useCreatePublicBillRequest(businessSlug, branchSlug)
-  const [search, setSearch] = useState("")
-  const [categoryId, setCategoryId] = useState<string | null>(null)
-  const [selectedProduct, setSelectedProduct] =
-    useState<QrProductDto | null>(null)
-  const [cartOpen, setCartOpen] = useState(false)
-  const [billRequestOpen, setBillRequestOpen] = useState(false)
+  const [locale, setLocale] = useQrLocale();
+  const menuQuery = usePublicQrMenu(
+    businessSlug,
+    branchSlug,
+    tableToken,
+    locale,
+  );
+  const createRequest = useCreatePublicQrRequest(businessSlug, branchSlug);
+  const createBillRequest = useCreatePublicBillRequest(
+    businessSlug,
+    branchSlug,
+  );
+  const [search, setSearch] = useState("");
+  const [categoryId, setCategoryId] = useState<string | null>(null);
+  const [selectedProduct, setSelectedProduct] = useState<QrProductDto | null>(
+    null,
+  );
+  const [cartOpen, setCartOpen] = useState(false);
+  const [billRequestOpen, setBillRequestOpen] = useState(false);
   const [submittedRequest, setSubmittedRequest] =
-    useState<PublicQrRequestDto | null>(null)
-  const idempotencyKeyRef = useRef<string | null>(null)
-  const lines = useCartStore((state) => state.lines)
-  const addLine = useCartStore((state) => state.addLine)
-  const clearCart = useCartStore((state) => state.clear)
-  const setCartContext = useCartStore((state) => state.setContext)
-  const cartCount = useCartStore(selectCartItemCount)
-  const menu = menuQuery.data
-  const activeOrder = menu?.active_order ?? null
-  const isTableMenu = Boolean(tableToken && menu?.session_token)
+    useState<PublicQrRequestDto | null>(null);
+  const idempotencyKeyRef = useRef<string | null>(null);
+  const lines = useCartStore((state) => state.lines);
+  const addLine = useCartStore((state) => state.addLine);
+  const clearCart = useCartStore((state) => state.clear);
+  const setCartContext = useCartStore((state) => state.setContext);
+  const cartCount = useCartStore(selectCartItemCount);
+  const menu = menuQuery.data;
+  const activeOrder = menu?.active_order ?? null;
+  const isTableMenu = Boolean(tableToken && menu?.session_token);
   const billAlreadyRequested =
     activeOrder?.status === "BILL_REQUESTED" ||
-    activeOrder?.status === "PAYMENT_PENDING"
-  const canRequestBill = Boolean(activeOrder && !billAlreadyRequested)
+    activeOrder?.status === "PAYMENT_PENDING";
+  const canRequestBill = Boolean(activeOrder && !billAlreadyRequested);
 
   useEffect(() => {
     if (menu) {
-      setCartContext(menu.context_key, tableToken)
+      setCartContext(menu.context_key, tableToken);
     }
-  }, [menu, setCartContext, tableToken])
+  }, [menu, setCartContext, tableToken]);
 
   const visibleProducts = useMemo(() => {
-    const normalizedSearch = search.trim().toLocaleLowerCase(locale)
+    const normalizedSearch = search.trim().toLocaleLowerCase(locale);
     return (menu?.products ?? []).filter((product) => {
-      const inCategory = !categoryId || product.category_id === categoryId
+      const inCategory = !categoryId || product.category_id === categoryId;
       const matchesSearch =
         !normalizedSearch ||
         `${product.name} ${product.description ?? ""}`
           .toLocaleLowerCase(locale)
-          .includes(normalizedSearch)
-      return inCategory && matchesSearch
-    })
-  }, [categoryId, menu?.products, search, locale])
+          .includes(normalizedSearch);
+      return inCategory && matchesSearch;
+    });
+  }, [categoryId, menu?.products, search, locale]);
 
   if (menuQuery.isLoading) {
-    return <PublicMenuSkeleton />
+    return <PublicMenuSkeleton />;
   }
 
   if (menuQuery.isError || !menu) {
     const message =
       menuQuery.error instanceof ApiError
         ? menuQuery.error.message
-        : translate(locale, "menu_generic_error")
+        : translate(locale, "menu_generic_error");
     return (
       <main className="grid min-h-dvh place-items-center bg-background px-5">
         <section className="w-full max-w-md rounded-3xl border bg-card p-7 text-center">
           <AlertCircle className="mx-auto size-10 text-destructive" />
-          <h1 className="mt-4 text-xl font-semibold">{translate(locale, "menu_unreachable_title")}</h1>
+          <h1 className="mt-4 text-xl font-semibold">
+            {translate(locale, "menu_unreachable_title")}
+          </h1>
           <p className="mt-2 text-sm leading-6 text-muted-foreground">
             {message}
           </p>
@@ -119,7 +127,7 @@ export function PublicMenu({
           </Button>
         </section>
       </main>
-    )
+    );
   }
 
   if (submittedRequest) {
@@ -130,27 +138,27 @@ export function PublicMenu({
         locale={locale}
         onBack={() => setSubmittedRequest(null)}
       />
-    )
+    );
   }
 
   const modeAllowsOrder =
     menu.config.order_mode === "WAITER_APPROVAL" ||
-    menu.config.order_mode === "AUTOMATIC_ACCEPTANCE"
+    menu.config.order_mode === "AUTOMATIC_ACCEPTANCE";
   const orderingEnabled = Boolean(
     tableToken && menu.session_token && modeAllowsOrder,
-  )
-  const primary = menu.config.primary_color || "#ec5a20"
+  );
+  const primary = menu.config.primary_color || "#ec5a20";
   const style = {
     "--qr-primary": primary,
     "--qr-on-primary": readableForeground(primary),
-  } as CSSProperties
+  } as CSSProperties;
 
   async function submitRequest(customerNote: string) {
     if (!tableToken || !menu?.session_token || lines.length === 0) {
-      return
+      return;
     }
 
-    idempotencyKeyRef.current ??= crypto.randomUUID()
+    idempotencyKeyRef.current ??= crypto.randomUUID();
     try {
       const result = await createRequest.mutateAsync({
         table_token: tableToken,
@@ -170,36 +178,36 @@ export function PublicMenu({
             : {}),
         })),
         customer_note: customerNote.trim() || null,
-      })
-      clearCart()
-      setCartContext(menu.context_key, tableToken)
-      idempotencyKeyRef.current = null
-      setCartOpen(false)
-      setSubmittedRequest(result)
-      toast.success(translate(locale, "order_request_sent"))
+      });
+      clearCart();
+      setCartContext(menu.context_key, tableToken);
+      idempotencyKeyRef.current = null;
+      setCartOpen(false);
+      setSubmittedRequest(result);
+      toast.success(translate(locale, "order_request_sent"));
     } catch (error) {
       if (
         error instanceof ApiError &&
         ["qr_session_expired", "invalid_qr_session"].includes(error.code)
       ) {
-        await menuQuery.refetch()
+        await menuQuery.refetch();
       }
       toast.error(translate(locale, "order_request_failed"), {
         description:
           error instanceof Error
             ? error.message
             : translate(locale, "order_request_failed_desc"),
-      })
+      });
     }
   }
 
   async function requestBill(input: {
-    payment_preference: "CASH" | "CARD" | "ROOM_CHARGE"
-    room_reference: string | null
-    membership_code: string | null
+    payment_preference: "CASH" | "CARD" | "ROOM_CHARGE";
+    room_reference: string | null;
+    membership_code: string | null;
   }) {
     if (!tableToken || !menu?.session_token || !activeOrder) {
-      return
+      return;
     }
 
     try {
@@ -207,22 +215,22 @@ export function PublicMenu({
         table_token: tableToken,
         session_token: menu.session_token,
         ...input,
-      })
-      await menuQuery.refetch()
-      toast.success(translate(locale, "request_bill_success"))
+      });
+      await menuQuery.refetch();
+      toast.success(translate(locale, "request_bill_success"));
     } catch (error) {
       if (
         error instanceof ApiError &&
         ["qr_session_expired", "invalid_qr_session"].includes(error.code)
       ) {
-        await menuQuery.refetch()
+        await menuQuery.refetch();
       }
       toast.error(translate(locale, "request_bill_failed"), {
         description:
           error instanceof Error
             ? error.message
             : translate(locale, "request_bill_failed_desc"),
-      })
+      });
     }
   }
 
@@ -234,7 +242,11 @@ export function PublicMenu({
         logoUrl={menu.config.logo_url}
         primaryColor={primary}
       />
-      <PublicMenuHeader menu={menu} locale={locale} onLocaleChange={setLocale} />
+      <PublicMenuHeader
+        menu={menu}
+        locale={locale}
+        onLocaleChange={setLocale}
+      />
 
       <main className="mx-auto max-w-4xl px-4 pb-32 pt-6 sm:px-8 sm:pt-8">
         <QrCampaignBanner
@@ -247,7 +259,9 @@ export function PublicMenu({
           <div className="mb-6 flex gap-3 rounded-2xl border border-amber-500/25 bg-amber-500/10 px-4 py-3.5 text-sm text-amber-900 dark:text-amber-200">
             <UtensilsCrossed className="mt-0.5 size-5 shrink-0 text-[var(--qr-primary)]" />
             <div>
-              <p className="font-semibold">{translate(locale, "view_mode_title")}</p>
+              <p className="font-semibold">
+                {translate(locale, "view_mode_title")}
+              </p>
               <p className="mt-0.5 leading-5 opacity-80">
                 {tableToken
                   ? translate(locale, "view_mode_no_table")
@@ -305,7 +319,9 @@ export function PublicMenu({
             className="mt-2 text-[0.68rem] font-medium uppercase tracking-[0.1em] text-muted-foreground"
             aria-live="polite"
           >
-            {translate(locale, "products_showing", { n: visibleProducts.length })}
+            {translate(locale, "products_showing", {
+              n: visibleProducts.length,
+            })}
           </p>
         </div>
 
@@ -320,11 +336,11 @@ export function PublicMenu({
       </main>
 
       {cartCount > 0 ? (
-        <div className="animate-in slide-in-from-bottom-4 fade-in-0 fixed inset-x-0 bottom-0 z-30 border-t bg-card/95 p-3 backdrop-blur duration-300 sm:px-6">
+        <div className="animate-in slide-in-from-bottom-4 fade-in-0 fixed inset-x-0 bottom-0 z-30 border-t bg-card/95 px-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] pt-3 backdrop-blur duration-300 sm:px-6">
           <Button
             type="button"
             onClick={() => setCartOpen(true)}
-            className="mx-auto flex h-12 w-full max-w-lg rounded-xl bg-[var(--qr-primary)] px-4 text-[var(--qr-on-primary)] hover:opacity-90"
+            className="mx-auto flex h-14 w-full max-w-lg rounded-xl bg-[var(--qr-primary)] px-4 text-base font-bold text-[var(--qr-on-primary)] hover:opacity-90 disabled:opacity-60"
           >
             <span
               key={cartCount}
@@ -340,13 +356,18 @@ export function PublicMenu({
       ) : null}
 
       {isTableMenu ? (
-        <div className={cn(
-          "fixed inset-x-3 z-40 mx-auto max-w-lg",
-          cartCount > 0 ? "bottom-20" : "bottom-4",
-        )}>
+        <div
+          className={cn(
+            "fixed inset-x-3 z-40 mx-auto max-w-lg",
+            cartCount > 0
+              ? "bottom-[5.5rem]"
+              : "bottom-[max(1rem,env(safe-area-inset-bottom))]",
+          )}
+        >
           <Button
             type="button"
-            className="h-14 w-full rounded-xl bg-[var(--qr-primary)] px-5 text-base font-bold text-[var(--qr-on-primary)] shadow-lg shadow-black/15 hover:opacity-90"
+            variant="outline"
+            className="h-11 w-full rounded-xl border-border bg-card/95 px-5 font-semibold text-foreground shadow-sm backdrop-blur hover:border-[var(--qr-primary)]/45 hover:bg-card disabled:bg-muted/90"
             disabled={!canRequestBill}
             onClick={() => setBillRequestOpen(true)}
           >
@@ -364,10 +385,18 @@ export function PublicMenu({
         onOpenChange={setBillRequestOpen}
         businessSlug={businessSlug}
         branchSlug={branchSlug}
-        total={activeOrder ? new Intl.NumberFormat(locale === "tr" ? "tr-TR" : locale === "ru" ? "ru-RU" : "en-US", {
-          style: "currency",
-          currency: menu.config.currency,
-        }).format(Number(activeOrder.remaining)) : "-"}
+        total={
+          activeOrder
+            ? new Intl.NumberFormat(
+                locale === "tr" ? "tr-TR" : locale === "ru" ? "ru-RU" : "en-US",
+                {
+                  style: "currency",
+                  currency: menu.config.currency,
+                },
+              ).format(Number(activeOrder.remaining))
+            : "-"
+        }
+        order={activeOrder}
         submitting={createBillRequest.isPending}
         onSubmit={requestBill}
       />
@@ -381,11 +410,11 @@ export function PublicMenu({
           open
           locale={locale}
           onOpenChange={(open) => {
-            if (!open) setSelectedProduct(null)
+            if (!open) setSelectedProduct(null);
           }}
           onAdd={(line) => {
-            addLine(line)
-            toast.success(translate(locale, "product_added"))
+            addLine(line);
+            toast.success(translate(locale, "product_added"));
           }}
         />
       ) : null}
@@ -402,12 +431,16 @@ export function PublicMenu({
         locale={locale}
       />
     </div>
-  )
+  );
 }
 
 function PublicMenuSkeleton() {
   return (
-    <div className="min-h-dvh bg-background" aria-busy="true" aria-label="Menü yükleniyor">
+    <div
+      className="min-h-dvh bg-background"
+      aria-busy="true"
+      aria-label="Menü yükleniyor"
+    >
       <Skeleton className="h-56 w-full rounded-none sm:h-64" />
       <div className="mx-auto max-w-4xl space-y-5 px-4 py-6 sm:px-8">
         <Skeleton className="h-12 w-full rounded-xl" />
@@ -424,5 +457,5 @@ function PublicMenuSkeleton() {
         </div>
       </div>
     </div>
-  )
+  );
 }

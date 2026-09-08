@@ -31,6 +31,11 @@ export interface BridgeUpdateRequest {
   status: "SENT" | "PRINTED" | "FAILED";
 }
 
+export interface MalformedClaimReference {
+  attemptCount: number;
+  id: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -75,6 +80,9 @@ export function parseClaimedJobs(payload: unknown): PrintJobClaim[] {
     const jobPayload = isRecord(candidate.payload)
       ? candidate.payload
       : candidate;
+    const isTestPrint =
+      readOptionalString(jobPayload, "documentType", "document_type") ===
+      "PRINTER_TEST";
     const contentType =
       readAliasedValue(jobPayload, "contentType", "content_type") ??
       "application/vnd.dixora.receipt+json";
@@ -127,7 +135,9 @@ export function parseClaimedJobs(payload: unknown): PrintJobClaim[] {
         "preparationStationId",
         "preparation_station_id",
       ),
-      orderId: requireString(candidate, "orderId", "order_id"),
+      orderId: isTestPrint
+        ? readNullableString(candidate, "orderId", "order_id")
+        : requireString(candidate, "orderId", "order_id"),
       kitchenTicketId: readNullableString(
         candidate,
         "kitchenTicketId",
@@ -137,6 +147,7 @@ export function parseClaimedJobs(payload: unknown): PrintJobClaim[] {
       document,
       copies,
       isReprint,
+      isTestPrint,
       attemptCount: readNonNegativeInteger(
         candidate,
         "attemptCount",
@@ -147,6 +158,31 @@ export function parseClaimedJobs(payload: unknown): PrintJobClaim[] {
         requireString(candidate, "createdAt", "created_at"),
     };
   });
+}
+
+export function malformedClaimReference(
+  payload: unknown,
+): MalformedClaimReference | null {
+  const candidate =
+    isRecord(payload) && Array.isArray(payload.items)
+      ? payload.items[0]
+      : payload;
+  if (!isRecord(candidate)) return null;
+  const id = readOptionalString(candidate, "id");
+  const attemptCount = readAliasedValue(
+    candidate,
+    "attemptCount",
+    "attempt_count",
+  );
+  if (
+    !id ||
+    typeof attemptCount !== "number" ||
+    !Number.isSafeInteger(attemptCount) ||
+    attemptCount < 1
+  ) {
+    return null;
+  }
+  return { id, attemptCount };
 }
 
 function createLegacyDocument(
@@ -233,6 +269,11 @@ function normalizeDocument(
   }
 
   const tableName = readOptionalString(document, "tableName", "table_name");
+  const businessName = readOptionalString(
+    document,
+    "businessName",
+    "business_name",
+  );
   const waiterName = readOptionalString(document, "waiterName", "waiter_name");
   const currency = readOptionalString(document, "currency");
   const footer =
@@ -243,6 +284,7 @@ function normalizeDocument(
 
   return {
     title: requireString(document, "title"),
+    ...(businessName !== undefined ? { businessName } : {}),
     branchName: requireString(document, "branchName", "branch_name"),
     stationName: requireString(document, "stationName", "station_name"),
     orderNumber: requireString(document, "orderNumber", "order_number"),
@@ -272,6 +314,13 @@ function normalizeDocument(
       const unitPrice = readOptionalString(line, "unitPrice", "unit_price");
       const lineTotal = readOptionalString(line, "lineTotal", "line_total");
       const note = readOptionalString(line, "note");
+      const adjustmentLabel = readOptionalString(
+        line,
+        "adjustmentLabel",
+        "adjustment_label",
+      );
+      const complimentary =
+        readAliasedValue(line, "complimentary", "complimentary") === true;
 
       return {
         name: requireString(line, "name"),
@@ -282,6 +331,8 @@ function normalizeDocument(
           ? { modifiers: footerSafeModifiers }
           : {}),
         ...(note !== undefined ? { note } : {}),
+        ...(complimentary ? { complimentary: true } : {}),
+        ...(adjustmentLabel !== undefined ? { adjustmentLabel } : {}),
       };
     }),
     ...(footer !== undefined ? { footer } : {}),
