@@ -62,9 +62,7 @@ class BranchSetupOutcome:
         }
 
 
-async def _source_branch(
-    db: AsyncSession, *, tenant_id: UUID, exclude_id: UUID
-) -> Branch | None:
+async def _source_branch(db: AsyncSession, *, tenant_id: UUID, exclude_id: UUID) -> Branch | None:
     """The oldest active branch — the one most likely to be fully configured."""
     return (
         await db.execute(
@@ -145,13 +143,17 @@ async def provision_branch(
 
     # --- inventory location ----------------------------------------------
     location = (
-        await db.execute(
-            select(InventoryLocation).where(
-                InventoryLocation.tenant_id == tenant_id,
-                InventoryLocation.branch_id == branch.id,
+        (
+            await db.execute(
+                select(InventoryLocation).where(
+                    InventoryLocation.tenant_id == tenant_id,
+                    InventoryLocation.branch_id == branch.id,
+                )
             )
         )
-    ).scalars().first()
+        .scalars()
+        .first()
+    )
     if location is None:
         source_location = (
             await db.execute(
@@ -263,7 +265,7 @@ async def provision_branch(
     for recipe in source_recipes:
         if recipe.product_id in existing_recipe_products:
             continue
-        ingredients: list[tuple[UUID, Decimal]] = []
+        ingredients: list[tuple[UUID, Decimal, str]] = []
         for line in recipe.items:
             name = source_item_names.get(line.inventory_item_id)
             local = local_items.get(name) if name else None
@@ -273,7 +275,7 @@ async def provision_branch(
                 # half of one that silently under-counts stock.
                 ingredients = []
                 break
-            ingredients.append((local.id, line.quantity))
+            ingredients.append((local.id, line.quantity, line.unit))
         if not ingredients:
             continue
         local_recipe = ProductRecipe(
@@ -285,7 +287,7 @@ async def provision_branch(
         )
         db.add(local_recipe)
         await db.flush()
-        for inventory_item_id, quantity in ingredients:
+        for inventory_item_id, quantity, unit in ingredients:
             db.add(
                 ProductRecipeItem(
                     tenant_id=tenant_id,
@@ -293,12 +295,11 @@ async def provision_branch(
                     recipe_id=local_recipe.id,
                     inventory_item_id=inventory_item_id,
                     quantity=quantity,
+                    unit=unit,
                 )
             )
         outcome.recipes_created += 1
 
     await db.flush()
-    logger.info(
-        "branch provisioned from %s: %s", source.slug, outcome.as_dict()
-    )
+    logger.info("branch provisioned from %s: %s", source.slug, outcome.as_dict())
     return outcome

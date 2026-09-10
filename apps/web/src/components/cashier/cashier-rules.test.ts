@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  canCloseTableSession,
-  selectCurrentTableOrder,
-} from "./cashier-rules";
+import { canCloseTableSession, selectCurrentTableOrder } from "./cashier-rules";
 
 const table = { id: "table-1", name: "A1", state: "CLEANING" };
 
@@ -32,7 +29,7 @@ describe("cashier table closing rules", () => {
     ).toBeNull();
   });
 
-  it("blocks closing an open or financially unsettled order", () => {
+  it("allows a zero-total served order but blocks active preparation and unsettled payment", () => {
     const open = {
       table_id: table.id,
       table_session_id: "session-1",
@@ -40,7 +37,10 @@ describe("cashier table closing rules", () => {
     };
     const underpaid = { ...open, status: "PAID" };
 
-    expect(canCloseTableSession(open, table, 0)).toBe(false);
+    expect(canCloseTableSession(open, table, 0)).toBe(true);
+    expect(
+      canCloseTableSession({ ...open, status: "PREPARING" }, table, 0),
+    ).toBe(false);
     expect(canCloseTableSession(underpaid, table, 25)).toBe(false);
   });
 
@@ -61,4 +61,3 @@ describe("cashier table closing rules", () => {
     expect(selectCurrentTableOrder([paid, open], table)).toBe(open);
   });
 });
-

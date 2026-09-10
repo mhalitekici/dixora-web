@@ -32,6 +32,9 @@ export function renderReceiptText(job: PrintJobClaim): string {
     lines.push(...center("TEST ÇIKTISI"));
   }
   lines.push(HEAVY_RULE);
+  if (doc.receiptNumber !== undefined) {
+    lines.push(meta("FİŞ NO", String(doc.receiptNumber)));
+  }
   lines.push(meta("Sipariş No", doc.orderNumber));
   if (doc.tableName) {
     lines.push(meta("Masa", doc.tableName));

@@ -120,6 +120,8 @@ async def test_bill_print_original_is_idempotent_and_reprint_is_distinct(
     assert first.json()["printer_device_id"] == cashier_printer["id"]
     assert first.json()["payload"]["content_type"] == "application/vnd.dixora.receipt+json"
     assert first.json()["payload"]["document"]["title"] == "HESAP ÖZETİ"
+    assert first.json()["payload"]["document"]["receipt_number"] == 1
+    assert first.json()["payload"]["receipt"]["meta"]["dailyReceiptNumber"] == 1
 
     order_after_first_print = await api.client.get(f"/api/v1/orders/{order['id']}", headers=headers)
     assert order_after_first_print.status_code == 200, order_after_first_print.text
@@ -141,6 +143,9 @@ async def test_bill_print_original_is_idempotent_and_reprint_is_distinct(
     assert reprint.status_code == 201, reprint.text
     assert reprint.json()["kind"] == "REPRINT"
     assert reprint.json()["id"] != first.json()["id"]
+    assert reprint.json()["receipt_id"] == first.json()["receipt_id"]
+    assert reprint.json()["payload"]["document"]["receipt_number"] == 1
+    assert reprint.json()["payload"]["is_reprint"] is True
 
     filtered = await api.client.get(
         "/api/v1/printing/jobs", headers=headers, params={"order_id": order["id"]}
@@ -151,6 +156,36 @@ async def test_bill_print_original_is_idempotent_and_reprint_is_distinct(
     # print jobs must be present among them and correctly scoped to this order.
     assert {first.json()["id"], reprint.json()["id"]}.issubset(job_ids)
     assert all(job["order_id"] == order["id"] for job in filtered.json())
+
+    receipts = await api.client.get("/api/v1/printing/receipts", headers=headers)
+    assert receipts.status_code == 200, receipts.text
+    receipt = next(item for item in receipts.json() if item["order_id"] == order["id"])
+    assert receipt["daily_number"] == 1
+    assert receipt["reprint_count"] == 1
+    assert receipt["table_name"] == order["table_name"]
+    assert receipt["cashier_name"]
+    assert receipt["order_status"] == "BILL_REQUESTED"
+    assert receipt["print_status"] == "REPRINTED"
+
+    next_order = await _create_burger_order(
+        api,
+        headers,
+        table_id=resources["tables"][11]["id"],
+        product_id=resources["burger"]["id"],
+        key="print-bill-order-key-0002",
+    )
+    next_print = await api.client.post(
+        "/api/v1/printing/jobs",
+        headers=headers,
+        json={
+            "order_id": next_order["id"],
+            "payload": {"type": "BILL", "order_id": next_order["id"]},
+            "kind": "ORIGINAL",
+            "idempotency_key": f"bill-original:{next_order['id']}",
+        },
+    )
+    assert next_print.status_code == 201, next_print.text
+    assert next_print.json()["payload"]["document"]["receipt_number"] == 2
 
 
 async def test_print_jobs_order_id_filter_is_tenant_scoped(api: ApiContext) -> None:

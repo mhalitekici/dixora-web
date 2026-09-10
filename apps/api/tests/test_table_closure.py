@@ -190,3 +190,56 @@ async def test_table_close_rejects_paid_status_with_an_unsettled_balance(
     )
     assert response.status_code == 409
     assert response.json()["error"]["code"] == "table_has_unsettled_balance"
+
+
+async def test_zero_total_served_order_closes_without_payment_and_is_audited(
+    api: ApiContext,
+) -> None:
+    cashier = await login(api, username="cashier@dixora.test")
+    headers = auth_headers(cashier)
+    resources = await seeded_resources(api, headers)
+    selected_table = resources["tables"][4]
+    payload = await _create_cashier_order(
+        api,
+        headers,
+        table_id=selected_table["id"],
+        product_id=resources["burger"]["id"],
+        idempotency_key="zero-total-close-order-0001",
+    )
+    async with api.database.session_factory() as db:
+        order = await db.get(Order, UUID(payload["id"]))
+        table = await db.get(DiningTable, UUID(selected_table["id"]))
+        assert order is not None and table is not None
+        order.subtotal = 0
+        order.total = 0
+        order.status = OrderStatus.SERVED
+        for item in order.items:
+            item.is_complimentary = True
+            item.line_total = 0
+        expected_version = table.version
+        await db.commit()
+
+    response = await api.client.post(
+        f"/api/v1/tables/{selected_table['id']}/sessions/{payload['table_session_id']}/close",
+        headers=headers,
+        json={"expected_table_version": expected_version},
+    )
+    assert response.status_code == 200, response.text
+    assert response.json()["table"]["state"] == TableState.AVAILABLE.value
+
+    async with api.database.session_factory() as db:
+        order = await db.get(Order, UUID(payload["id"]))
+        audits = set(
+            (
+                await db.execute(
+                    select(AuditLog.action).where(
+                        AuditLog.resource_id.in_([payload["id"], payload["table_session_id"]])
+                    )
+                )
+            ).scalars()
+        )
+        assert order is not None
+        assert order.status == OrderStatus.PAID
+        assert order.paid_at is not None
+        assert order.payments == []
+        assert {"order.zero_total_settled", "table_session.closed"} <= audits

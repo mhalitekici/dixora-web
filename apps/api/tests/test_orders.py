@@ -5,7 +5,14 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 
-from app.models import AuditLog, StockBalance, StockMovement
+from app.models import (
+    AuditLog,
+    PreparationStation,
+    PrinterDevice,
+    PrintJob,
+    StockBalance,
+    StockMovement,
+)
 from tests.conftest import (
     ApiContext,
     auth_headers,
@@ -88,6 +95,216 @@ async def test_order_lifecycle_append_only_new_items_and_active_table_lookup(
     assert len(batches) == 2
     assert {item["batch_number"] for item in batches} == {1, 2}
     assert all(len(item["items"]) == 1 for item in batches)
+
+
+async def test_cashier_print_command_dispatches_only_pending_items(api: ApiContext) -> None:
+    headers = auth_headers(await login(api))
+    resources = await seeded_resources(api, headers)
+    table = resources["tables"][9]
+    coffee = next(item for item in resources["products"] if item["name"] == "Turkish Coffee")
+    lemonade = next(item for item in resources["products"] if item["name"] == "Homemade Lemonade")
+    created = await api.client.post(
+        "/api/v1/orders",
+        headers=headers,
+        json={
+            "table_id": table["id"],
+            "source": "CASHIER",
+            "items": [
+                {"product_id": resources["burger"]["id"], "quantity": "1"},
+                {"product_id": coffee["id"], "quantity": "1"},
+            ],
+            "idempotency_key": "cashier-deferred-print-order-0001",
+            "auto_accept": False,
+        },
+    )
+    assert created.status_code == 201, created.text
+    order = created.json()
+    assert order["status"] == "SUBMITTED"
+    assert {item["status"] for item in order["items"]} == {"SUBMITTED"}
+
+    async with api.database.session_factory() as db:
+        before_jobs = (
+            await db.execute(
+                select(func.count(PrintJob.id)).where(PrintJob.order_id == UUID(order["id"]))
+            )
+        ).scalar_one()
+        before_movements = (
+            await db.execute(
+                select(func.count(StockMovement.id)).where(
+                    StockMovement.order_item_id.in_([UUID(item["id"]) for item in order["items"]])
+                )
+            )
+        ).scalar_one()
+    assert before_jobs == 0
+    assert before_movements == 0
+
+    dispatched = await api.client.post(
+        f"/api/v1/orders/{order['id']}/accept",
+        headers=headers,
+        json={"require_configured_printer": True},
+    )
+    assert dispatched.status_code == 200, dispatched.text
+    assert dispatched.json()["status"] == "ACCEPTED"
+    assert {item["status"] for item in dispatched.json()["items"]} == {"ACCEPTED"}
+
+    async with api.database.session_factory() as db:
+        first_jobs = (
+            (await db.execute(select(PrintJob).where(PrintJob.order_id == UUID(order["id"]))))
+            .scalars()
+            .all()
+        )
+    assert len(first_jobs) == 2
+    assert {job.kind.value for job in first_jobs} == {"ORIGINAL"}
+
+    replay = await api.client.post(
+        f"/api/v1/orders/{order['id']}/accept",
+        headers=headers,
+        json={"require_configured_printer": True},
+    )
+    assert replay.status_code == 200, replay.text
+    async with api.database.session_factory() as db:
+        replay_job_count = (
+            await db.execute(
+                select(func.count(PrintJob.id)).where(PrintJob.order_id == UUID(order["id"]))
+            )
+        ).scalar_one()
+    assert replay_job_count == 2
+
+    appended = await api.client.post(
+        f"/api/v1/orders/{order['id']}/items",
+        headers=headers,
+        json={
+            "items": [{"product_id": lemonade["id"], "quantity": "1"}],
+            "idempotency_key": "cashier-deferred-print-append-0001",
+            "auto_accept": False,
+        },
+    )
+    assert appended.status_code == 200, appended.text
+    assert appended.json()["items"][-1]["status"] == "SUBMITTED"
+    second_dispatch = await api.client.post(
+        f"/api/v1/orders/{order['id']}/accept",
+        headers=headers,
+        json={"require_configured_printer": True},
+    )
+    assert second_dispatch.status_code == 200, second_dispatch.text
+
+    async with api.database.session_factory() as db:
+        all_jobs = (
+            (await db.execute(select(PrintJob).where(PrintJob.order_id == UUID(order["id"]))))
+            .scalars()
+            .all()
+        )
+    assert len(all_jobs) == 3
+    newest_document = max(all_jobs, key=lambda job: job.created_at).payload["document"]
+    assert [line["name"] for line in newest_document["lines"]] == ["Homemade Lemonade"]
+
+    tables = (await api.client.get("/api/v1/tables", headers=headers)).json()
+    assert next(item for item in tables if item["id"] == table["id"])["state"] == "PREPARING"
+
+
+async def test_cashier_print_reports_missing_station_printer(api: ApiContext) -> None:
+    headers = auth_headers(await login(api))
+    resources = await seeded_resources(api, headers)
+    coffee = next(item for item in resources["products"] if item["name"] == "Turkish Coffee")
+    async with api.database.session_factory() as db:
+        bar_station = (
+            await db.execute(select(PreparationStation).where(PreparationStation.code == "BAR"))
+        ).scalar_one()
+        printers = (
+            (
+                await db.execute(
+                    select(PrinterDevice).where(
+                        PrinterDevice.preparation_station_id == bar_station.id
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for printer in printers:
+            printer.is_active = False
+        await db.commit()
+
+    created = await api.client.post(
+        "/api/v1/orders",
+        headers=headers,
+        json={
+            "table_id": resources["tables"][10]["id"],
+            "source": "CASHIER",
+            "items": [{"product_id": coffee["id"], "quantity": "1"}],
+            "idempotency_key": "cashier-missing-printer-order-0001",
+            "auto_accept": False,
+        },
+    )
+    assert created.status_code == 201, created.text
+    response = await api.client.post(
+        f"/api/v1/orders/{created.json()['id']}/accept",
+        headers=headers,
+        json={"require_configured_printer": True},
+    )
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "preparation_printer_not_configured"
+    assert response.json()["error"]["details"]["station_name"] == bar_station.name
+
+
+async def test_cashier_modifier_rules_and_server_price_are_enforced(api: ApiContext) -> None:
+    headers = auth_headers(await login(api))
+    resources = await seeded_resources(api, headers)
+    groups_response = await api.client.get(
+        "/api/v1/catalog/modifier-groups",
+        headers=headers,
+    )
+    group = next(group for group in groups_response.json() if group["name"] == "Burger Extras")
+    required = await api.client.patch(
+        f"/api/v1/catalog/modifier-groups/{group['id']}",
+        headers=headers,
+        json={"is_required": True, "minimum_selection": 1, "maximum_selection": 2},
+    )
+    assert required.status_code == 200, required.text
+
+    missing = await api.client.post(
+        "/api/v1/orders",
+        headers=headers,
+        json={
+            "table_id": resources["tables"][5]["id"],
+            "source": "CASHIER",
+            "items": [{"product_id": resources["burger"]["id"], "quantity": "1"}],
+            "idempotency_key": "cashier-required-modifier-missing-0001",
+        },
+    )
+    assert missing.status_code == 422, missing.text
+    assert missing.json()["error"]["code"] == "invalid_modifier_selection"
+
+    option = group["modifiers"][0]
+    selected = await api.client.post(
+        "/api/v1/orders",
+        headers=headers,
+        json={
+            "table_id": resources["tables"][5]["id"],
+            "source": "CASHIER",
+            "items": [
+                {
+                    "product_id": resources["burger"]["id"],
+                    "quantity": "1",
+                    "unit_price": "0.01",
+                    "modifiers": [
+                        {
+                            "modifier_id": option["id"],
+                            "quantity": 1,
+                            "price_delta": "0.01",
+                        }
+                    ],
+                }
+            ],
+            "idempotency_key": "cashier-required-modifier-selected-0001",
+        },
+    )
+    assert selected.status_code == 201, selected.text
+    body = selected.json()
+    assert Decimal(body["items"][0]["unit_price"]) == (
+        Decimal(resources["burger"]["selling_price"]) + Decimal(option["price_delta"])
+    )
+    assert body["items"][0]["modifiers"][0]["name_snapshot"] == option["name"]
 
 
 async def test_branch_service_charge_is_snapshotted_into_order_total(
@@ -295,7 +512,23 @@ async def test_remove_unprinted_item_and_require_cancellation_after_preparation(
     )
     assert removed.status_code == 200, removed.text
     assert removed.json()["items"][0]["status"] == "VOIDED"
+    assert removed.json()["status"] == "VOIDED"
     assert Decimal(removed.json()["total"]) == Decimal("0.00")
+    draft_table = (
+        await api.client.get(
+            f"/api/v1/tables/{resources['tables'][4]['id']}", headers=owner_headers
+        )
+    ).json()
+    close = await api.client.post(
+        (
+            f"/api/v1/tables/{resources['tables'][4]['id']}/sessions/"
+            f"{draft['table_session_id']}/close"
+        ),
+        headers=owner_headers,
+        json={"expected_table_version": draft_table["version"]},
+    )
+    assert close.status_code == 200, close.text
+    assert close.json()["table"]["state"] == "AVAILABLE"
 
     accepted = await _create_burger_order(
         api,
@@ -556,3 +789,154 @@ async def test_item_transfer_moves_partial_quantity_to_destination_table(
     )
     assert replay.status_code == 200
     assert replay.json()["destination_order"]["id"] == body["destination_order"]["id"]
+
+
+async def test_item_transfer_into_occupied_table_preserves_snapshots_and_uses_copy_print(
+    api: ApiContext,
+) -> None:
+    headers = auth_headers(await login(api))
+    resources = await seeded_resources(api, headers)
+    source_table, destination_table = resources["tables"][6:8]
+    group_response = await api.client.get("/api/v1/catalog/modifier-groups", headers=headers)
+    group = next(item for item in group_response.json() if item["name"] == "Burger Extras")
+    modifier = group["modifiers"][0]
+    source_response = await api.client.post(
+        "/api/v1/orders",
+        headers=headers,
+        json={
+            "table_id": source_table["id"],
+            "items": [
+                {
+                    "product_id": resources["burger"]["id"],
+                    "quantity": "2",
+                    "modifiers": [{"modifier_id": modifier["id"], "quantity": 1}],
+                }
+            ],
+            "idempotency_key": "occupied-transfer-source-0001",
+            "auto_accept": True,
+        },
+    )
+    assert source_response.status_code == 201, source_response.text
+    source = source_response.json()
+    complimentary = await api.client.patch(
+        f"/api/v1/orders/{source['id']}/items/{source['items'][0]['id']}",
+        headers=headers,
+        json={
+            "action": "SET_COMPLIMENTARY",
+            "expected_version": source["version"],
+            "idempotency_key": "occupied-transfer-comp-0001",
+            "reason": "Misafir memnuniyeti",
+        },
+    )
+    assert complimentary.status_code == 200, complimentary.text
+    source = complimentary.json()
+    destination = await _create_burger_order(
+        api,
+        headers,
+        table_id=destination_table["id"],
+        product_id=resources["burger"]["id"],
+        key="occupied-transfer-destination-0001",
+    )
+
+    transfer = await api.client.post(
+        f"/api/v1/orders/{source['id']}/items/transfer",
+        headers=headers,
+        json={
+            "destination_table_id": destination_table["id"],
+            "items": [{"item_id": source["items"][0]["id"], "quantity": "1"}],
+            "idempotency_key": "occupied-transfer-key-0001",
+            "reason": "Misafir masa değiştirdi",
+        },
+    )
+    assert transfer.status_code == 200, transfer.text
+    body = transfer.json()
+    assert body["destination_order"]["id"] == destination["id"]
+    moved = next(
+        item for item in body["destination_order"]["items"] if item["is_complimentary"]
+    )
+    assert moved["product_name_snapshot"] == source["items"][0]["product_name_snapshot"]
+    assert [
+        {
+            "modifier_id": item["modifier_id"],
+            "name_snapshot": item["name_snapshot"],
+            "price_delta_snapshot": item["price_delta_snapshot"],
+            "quantity": item["quantity"],
+        }
+        for item in moved["modifiers"]
+    ] == [
+        {
+            "modifier_id": item["modifier_id"],
+            "name_snapshot": item["name_snapshot"],
+            "price_delta_snapshot": item["price_delta_snapshot"],
+            "quantity": item["quantity"],
+        }
+        for item in source["items"][0]["modifiers"]
+    ]
+    assert moved["is_complimentary"] is True
+    assert moved["complimentary_reason"] == "Misafir memnuniyeti"
+    assert Decimal(moved["quantity"]) == Decimal("1.00")
+
+    async with api.database.session_factory() as db:
+        transfer_jobs = (
+            (
+                await db.execute(
+                    select(PrintJob).where(
+                        PrintJob.order_id == UUID(destination["id"]),
+                        PrintJob.idempotency_key.like("item-transfer:%"),
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert len(transfer_jobs) == 1
+    assert transfer_jobs[0].kind.value == "COPY"
+    assert transfer_jobs[0].payload["transfer"]["source_table_name"] == source_table["name"]
+    assert (
+        transfer_jobs[0].payload["transfer"]["destination_table_name"] == destination_table["name"]
+    )
+
+
+async def test_item_transfer_rejects_destination_with_partial_payment(
+    api: ApiContext,
+) -> None:
+    headers = auth_headers(await login(api))
+    resources = await seeded_resources(api, headers)
+    source_table, destination_table = resources["tables"][8:10]
+    source = await _create_burger_order(
+        api,
+        headers,
+        table_id=source_table["id"],
+        product_id=resources["burger"]["id"],
+        key="paid-destination-transfer-source-0001",
+    )
+    destination = await _create_burger_order(
+        api,
+        headers,
+        table_id=destination_table["id"],
+        product_id=resources["burger"]["id"],
+        key="paid-destination-transfer-target-0001",
+    )
+    payment = await api.client.post(
+        f"/api/v1/orders/{destination['id']}/payments",
+        headers=headers,
+        json={
+            "method": "CASH",
+            "amount": "1.00",
+            "idempotency_key": "paid-destination-transfer-payment-0001",
+        },
+    )
+    assert payment.status_code == 201, payment.text
+
+    transfer = await api.client.post(
+        f"/api/v1/orders/{source['id']}/items/transfer",
+        headers=headers,
+        json={
+            "destination_table_id": destination_table["id"],
+            "items": [{"item_id": source["items"][0]["id"], "quantity": "1"}],
+            "idempotency_key": "paid-destination-transfer-key-0001",
+            "reason": "Bu taşıma reddedilmeli",
+        },
+    )
+    assert transfer.status_code == 409
+    assert transfer.json()["error"]["code"] == "item_transfer_financial_conflict"

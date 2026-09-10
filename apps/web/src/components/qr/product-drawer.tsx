@@ -1,17 +1,19 @@
-"use client"
+"use client";
 
-import { Check, Minus, Plus, ShoppingBag } from "lucide-react"
-import Image from "next/image"
-import { useMemo, useState } from "react"
+import { Check, Minus, Plus, ShoppingBag } from "lucide-react";
+import Image from "next/image";
+import { useMemo, useState } from "react";
 
-import { translate, type QrLocale } from "@/components/qr/qr-i18n"
-import type { QrProductDto } from "@/components/qr/types"
+import { translate, type QrLocale } from "@/components/qr/qr-i18n";
+import type { QrProductDto } from "@/components/qr/types";
 import {
-  decimalToMinor,
-  formatMinorMoney,
-} from "@/components/qr/qr-utils"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
+  invalidModifierGroup,
+  selectedModifierOptions,
+  toggleModifierSelection,
+} from "@/components/qr/modifier-selection";
+import { decimalToMinor, formatMinorMoney } from "@/components/qr/qr-utils";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Drawer,
   DrawerContent,
@@ -19,19 +21,19 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
-} from "@/components/ui/drawer"
-import { Label } from "@/components/ui/label"
-import { Textarea } from "@/components/ui/textarea"
-import type { NewCartLine } from "@/stores/cart-store"
+} from "@/components/ui/drawer";
+import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import type { NewCartLine } from "@/stores/cart-store";
 
 interface ProductDrawerProps {
-  product: QrProductDto
-  currency: string
-  orderingEnabled: boolean
-  open: boolean
-  locale: QrLocale
-  onOpenChange: (open: boolean) => void
-  onAdd: (line: NewCartLine) => void
+  product: QrProductDto;
+  currency: string;
+  orderingEnabled: boolean;
+  open: boolean;
+  locale: QrLocale;
+  onOpenChange: (open: boolean) => void;
+  onAdd: (line: NewCartLine) => void;
 }
 
 export function ProductDrawer({
@@ -43,64 +45,51 @@ export function ProductDrawer({
   onOpenChange,
   onAdd,
 }: ProductDrawerProps) {
-  const [quantity, setQuantity] = useState(1)
-  const [note, setNote] = useState("")
-  const [selected, setSelected] = useState<Record<string, string[]>>({})
-  const [selectionError, setSelectionError] = useState<string | null>(null)
+  const [quantity, setQuantity] = useState(1);
+  const [note, setNote] = useState("");
+  const [selected, setSelected] = useState<Record<string, string[]>>({});
+  const [selectionError, setSelectionError] = useState<string | null>(null);
   const modifierGroups = useMemo(
     () => product.modifier_groups ?? [],
     [product.modifier_groups],
-  )
+  );
 
   const selectedModifiers = useMemo(
-    () =>
-      modifierGroups.flatMap((group) =>
-        group.modifiers.filter((modifier) =>
-          (selected[group.id] ?? []).includes(modifier.id),
-        ),
-      ),
+    () => selectedModifierOptions(modifierGroups, selected),
     [modifierGroups, selected],
-  )
+  );
   const unitTotal = selectedModifiers.reduce(
     (total, modifier) => total + decimalToMinor(modifier.price_delta),
     decimalToMinor(product.selling_price),
-  )
+  );
 
   function toggleModifier(
     groupId: string,
     modifierId: string,
     maximum: number | null,
   ) {
-    setSelectionError(null)
-    setSelected((current) => {
-      const values = current[groupId] ?? []
-      if (values.includes(modifierId)) {
-        return {
-          ...current,
-          [groupId]: values.filter((value) => value !== modifierId),
-        }
-      }
-      if (maximum && values.length >= maximum) {
-        return maximum === 1
-          ? { ...current, [groupId]: [modifierId] }
-          : current
-      }
-      return { ...current, [groupId]: [...values, modifierId] }
-    })
+    void maximum;
+    setSelectionError(null);
+    const group = modifierGroups.find((candidate) => candidate.id === groupId);
+    if (group)
+      setSelected((current) =>
+        toggleModifierSelection(current, group, modifierId),
+      );
   }
 
   function addToCart() {
-    for (const group of modifierGroups) {
-      const count = (selected[group.id] ?? []).length
-      if (count < group.minimum_selection) {
-        setSelectionError(
-          translate(locale, "min_selection_error", {
-            group: group.name,
-            n: group.minimum_selection,
-          }),
-        )
-        return
-      }
+    const invalidGroup = invalidModifierGroup(modifierGroups, selected);
+    if (invalidGroup) {
+      setSelectionError(
+        translate(locale, "min_selection_error", {
+          group: invalidGroup.name,
+          n: Math.max(
+            invalidGroup.minimum_selection,
+            invalidGroup.is_required ? 1 : 0,
+          ),
+        }),
+      );
+      return;
     }
 
     onAdd({
@@ -114,16 +103,12 @@ export function ProductDrawer({
         name: modifier.name,
         priceDelta: modifier.price_delta,
       })),
-    })
-    onOpenChange(false)
+    });
+    onOpenChange(false);
   }
 
   return (
-    <Drawer
-      open={open}
-      onOpenChange={onOpenChange}
-      showSwipeHandle
-    >
+    <Drawer open={open} onOpenChange={onOpenChange} showSwipeHandle>
       <DrawerContent className="mx-auto max-w-2xl">
         {product.image_url ? (
           <div className="relative mx-5 mt-4 aspect-[16/7] overflow-hidden rounded-xl bg-muted">
@@ -143,7 +128,8 @@ export function ProductDrawer({
                 {product.name}
               </DrawerTitle>
               <DrawerDescription className="mt-1 leading-6">
-                {product.description || translate(locale, "default_product_desc")}
+                {product.description ||
+                  translate(locale, "default_product_desc")}
               </DrawerDescription>
             </div>
             <div className="shrink-0 text-right">
@@ -168,7 +154,10 @@ export function ProductDrawer({
               <legend className="flex w-full items-center justify-between gap-3 text-sm font-semibold">
                 <span>{group.name}</span>
                 <span className="text-xs font-normal text-muted-foreground">
-                  {translate(locale, group.is_required ? "required" : "optional")}
+                  {translate(
+                    locale,
+                    group.is_required ? "required" : "optional",
+                  )}
                   {group.maximum_selection
                     ? ` · ${translate(locale, "max_selection", { n: group.maximum_selection })}`
                     : ""}
@@ -180,7 +169,7 @@ export function ProductDrawer({
                   .map((modifier) => {
                     const checked = (selected[group.id] ?? []).includes(
                       modifier.id,
-                    )
+                    );
                     return (
                       <label
                         key={modifier.id}
@@ -202,21 +191,24 @@ export function ProductDrawer({
                         </span>
                         {decimalToMinor(modifier.price_delta) !== BigInt(0) ? (
                           <span className="text-xs text-muted-foreground">
-                            +{formatMinorMoney(
+                            +
+                            {formatMinorMoney(
                               decimalToMinor(modifier.price_delta),
                               currency,
                             )}
                           </span>
                         ) : null}
                       </label>
-                    )
+                    );
                   })}
               </div>
             </fieldset>
           ))}
 
           <div className="space-y-2">
-            <Label htmlFor={`product-note-${product.id}`}>{translate(locale, "product_note_label")}</Label>
+            <Label htmlFor={`product-note-${product.id}`}>
+              {translate(locale, "product_note_label")}
+            </Label>
             <Textarea
               id={`product-note-${product.id}`}
               value={note}
@@ -271,7 +263,10 @@ export function ProductDrawer({
               {orderingEnabled ? <ShoppingBag /> : <Check />}
               {orderingEnabled
                 ? translate(locale, "add_to_cart", {
-                    amount: formatMinorMoney(unitTotal * BigInt(quantity), currency),
+                    amount: formatMinorMoney(
+                      unitTotal * BigInt(quantity),
+                      currency,
+                    ),
                   })
                 : translate(locale, "view_mode_title")}
             </Button>
@@ -279,5 +274,5 @@ export function ProductDrawer({
         </DrawerFooter>
       </DrawerContent>
     </Drawer>
-  )
+  );
 }

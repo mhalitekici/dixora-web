@@ -276,6 +276,8 @@ function normalizeDocument(
   );
   const waiterName = readOptionalString(document, "waiterName", "waiter_name");
   const currency = readOptionalString(document, "currency");
+  const receiptNumberValue = document.receiptNumber ?? document.receipt_number;
+  const businessDateValue = document.businessDate ?? document.business_date;
   const footer =
     Array.isArray(document.footer) &&
     document.footer.every((item) => typeof item === "string")
@@ -288,6 +290,12 @@ function normalizeDocument(
     branchName: requireString(document, "branchName", "branch_name"),
     stationName: requireString(document, "stationName", "station_name"),
     orderNumber: requireString(document, "orderNumber", "order_number"),
+    ...(typeof receiptNumberValue === "number"
+      ? { receiptNumber: receiptNumberValue }
+      : {}),
+    ...(typeof businessDateValue === "string"
+      ? { businessDate: businessDateValue }
+      : {}),
     ...(tableName !== undefined ? { tableName } : {}),
     ...(waiterName !== undefined ? { waiterName } : {}),
     submittedAt: requireString(document, "submittedAt", "submitted_at"),

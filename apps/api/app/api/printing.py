@@ -24,6 +24,7 @@ from app.dependencies import (
 from app.errors import DomainError
 from app.models import (
     Branch,
+    DiningTable,
     KitchenTicket,
     Order,
     PreparationStation,
@@ -33,7 +34,10 @@ from app.models import (
     PrinterDevice,
     PrintJob,
     PrintJobAcknowledgement,
+    Receipt,
+    TableSession,
     Tenant,
+    User,
 )
 from app.models.enums import OrderItemStatus, OrderStatus, PaymentStatus, PrintJobStatus
 from app.schemas import (
@@ -55,6 +59,8 @@ from app.schemas import (
     PrintJobClaimOut,
     PrintJobCreate,
     PrintJobOut,
+    ReceiptHistoryOut,
+    ReceiptOut,
 )
 from app.security import as_utc
 from app.services.audit import add_audit_log
@@ -63,6 +69,7 @@ from app.services.orders import (
     mark_order_bill_requested,
     order_bill_reference,
 )
+from app.services.receipts import allocate_order_receipt
 
 router = APIRouter(prefix="/printing", tags=["printing"])
 PrintReader = Annotated[Identity, Depends(require_permissions("printing.read"))]
@@ -639,6 +646,7 @@ async def _build_bill_payload(
     identity: Identity,
     order_id: UUID,
     kind: str,
+    receipt: Receipt,
 ) -> dict[str, object]:
     order = await load_order(db, require_tenant(identity), order_id, lock=True)
     if order.branch_id != identity.branch_id:
@@ -654,7 +662,7 @@ async def _build_bill_payload(
         Decimal("0.00"),
     )
     remaining = max(Decimal("0.00"), order.total - paid_total)
-    issue_time = datetime.now(UTC).isoformat()
+    issue_time = receipt.issued_at.isoformat()
     return {
         "type": "BILL",
         "stage": "CLOSING" if order.status == OrderStatus.PAID else "PRE_PAYMENT",
@@ -667,6 +675,8 @@ async def _build_bill_payload(
             "branch_name": branch.name,
             "station_name": "KASA",
             "order_number": order_bill_reference(order.id),
+            "receipt_number": receipt.daily_number,
+            "business_date": receipt.business_date.isoformat(),
             "table_name": order.table_name,
             "waiter_name": identity.display_name,
             "submitted_at": issue_time,
@@ -692,6 +702,8 @@ async def _build_bill_payload(
                 if item.status not in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}
             ],
             "footer": [
+                f"FİŞ NO: {receipt.daily_number}",
+                *(["TEKRAR BASKI"] if kind == "REPRINT" else []),
                 f"Ara toplam: {order.subtotal}",
                 f"İndirim: {order.discount_total}",
                 f"Vergi: {order.tax_total}",
@@ -712,6 +724,8 @@ async def _build_bill_payload(
             },
             "meta": {
                 "reference": order_bill_reference(order.id),
+                "dailyReceiptNumber": receipt.daily_number,
+                "businessDate": receipt.business_date.isoformat(),
                 "tableName": order.table_name,
                 "guestName": order.customer_name,
                 "staffName": identity.display_name,
@@ -787,12 +801,24 @@ async def create_print_job(
         payload=payload,
     )
     job_payload = payload.payload
+    receipt: Receipt | None = None
     if payload.order_id is not None and str(payload.payload.get("type") or "").upper() == "BILL":
+        branch = await _scoped_branch(db, tenant_id=tenant_id, branch_id=branch_id)
+        receipt, _ = await allocate_order_receipt(
+            db,
+            tenant_id=tenant_id,
+            branch=branch,
+            order_id=payload.order_id,
+            actor_user_id=identity.user_id,
+        )
+        if payload.kind.value == "REPRINT":
+            receipt.reprint_count += 1
         job_payload = await _build_bill_payload(
             db,
             identity=identity,
             order_id=payload.order_id,
             kind=payload.kind.value,
+            receipt=receipt,
         )
     preparation_station_id, printer_device_id = await _resolve_print_defaults(
         db,
@@ -806,6 +832,7 @@ async def create_print_job(
         preparation_station_id=preparation_station_id,
         printer_device_id=printer_device_id,
         order_id=payload.order_id,
+        receipt_id=receipt.id if receipt is not None else None,
         kitchen_ticket_id=payload.kitchen_ticket_id,
         payload=job_payload,
         kind=payload.kind,
@@ -823,6 +850,60 @@ async def create_print_job(
     )
     await db.commit()
     return PrintJobOut.model_validate(job)
+
+
+@router.get("/receipts", response_model=list[ReceiptHistoryOut])
+async def list_receipts(
+    identity: PrintReader,
+    db: DbSession,
+    branch_id: UUID | None = None,
+    limit: int = Query(default=100, ge=1, le=300),
+) -> list[ReceiptHistoryOut]:
+    rows = (
+        await db.execute(
+            select(Receipt, Order, User.display_name, DiningTable.name)
+            .join(Order, Order.id == Receipt.order_id)
+            .outerjoin(User, User.id == Receipt.issued_by_user_id)
+            .outerjoin(TableSession, TableSession.id == Order.table_session_id)
+            .outerjoin(DiningTable, DiningTable.id == TableSession.table_id)
+            .where(
+                Receipt.tenant_id == require_tenant(identity),
+                Receipt.branch_id == require_branch(identity, branch_id),
+            )
+            .order_by(Receipt.issued_at.desc())
+            .limit(limit)
+        )
+    ).all()
+    receipt_ids = [receipt.id for receipt, _, _, _ in rows]
+    printed_receipt_ids = set(
+        (
+            await db.execute(
+                select(PrintJob.receipt_id).where(
+                    PrintJob.tenant_id == require_tenant(identity),
+                    PrintJob.receipt_id.in_(receipt_ids),
+                    PrintJob.status == PrintJobStatus.PRINTED,
+                )
+            )
+        ).scalars()
+    )
+    return [
+        ReceiptHistoryOut(
+            **ReceiptOut.model_validate(receipt).model_dump(),
+            table_name=table_name,
+            total=order.total,
+            currency=order.currency,
+            cashier_name=cashier_name,
+            order_status=order.status,
+            print_status=(
+                "REPRINTED"
+                if receipt.reprint_count > 0
+                else "PRINTED"
+                if receipt.id in printed_receipt_ids
+                else "QUEUED"
+            ),
+        )
+        for receipt, order, cashier_name, table_name in rows
+    ]
 
 
 def _validate_bridge_key(settings: Settings, provided: str | None) -> None:

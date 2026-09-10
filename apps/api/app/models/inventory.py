@@ -39,7 +39,9 @@ class InventoryItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(160), nullable=False)
     sku: Mapped[str | None] = mapped_column(String(80), nullable=True)
     unit: Mapped[str] = mapped_column(String(20), nullable=False)
+    category: Mapped[str | None] = mapped_column(String(80), nullable=True, index=True)
     minimum_stock: Mapped[Decimal] = mapped_column(QUANTITY, default=ZERO_QUANTITY, nullable=False)
+    target_stock: Mapped[Decimal] = mapped_column(QUANTITY, default=ZERO_QUANTITY, nullable=False)
     average_cost: Mapped[Decimal] = mapped_column(MONEY, default=ZERO_MONEY, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
 
@@ -140,6 +142,7 @@ class ProductRecipeItem(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         ForeignKey("inventory_items.id", ondelete="RESTRICT"), nullable=False, index=True
     )
     quantity: Mapped[Decimal] = mapped_column(QUANTITY, nullable=False)
+    unit: Mapped[str] = mapped_column(String(20), nullable=False)
 
     recipe: Mapped[ProductRecipe] = relationship(back_populates="items")
     inventory_item: Mapped[InventoryItem] = relationship()

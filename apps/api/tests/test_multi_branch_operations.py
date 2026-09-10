@@ -8,6 +8,7 @@ is the seam a single-branch install never exercises.
 
 from __future__ import annotations
 
+from decimal import Decimal
 from typing import Any
 from uuid import UUID
 
@@ -54,9 +55,7 @@ async def _open_second_branch(api: ApiContext) -> dict[str, Any]:
     what a real chain looks like.
     """
     async with api.database.session_factory() as db:
-        tenant = (
-            await db.execute(select(Tenant).where(Tenant.slug == "dixora-lab"))
-        ).scalar_one()
+        tenant = (await db.execute(select(Tenant).where(Tenant.slug == "dixora-lab"))).scalar_one()
         first = (
             await db.execute(
                 select(Branch).where(Branch.tenant_id == tenant.id, Branch.slug == "merkez")
@@ -64,9 +63,7 @@ async def _open_second_branch(api: ApiContext) -> dict[str, Any]:
         ).scalar_one()
         role = (
             await db.execute(
-                select(Role).where(
-                    Role.tenant_id == tenant.id, Role.code == "BUSINESS_MANAGER"
-                )
+                select(Role).where(Role.tenant_id == tenant.id, Role.code == "BUSINESS_MANAGER")
             )
         ).scalar_one()
 
@@ -226,11 +223,7 @@ async def test_an_order_is_cooked_by_its_own_branch_station(api: ApiContext) -> 
             )
 
         tickets = (
-            (
-                await db.execute(
-                    select(KitchenTicket).where(KitchenTicket.order_id == order_id)
-                )
-            )
+            (await db.execute(select(KitchenTicket).where(KitchenTicket.order_id == order_id)))
             .scalars()
             .all()
         )
@@ -359,9 +352,7 @@ async def test_the_branch_switcher_only_offers_reachable_branches(
 
     response = await api.client.get("/api/v1/auth/branches", headers=headers)
     assert response.status_code == 200, response.text
-    assert {row["id"] for row in response.json()["branches"]} == {
-        str(fixture["branch_id"])
-    }
+    assert {row["id"] for row in response.json()["branches"]} == {str(fixture["branch_id"])}
 
     owner = auth_headers(await login(api))
     everything = await api.client.get("/api/v1/branches", headers=owner)
@@ -377,18 +368,12 @@ async def test_the_branch_switcher_only_offers_reachable_branches(
 async def _use_paid_plan(api: ApiContext) -> None:
     """Trials are capped at one branch; opening a second one needs the paid plan."""
     async with api.database.session_factory() as db:
-        tenant = (
-            await db.execute(select(Tenant).where(Tenant.slug == "dixora-lab"))
-        ).scalar_one()
+        tenant = (await db.execute(select(Tenant).where(Tenant.slug == "dixora-lab"))).scalar_one()
         standard = (
-            await db.execute(
-                select(SubscriptionPlan).where(SubscriptionPlan.code == "STANDARD")
-            )
+            await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.code == "STANDARD"))
         ).scalar_one()
         subscription = (
-            await db.execute(
-                select(Subscription).where(Subscription.tenant_id == tenant.id)
-            )
+            await db.execute(select(Subscription).where(Subscription.tenant_id == tenant.id))
         ).scalar_one()
         subscription.plan_id = standard.id
         await db.commit()
@@ -418,9 +403,7 @@ async def test_a_new_branch_arrives_with_the_stations_it_needs(api: ApiContext) 
         stations = (
             (
                 await db.execute(
-                    select(PreparationStation).where(
-                        PreparationStation.branch_id == branch_id
-                    )
+                    select(PreparationStation).where(PreparationStation.branch_id == branch_id)
                 )
             )
             .scalars()
@@ -450,23 +433,14 @@ async def test_a_new_branch_arrives_with_inventory_and_recipes(api: ApiContext) 
         assert location is not None, "the new branch has nowhere to hold stock"
 
         items = (
-            (
-                await db.execute(
-                    select(InventoryItem).where(InventoryItem.branch_id == branch_id)
-                )
-            )
+            (await db.execute(select(InventoryItem).where(InventoryItem.branch_id == branch_id)))
             .scalars()
             .all()
         )
         assert items, "the new branch inherited no ingredients"
 
         recipes = (
-            (
-                await db.execute(
-                    select(ProductRecipe)
-                    .where(ProductRecipe.branch_id == branch_id)
-                )
-            )
+            (await db.execute(select(ProductRecipe).where(ProductRecipe.branch_id == branch_id)))
             .scalars()
             .all()
         )
@@ -489,11 +463,7 @@ async def test_a_new_branch_starts_with_empty_shelves(api: ApiContext) -> None:
 
     async with api.database.session_factory() as db:
         items = (
-            (
-                await db.execute(
-                    select(InventoryItem).where(InventoryItem.branch_id == branch_id)
-                )
-            )
+            (await db.execute(select(InventoryItem).where(InventoryItem.branch_id == branch_id)))
             .scalars()
             .all()
         )
@@ -504,6 +474,164 @@ async def test_a_new_branch_starts_with_empty_shelves(api: ApiContext) -> None:
     assert response.status_code == 200, response.text
     for row in response.json():
         assert row["current_stock"] in ("0", "0.000000", "0.00"), row
+
+
+async def test_recipe_copy_requires_explicit_mapping_and_never_copies_stock(
+    api: ApiContext,
+) -> None:
+    owner_tokens = await login(api)
+    owner = auth_headers(owner_tokens)
+    target_branch_id = await _create_branch_via_api(api, owner)
+    switched = await api.client.post(
+        "/api/v1/auth/switch-branch",
+        json={
+            "refresh_token": owner_tokens["refresh_token"],
+            "branch_id": target_branch_id,
+        },
+    )
+    assert switched.status_code == 200, switched.text
+    owner = auth_headers(switched.json())
+    imported = await api.client.post(
+        "/api/v1/catalog/centre/import",
+        headers=owner,
+    )
+    assert imported.status_code == 200, imported.text
+    branches = (await api.client.get("/api/v1/branches", headers=owner)).json()
+    source_branch_id = next(branch["id"] for branch in branches if branch["id"] != target_branch_id)
+
+    source_recipes = (
+        await api.client.get(
+            "/api/v1/inventory/recipes",
+            headers=owner,
+            params={"branch_id": source_branch_id},
+        )
+    ).json()
+    source_recipe = next(
+        recipe for recipe in source_recipes if recipe["product_name"] == TRACKED_PRODUCT
+    )
+    target_products = (
+        await api.client.get(
+            "/api/v1/catalog/products",
+            headers=owner,
+            params={"branch_id": target_branch_id, "limit": 250},
+        )
+    ).json()["items"]
+    target_product = next(
+        product for product in target_products if product["name"] == TRACKED_PRODUCT
+    )
+    target_items = (
+        await api.client.get(
+            "/api/v1/inventory/items",
+            headers=owner,
+            params={"branch_id": target_branch_id},
+        )
+    ).json()
+    target_by_name = {item["name"]: item for item in target_items}
+    stock_before = {item["id"]: Decimal(item["current_stock"]) for item in target_items}
+    mappings = [
+        {
+            "source_inventory_item_id": ingredient["inventory_item_id"],
+            "target_inventory_item_id": target_by_name[ingredient["name"]]["id"],
+        }
+        for ingredient in source_recipe["ingredients"]
+    ]
+
+    incomplete = await api.client.post(
+        "/api/v1/inventory/recipes/copy",
+        headers=owner,
+        json={
+            "source_branch_id": source_branch_id,
+            "target_branch_id": target_branch_id,
+            "source_product_id": source_recipe["product_id"],
+            "target_product_id": target_product["id"],
+            "ingredient_mappings": mappings[:-1],
+        },
+    )
+    assert incomplete.status_code == 422, incomplete.text
+    assert incomplete.json()["error"]["code"] == "recipe_mapping_incomplete"
+
+    copied = await api.client.post(
+        "/api/v1/inventory/recipes/copy",
+        headers=owner,
+        json={
+            "source_branch_id": source_branch_id,
+            "target_branch_id": target_branch_id,
+            "source_product_id": source_recipe["product_id"],
+            "target_product_id": target_product["id"],
+            "ingredient_mappings": mappings,
+        },
+    )
+    assert copied.status_code == 201, copied.text
+    assert copied.json()["product_id"] == target_product["id"]
+    assert {
+        (item["name"], Decimal(item["quantity"]), item["unit"])
+        for item in copied.json()["ingredients"]
+    } == {
+        (item["name"], Decimal(item["quantity"]), item["unit"])
+        for item in source_recipe["ingredients"]
+    }
+
+    after_items = (
+        await api.client.get(
+            "/api/v1/inventory/items",
+            headers=owner,
+            params={"branch_id": target_branch_id},
+        )
+    ).json()
+    assert {item["id"]: Decimal(item["current_stock"]) for item in after_items} == stock_before
+
+
+async def test_brand_stock_overview_and_atomic_transfer_span_only_owned_branches(
+    api: ApiContext,
+) -> None:
+    owner = auth_headers(await login(api))
+    second_branch_id = await _create_branch_via_api(api, owner)
+    branches = (await api.client.get("/api/v1/branches", headers=owner)).json()
+    first_branch_id = next(branch["id"] for branch in branches if branch["id"] != second_branch_id)
+
+    source_items = (
+        await api.client.get(
+            "/api/v1/inventory/items",
+            headers=owner,
+            params={"branch_id": first_branch_id},
+        )
+    ).json()
+    target_items = (
+        await api.client.get(
+            "/api/v1/inventory/items",
+            headers=owner,
+            params={"branch_id": second_branch_id},
+        )
+    ).json()
+    source = next(item for item in source_items if item["name"] == "Burger Bun")
+    target = next(item for item in target_items if item["name"] == "Burger Bun")
+    starting_source = Decimal(source["current_stock"])
+    assert starting_source >= Decimal("1")
+
+    payload = {
+        "source_branch_id": first_branch_id,
+        "target_branch_id": second_branch_id,
+        "source_inventory_item_id": source["id"],
+        "target_inventory_item_id": target["id"],
+        "quantity": "1",
+        "reason": "Critical branch stock support",
+        "idempotency_key": "cross-branch-bun-transfer-0001",
+    }
+    transferred = await api.client.post("/api/v1/inventory/transfers", headers=owner, json=payload)
+    assert transferred.status_code == 201, transferred.text
+    assert transferred.json()["source"]["type"] == "TRANSFER_OUT"
+    assert transferred.json()["target"]["type"] == "TRANSFER_IN"
+
+    replay = await api.client.post("/api/v1/inventory/transfers", headers=owner, json=payload)
+    assert replay.status_code == 201, replay.text
+    assert replay.json()["source"]["id"] == transferred.json()["source"]["id"]
+
+    overview = await api.client.get("/api/v1/inventory/overview", headers=owner)
+    assert overview.status_code == 200, overview.text
+    matrix_item = next(item for item in overview.json()["items"] if item["name"] == "Burger Bun")
+    cells = {cell["branch_id"]: cell for cell in matrix_item["branches"]}
+    assert Decimal(cells[first_branch_id]["quantity"]) == starting_source - Decimal("1")
+    assert Decimal(cells[second_branch_id]["quantity"]) == Decimal("1")
 
 
 async def test_a_tracked_product_fails_on_stock_not_on_configuration(
@@ -518,12 +646,8 @@ async def test_a_tracked_product_fails_on_stock_not_on_configuration(
     branch_id = await _create_branch_via_api(api, owner)
 
     async with api.database.session_factory() as db:
-        tenant = (
-            await db.execute(select(Tenant).where(Tenant.slug == "dixora-lab"))
-        ).scalar_one()
-        area = Area(
-            tenant_id=tenant.id, branch_id=UUID(branch_id), name="Salon", sort_order=0
-        )
+        tenant = (await db.execute(select(Tenant).where(Tenant.slug == "dixora-lab"))).scalar_one()
+        area = Area(tenant_id=tenant.id, branch_id=UUID(branch_id), name="Salon", sort_order=0)
         db.add(area)
         await db.flush()
         table = DiningTable(

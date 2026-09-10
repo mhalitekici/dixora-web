@@ -33,6 +33,7 @@ from app.schemas import (
     CancellationRequestCreate,
     DiscountRequestCreate,
     ItemCheckSplitRequest,
+    OrderAcceptRequest,
     OrderCreate,
     OrderItemActionRequest,
     OrderItemOut,
@@ -402,6 +403,7 @@ async def append_items(
         actor_user_id=identity.user_id,
         items=payload.items,
         idempotency_key=payload.idempotency_key,
+        auto_accept=payload.auto_accept,
     )
     if not replayed:
         add_audit_log(
@@ -427,16 +429,24 @@ async def accept_existing_order(
     request: Request,
     identity: OrderManager,
     db: DbSession,
+    payload: OrderAcceptRequest | None = None,
 ) -> OrderOut:
     order = await _scoped_order(identity, db, order_id, lock=True)
-    await accept_order(db, order, actor_user_id=identity.user_id)
-    add_audit_log(
+    dispatched_item_ids = await accept_order(
         db,
-        identity=identity,
-        action="order.accepted",
-        resource_type="order",
-        resource_id=order.id,
+        order,
+        actor_user_id=identity.user_id,
+        require_configured_printer=(payload.require_configured_printer if payload else False),
     )
+    if dispatched_item_ids:
+        add_audit_log(
+            db,
+            identity=identity,
+            action="order.sent_to_preparation",
+            resource_type="order",
+            resource_id=order.id,
+            new_value={"item_ids": [str(item_id) for item_id in dispatched_item_ids]},
+        )
     await db.commit()
     order = await load_order(db, order.tenant_id, order.id)
     await _broadcast(request, order)

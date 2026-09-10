@@ -75,12 +75,14 @@ from app.models.orders import (
 )
 from app.models.payments import PaymentAttempt, SavedCard
 from app.models.printing import (
+    DailyReceiptCounter,
     PrintBridgeClient,
     PrintBridgeEnrollmentCode,
     PrintBridgePrinterMapping,
     PrinterDevice,
     PrintJob,
     PrintJobAcknowledgement,
+    Receipt,
 )
 from app.models.qr import QrMenuConfig, QrOrderRequest
 from app.models.shifts import CashierShift
@@ -109,6 +111,7 @@ __all__ = [
     "CampaignApplication",
     "CampaignBranch",
     "DeliveryOrder",
+    "DailyReceiptCounter",
     "PaymentAttempt",
     "SavedCard",
     "DiningTable",
@@ -149,6 +152,7 @@ __all__ = [
     "PrintJobAcknowledgement",
     "PrinterDevice",
     "PrintJob",
+    "Receipt",
     "Product",
     "ProductBranchAvailability",
     "ProductModifierGroup",
