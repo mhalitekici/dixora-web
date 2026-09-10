@@ -96,9 +96,7 @@ async def seed_database(db: AsyncSession) -> None:
         if not verify_password(
             DEVELOPMENT_PASSWORDS["superadmin@dixora.app"], superadmin.password_hash
         ):
-            superadmin.password_hash = hash_password(
-                DEVELOPMENT_PASSWORDS["superadmin@dixora.app"]
-            )
+            superadmin.password_hash = hash_password(DEVELOPMENT_PASSWORDS["superadmin@dixora.app"])
 
     tenant = await _one_or_create(
         db,
@@ -349,7 +347,11 @@ async def seed_database(db: AsyncSession) -> None:
                 "recipe_id": recipe.id,
                 "inventory_item_id": stock_items[ingredient].id,
             },
-            {"branch_id": branch.id, "quantity": Decimal(quantity)},
+            {
+                "branch_id": branch.id,
+                "quantity": Decimal(quantity),
+                "unit": stock_items[ingredient].unit,
+            },
         )
 
     await _one_or_create(
@@ -393,9 +395,7 @@ async def seed_database(db: AsyncSession) -> None:
             "is_active": True,
         },
     )
-    bridge_client.token_hash = hashlib.sha256(
-        b"pb_dev_dixora_lab_bridge_2026"
-    ).hexdigest()
+    bridge_client.token_hash = hashlib.sha256(b"pb_dev_dixora_lab_bridge_2026").hexdigest()
     bridge_client.is_active = True
     bridge_client.printer_inventory = ["MOCK-BAR", "MOCK-KITCHEN"]
     for printer, local_printer_name in (

@@ -24,7 +24,7 @@ import {
   QrCode,
   ReceiptText,
   Search,
-  Split,
+  Send,
   Tags,
   Trash2,
   Volume2,
@@ -50,6 +50,14 @@ import {
   formatDwell,
 } from "@/components/cashier/table-dwell";
 import { StaffLoyaltyPanel } from "@/components/loyalty/staff-loyalty-panel";
+import {
+  CashierModifierDialog,
+  type CashierProductDetail,
+} from "@/components/cashier/cashier-modifier-dialog";
+import {
+  CashierItemTransferDialog,
+  type ItemTransferPayload,
+} from "@/components/cashier/cashier-item-transfer-dialog";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -249,6 +257,8 @@ const CLOSE_TABLE_ERROR_MESSAGES: Record<string, string> = {
   order_version_conflict:
     "Sipariş başka bir kasada güncellendi. Son hali yükleniyor.",
   quantity_remove_required: "Son adet için Sil işlemini kullanın.",
+  preparation_printer_not_configured:
+    "Hazırlık istasyonu yazıcısı yapılandırılmamış.",
 };
 
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
@@ -450,8 +460,8 @@ export function CashierWorkspace() {
     | "payment"
     | "discount"
     | "transfer"
+    | "item-transfer"
     | "merge"
-    | "split"
     | "cancel-item"
     | "complimentary"
     | "close-table"
@@ -460,6 +470,9 @@ export function CashierWorkspace() {
     | null
   >(null);
   const [productSearch, setProductSearch] = useState("");
+  const [modifierProduct, setModifierProduct] =
+    useState<CashierProductDetail | null>(null);
+  const [loadingProductId, setLoadingProductId] = useState<string | null>(null);
   const [paymentMethod, setPaymentMethod] = useState("CASH");
   const [paymentAmount, setPaymentAmount] = useState("");
   const [roomReference, setRoomReference] = useState("");
@@ -478,7 +491,6 @@ export function CashierWorkspace() {
     null,
   );
   const [complimentaryReason, setComplimentaryReason] = useState("");
-  const [splitAmount, setSplitAmount] = useState("");
 
   const areasQuery = useQuery({
     queryKey: ["cashier", "areas"],
@@ -547,14 +559,20 @@ export function CashierWorkspace() {
     selectedTable,
     remaining,
   );
+  const pendingPreparationItems =
+    selectedOrder?.items.filter(
+      (item) => item.status === "DRAFT" || item.status === "SUBMITTED",
+    ) ?? [];
   const tableCloseHint = !selectedOrder
     ? "Kapatılacak aktif masa oturumu yok."
-    : !terminalOrderStatuses.has(selectedOrder.status)
+    : !terminalOrderStatuses.has(selectedOrder.status) && !tableCanClose
       ? "Masayı kapatmadan önce hesabı tamamen ödeyin veya siparişi iptal edin."
       : selectedOrder.status === "PAID" && remaining > 0.005
         ? `Kalan ${currency.format(remaining)} tahsil edilmeden masa kapatılamaz.`
         : tableCanClose
-          ? "Kapanıştan sonra masa yeniden sipariş almaya açılır."
+          ? remaining <= 0.005 && selectedOrder.status !== "PAID"
+            ? "Ödeme gerekmiyor; 0 TL hesap kapatılarak masa yeniden açılır."
+            : "Kapanıştan sonra masa yeniden sipariş almaya açılır."
           : "Bu masa oturumu kapatılmaya uygun değil.";
 
   const qrPendingRequests = useMemo(
@@ -676,12 +694,26 @@ export function CashierWorkspace() {
   }
 
   const productMutation = useMutation({
-    mutationFn: async (product: Product) => {
+    mutationFn: async ({
+      product,
+      modifierIds = [],
+    }: {
+      product: Product;
+      modifierIds?: string[];
+    }) => {
       if (!selectedTable) {
         throw new Error("Canlı masa verisi olmadan ürün eklenemez.");
       }
       const payloadItems = [
-        { product_id: product.id, quantity: "1", note: null, modifiers: [] },
+        {
+          product_id: product.id,
+          quantity: "1",
+          note: null,
+          modifiers: modifierIds.map((modifierId) => ({
+            modifier_id: modifierId,
+            quantity: 1,
+          })),
+        },
       ];
       if (selectedOrder) {
         return api<Order>(`/orders/${selectedOrder.id}/items`, {
@@ -689,6 +721,7 @@ export function CashierWorkspace() {
           body: JSON.stringify({
             items: payloadItems,
             idempotency_key: crypto.randomUUID(),
+            auto_accept: false,
           }),
         });
       }
@@ -699,17 +732,40 @@ export function CashierWorkspace() {
           source: "CASHIER",
           items: payloadItems,
           idempotency_key: crypto.randomUUID(),
-          auto_accept: true,
+          auto_accept: false,
         }),
       });
     },
-    onSuccess: (_, product) => {
+    onSuccess: (_, { product }) => {
       toast.success(`${product.name} siparişe eklendi`);
+      setModifierProduct(null);
+      setDialog(null);
       refreshOperations();
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "Ürün eklenemedi."),
   });
+
+  async function chooseProduct(product: Product) {
+    setLoadingProductId(product.id);
+    try {
+      const detail = await api<CashierProductDetail>(
+        `/catalog/products/${product.id}`,
+      );
+      if (detail.modifier_groups.length > 0) {
+        setModifierProduct(detail);
+        setDialog(null);
+      } else {
+        productMutation.mutate({ product });
+      }
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Ürün seçenekleri alınamadı.",
+      );
+    } finally {
+      setLoadingProductId(null);
+    }
+  }
 
   const paymentMutation = useMutation({
     mutationFn: async () => {
@@ -1059,28 +1115,38 @@ export function CashierWorkspace() {
     }
   }
 
-  const splitMutation = useMutation({
+  const preparationMutation = useMutation({
     mutationFn: async () => {
       if (!selectedOrder) throw new Error("Canlı sipariş verisi bulunamadı.");
-      return api(`/orders/${selectedOrder.id}/split/amount`, {
+      return api<Order>(`/orders/${selectedOrder.id}/accept`, {
         method: "POST",
-        body: JSON.stringify({
-          parts: [
-            Number(splitAmount).toFixed(2),
-            (remaining - Number(splitAmount)).toFixed(2),
-          ],
-          idempotency_key: crypto.randomUUID(),
-        }),
+        body: JSON.stringify({ require_configured_printer: true }),
       });
     },
-    onSuccess: () => {
-      toast.success("Bölünmüş hesap oluşturuldu");
-      setDialog(null);
-      refreshOperations();
+    onSuccess: (updatedOrder) => {
+      toast.success("Sipariş istasyonlara gönderildi.", {
+        description: `${pendingPreparationItems.length} kalem hazırlık sırasına alındı.`,
+      });
+      applyUpdatedOrder(updatedOrder);
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Hesap bölünemedi."),
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Sipariş hazırlık istasyonlarına gönderilemedi.",
+      ),
   });
+
+  async function transferSelectedItems(payload: ItemTransferPayload) {
+    if (!selectedOrder) throw new Error("Canlı sipariş verisi bulunamadı.");
+    await api(`/orders/${selectedOrder.id}/items/transfer`, {
+      method: "POST",
+      body: JSON.stringify(payload),
+    });
+    toast.success("Ürünler yeni masaya taşındı.");
+    setSelectedTableId(payload.destination_table_id);
+    refreshOperations();
+  }
 
   const printJobsQuery = useQuery({
     queryKey: ["cashier", "print-jobs", selectedOrder?.id],
@@ -1849,7 +1915,36 @@ export function CashierWorkspace() {
             </div>
           </ScrollArea>
 
-          <footer className="grid grid-cols-2 gap-2 border-t bg-card p-3 sm:grid-cols-3 lg:grid-cols-5">
+          <footer className="grid grid-cols-2 gap-2 border-t bg-card p-3 sm:grid-cols-3 lg:grid-cols-7">
+            <Button
+              className="col-span-2 h-11 rounded-xl lg:col-span-2"
+              disabled={
+                !selectedOrder ||
+                pendingPreparationItems.length === 0 ||
+                preparationMutation.isPending ||
+                terminalOrderStatuses.has(selectedOrder.status)
+              }
+              onClick={() => preparationMutation.mutate()}
+              title={
+                pendingPreparationItems.length
+                  ? "Yeni ürünleri mutfak ve bar istasyonlarına gönder"
+                  : "Yazdırılacak yeni ürün yok"
+              }
+            >
+              {preparationMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Send />
+              )}
+              {preparationMutation.isPending
+                ? "Yazdırılıyor..."
+                : "Siparişi yazdır"}
+              {pendingPreparationItems.length ? (
+                <span className="ml-auto rounded-full bg-primary-foreground/15 px-2 py-0.5 text-[0.65rem] tabular-nums">
+                  {pendingPreparationItems.length}
+                </span>
+              ) : null}
+            </Button>
             <Button
               variant="outline"
               className="h-10 rounded-xl"
@@ -1869,10 +1964,10 @@ export function CashierWorkspace() {
                 !selectedOrder ||
                 terminalOrderStatuses.has(selectedOrder.status)
               }
-              onClick={() => setDialog("split")}
+              onClick={() => setDialog("item-transfer")}
             >
-              <Split />
-              Hesabı böl
+              <ArrowLeftRight />
+              Ürün taşı
             </Button>
             <Button
               variant="outline"
@@ -2063,10 +2158,10 @@ export function CashierWorkspace() {
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-2">
+            <div>
               <Button
                 variant="outline"
-                className="h-11 rounded-xl"
+                className="h-11 w-full rounded-xl"
                 disabled={
                   !selectedOrder ||
                   terminalOrderStatuses.has(selectedOrder.status)
@@ -2075,18 +2170,6 @@ export function CashierWorkspace() {
               >
                 <Tags />
                 İndirim
-              </Button>
-              <Button
-                variant="outline"
-                className="h-11 rounded-xl"
-                disabled={
-                  !selectedOrder ||
-                  terminalOrderStatuses.has(selectedOrder.status)
-                }
-                onClick={() => setDialog("split")}
-              >
-                <Split />
-                Parçalı ödeme
               </Button>
             </div>
 
@@ -2223,8 +2306,10 @@ export function CashierWorkspace() {
               <button
                 type="button"
                 key={product.id}
-                disabled={productMutation.isPending}
-                onClick={() => productMutation.mutate(product)}
+                disabled={
+                  productMutation.isPending || loadingProductId !== null
+                }
+                onClick={() => void chooseProduct(product)}
                 className="group relative flex min-h-36 flex-col overflow-hidden rounded-xl border bg-card text-left transition-colors hover:border-brand/35 hover:bg-brand-soft/40 disabled:opacity-50"
               >
                 <span className="relative flex h-24 w-full items-center justify-center overflow-hidden bg-muted/55">
@@ -2248,7 +2333,11 @@ export function CashierWorkspace() {
                     <span className="text-xs font-bold">
                       {currency.format(Number(product.selling_price))}
                     </span>
-                    <Plus className="size-4 text-brand" />
+                    {loadingProductId === product.id ? (
+                      <Loader2 className="size-4 animate-spin text-brand" />
+                    ) : (
+                      <Plus className="size-4 text-brand" />
+                    )}
                   </span>
                 </span>
               </button>
@@ -2256,6 +2345,19 @@ export function CashierWorkspace() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <CashierModifierDialog
+        key={modifierProduct?.id ?? "no-modifier-product"}
+        product={modifierProduct}
+        pending={productMutation.isPending}
+        onClose={() => setModifierProduct(null)}
+        onConfirm={(modifierIds) => {
+          const product = products.find(
+            (item) => item.id === modifierProduct?.id,
+          );
+          if (product) productMutation.mutate({ product, modifierIds });
+        }}
+      />
 
       <Dialog
         open={dialog === "payment"}
@@ -2515,6 +2617,15 @@ export function CashierWorkspace() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <CashierItemTransferDialog
+        open={dialog === "item-transfer"}
+        sourceTable={selectedTable}
+        items={selectedOrder?.items ?? []}
+        tables={tables}
+        onOpenChange={(open) => !open && setDialog(null)}
+        onTransfer={transferSelectedItems}
+      />
 
       <Dialog
         open={dialog === "merge"}
@@ -2829,55 +2940,6 @@ export function CashierWorkspace() {
               </Button>
             </DialogFooter>
           </form>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog
-        open={dialog === "split"}
-        onOpenChange={(open) => !open && setDialog(null)}
-      >
-        <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Hesabı tutara göre böl</DialogTitle>
-            <DialogDescription>
-              Yeni alt hesap tutarı toplam bakiyeyi aşamaz; finansal bütünlük
-              korunur.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="space-y-2">
-            <Label htmlFor="split-amount">Ayrılacak tutar</Label>
-            <Input
-              id="split-amount"
-              type="number"
-              min="0.01"
-              max={remaining}
-              step="0.01"
-              value={splitAmount}
-              onChange={(event) => setSplitAmount(event.target.value)}
-              className="h-14 rounded-xl text-xl font-semibold"
-              placeholder="0,00"
-            />
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setDialog(null)}>
-              Vazgeç
-            </Button>
-            <Button
-              disabled={
-                !Number(splitAmount) ||
-                Number(splitAmount) >= remaining ||
-                splitMutation.isPending
-              }
-              onClick={() => splitMutation.mutate()}
-            >
-              {splitMutation.isPending ? (
-                <Loader2 className="animate-spin" />
-              ) : (
-                <Split />
-              )}
-              Alt hesap oluştur
-            </Button>
-          </DialogFooter>
         </DialogContent>
       </Dialog>
 

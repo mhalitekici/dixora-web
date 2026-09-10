@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Generic, Literal, TypeVar
 from uuid import UUID
@@ -969,6 +969,11 @@ class OrderCreate(BaseModel):
 class OrderItemsAppend(BaseModel):
     items: list[OrderItemInput] = Field(min_length=1)
     idempotency_key: str = Field(min_length=8, max_length=160)
+    auto_accept: bool = True
+
+
+class OrderAcceptRequest(BaseModel):
+    require_configured_printer: bool = False
 
 
 class OrderItemModifierOut(ORMModel):
@@ -1246,7 +1251,9 @@ class InventoryItemCreate(BaseModel):
     name: str = Field(min_length=1, max_length=160)
     sku: str | None = Field(default=None, max_length=80)
     unit: str = Field(pattern=r"^(piece|gram|kilogram|milliliter|liter)$")
+    category: str | None = Field(default=None, max_length=80)
     minimum_stock: Decimal = Field(default=Decimal("0"), ge=0)
+    target_stock: Decimal = Field(default=Decimal("0"), ge=0)
     opening_quantity: Decimal = Field(default=Decimal("0"), ge=0)
 
 
@@ -1257,7 +1264,9 @@ class InventoryItemOut(ORMModel):
     name: str
     sku: str | None
     unit: str
+    category: str | None
     minimum_stock: Decimal
+    target_stock: Decimal
     average_cost: Decimal
     is_active: bool
     current_stock: Decimal | None = None
@@ -1266,6 +1275,10 @@ class InventoryItemOut(ORMModel):
 class RecipeItemInput(BaseModel):
     inventory_item_id: UUID
     quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
+    unit: str | None = Field(
+        default=None,
+        pattern=r"^(piece|gram|kilogram|milliliter|liter)$",
+    )
 
 
 class RecipeCreate(BaseModel):
@@ -1280,6 +1293,19 @@ class RecipeIngredientOut(BaseModel):
     name: str
     unit: str
     quantity: Decimal
+
+
+class RecipeCopyIngredientMapping(BaseModel):
+    source_inventory_item_id: UUID
+    target_inventory_item_id: UUID
+
+
+class RecipeCopyRequest(BaseModel):
+    source_branch_id: UUID
+    target_branch_id: UUID | None = None
+    source_product_id: UUID
+    target_product_id: UUID
+    ingredient_mappings: list[RecipeCopyIngredientMapping] = Field(min_length=1)
 
 
 class RecipeOut(BaseModel):
@@ -1316,6 +1342,50 @@ class StockMovementOut(BaseModel):
     reason: str | None
     actor_user_id: UUID | None
     created_at: datetime
+
+
+class StockTransferCreate(BaseModel):
+    source_branch_id: UUID
+    target_branch_id: UUID
+    source_inventory_item_id: UUID
+    target_inventory_item_id: UUID
+    quantity: Decimal = Field(gt=0, max_digits=18, decimal_places=6)
+    reason: str = Field(min_length=3, max_length=1000)
+    idempotency_key: str = Field(min_length=8, max_length=150)
+
+
+class StockTransferOut(BaseModel):
+    transfer_id: str
+    source: StockMovementOut
+    target: StockMovementOut
+
+
+class BranchStockCellOut(BaseModel):
+    branch_id: UUID
+    branch_name: str
+    inventory_item_id: UUID
+    quantity: Decimal
+    minimum_stock: Decimal
+    target_stock: Decimal
+    status: Literal["NORMAL", "LOW", "OUT_OF_STOCK"]
+    updated_at: datetime
+
+
+class BrandStockItemOut(BaseModel):
+    key: str
+    name: str
+    sku: str | None
+    category: str | None
+    unit: str
+    branches: list[BranchStockCellOut]
+
+
+class BrandStockOverviewOut(BaseModel):
+    branches: list[BranchOut]
+    items: list[BrandStockItemOut]
+    total_items: int
+    low_count: int
+    out_of_stock_count: int
 
 
 class QrConfigUpdate(BaseModel):
@@ -1559,6 +1629,7 @@ class PrintJobOut(ORMModel):
     printer_device_id: UUID | None
     claimed_by_bridge_id: UUID | None
     order_id: UUID | None
+    receipt_id: UUID | None
     kitchen_ticket_id: UUID | None
     payload: dict[str, object]
     status: PrintJobStatus
@@ -1571,6 +1642,27 @@ class PrintJobOut(ORMModel):
     print_result: dict[str, object] | None
     manual_retry_required: bool
     created_at: datetime
+
+
+class ReceiptOut(ORMModel):
+    id: UUID
+    tenant_id: UUID
+    branch_id: UUID
+    order_id: UUID
+    issued_by_user_id: UUID | None
+    business_date: date
+    daily_number: int
+    issued_at: datetime
+    reprint_count: int
+
+
+class ReceiptHistoryOut(ReceiptOut):
+    table_name: str | None
+    total: Decimal
+    currency: str
+    cashier_name: str | None
+    order_status: OrderStatus
+    print_status: Literal["QUEUED", "PRINTED", "REPRINTED"]
 
 
 class PrintJobClaimOut(PrintJobOut):

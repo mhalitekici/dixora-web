@@ -384,9 +384,7 @@ async def _build_subscription(
 # --------------------------------------------------------------------------
 
 
-async def _build_branches(
-    db: AsyncSession, context: DemoContext, *, opened_at: datetime
-) -> None:
+async def _build_branches(db: AsyncSession, context: DemoContext, *, opened_at: datetime) -> None:
     for offset, spec in enumerate(D.BRANCHES):
         # The second and third branches opened later, which is what makes the
         # branch comparison in reports interesting rather than symmetrical.
@@ -408,9 +406,7 @@ async def _build_branches(
         context.branches.append(BranchContext(spec=spec, id=branch.id))
 
 
-async def _build_staff(
-    db: AsyncSession, context: DemoContext, *, opened_at: datetime
-) -> None:
+async def _build_staff(db: AsyncSession, context: DemoContext, *, opened_at: datetime) -> None:
     roles = await ensure_tenant_role_presets(db, context.tenant_id)
     for code, name in (
         ("BUSINESS_OWNER", "İşletme Sahibi"),
@@ -447,9 +443,7 @@ async def _build_staff(
                 tenant_id=context.tenant_id,
                 branch_id=branch.id,
                 role_id=roles[spec.role].id,
-                preparation_station_id=(
-                    branch.stations[spec.station] if spec.station else None
-                ),
+                preparation_station_id=(branch.stations[spec.station] if spec.station else None),
                 username=f"{spec.local_part}@{D.EMAIL_DOMAIN}",
                 email=f"{spec.local_part}@{D.EMAIL_DOMAIN}",
                 phone=spec.phone,
@@ -710,6 +704,7 @@ async def _build_inventory(db: AsyncSession, context: DemoContext) -> None:
                         recipe_id=recipe.id,
                         inventory_item_id=branch.inventory[item_name],
                         quantity=Decimal(quantity),
+                        unit=next(spec.unit for spec in D.INVENTORY if spec.name == item_name),
                     )
                 )
 
@@ -727,9 +722,7 @@ async def _build_inventory(db: AsyncSession, context: DemoContext) -> None:
 # --------------------------------------------------------------------------
 
 
-async def _build_service_config(
-    db: AsyncSession, context: DemoContext, *, now: datetime
-) -> None:
+async def _build_service_config(db: AsyncSession, context: DemoContext, *, now: datetime) -> None:
     seen_recently = now - timedelta(seconds=45)
     for branch in context.branches:
         db.add(
@@ -867,9 +860,7 @@ async def _build_loyalty(
             email_normalized=f"{local_part}@{D.CUSTOMER_EMAIL_DOMAIN}",
             first_name=first_name,
             last_name=last_name,
-            birth_date=date(
-                rng.randint(1972, 2004), rng.randint(1, 12), rng.randint(1, 28)
-            ),
+            birth_date=date(rng.randint(1972, 2004), rng.randint(1, 12), rng.randint(1, 28)),
             is_active=True,
             created_at=joined,
             updated_at=joined,
@@ -881,9 +872,7 @@ async def _build_loyalty(
             branch_id=branch.id,
             program_id=program.id,
             customer_id=customer.id,
-            public_token_hash=hashlib.sha256(
-                secrets.token_urlsafe(32).encode()
-            ).hexdigest(),
+            public_token_hash=hashlib.sha256(secrets.token_urlsafe(32).encode()).hexdigest(),
             lookup_code=_unique_code(rng, lookup_codes, "MYD", 4),
             referral_code=_unique_code(rng, referral_codes, "MR", 6),
             consent_at=joined,
@@ -905,18 +894,14 @@ async def _build_loyalty(
     await db.flush()
 
 
-async def _build_campaigns(
-    db: AsyncSession, context: DemoContext, *, opened_at: datetime
-) -> None:
+async def _build_campaigns(db: AsyncSession, context: DemoContext, *, opened_at: datetime) -> None:
     for spec in D.CAMPAIGNS:
         campaign = Campaign(
             tenant_id=context.tenant_id,
             name=spec.name,
             description=spec.description,
             is_active=True,
-            buy_category_id=(
-                context.categories[spec.buy_category] if spec.buy_category else None
-            ),
+            buy_category_id=(context.categories[spec.buy_category] if spec.buy_category else None),
             buy_quantity=spec.buy_quantity,
             minimum_order_amount=Decimal(spec.minimum_order_amount),
             reward_kind=CampaignRewardKind(spec.reward_kind),

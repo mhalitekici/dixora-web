@@ -1,13 +1,62 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import JSON, Boolean, Date, ForeignKey, Integer, String, Text, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
 from app.models.enums import PrintJobKind, PrintJobStatus, enum_column
+
+
+class DailyReceiptCounter(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "daily_receipt_counters"
+    __table_args__ = (
+        UniqueConstraint(
+            "tenant_id", "branch_id", "business_date", name="uq_receipt_counter_scope_day"
+        ),
+    )
+
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    branch_id: Mapped[UUID] = mapped_column(
+        ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    business_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    last_number: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
+class Receipt(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "receipts"
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "order_id", name="uq_receipt_tenant_order"),
+        UniqueConstraint(
+            "tenant_id",
+            "branch_id",
+            "business_date",
+            "daily_number",
+            name="uq_receipt_scope_day_number",
+        ),
+    )
+
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    branch_id: Mapped[UUID] = mapped_column(
+        ForeignKey("branches.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    order_id: Mapped[UUID] = mapped_column(
+        ForeignKey("orders.id", ondelete="RESTRICT"), nullable=False, index=True
+    )
+    issued_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    business_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    daily_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    issued_at: Mapped[datetime] = mapped_column(nullable=False)
+    reprint_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
 
 class PrinterDevice(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -177,6 +226,9 @@ class PrintJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     order_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("orders.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    receipt_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("receipts.id", ondelete="RESTRICT"), nullable=True, index=True
     )
     kitchen_ticket_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("kitchen_tickets.id", ondelete="RESTRICT"), nullable=True, index=True

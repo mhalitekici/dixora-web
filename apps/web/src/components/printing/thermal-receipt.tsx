@@ -67,7 +67,12 @@ export function ThermalReceipt({
       <div className="receipt-rule" />
 
       <dl className="receipt-meta">
-        {meta.reference ? <Row label="Fiş No" value={meta.reference} /> : null}
+        {meta.dailyReceiptNumber != null ? (
+          <Row label="FİŞ NO" value={String(meta.dailyReceiptNumber)} />
+        ) : null}
+        {meta.reference ? (
+          <Row label="Sipariş No" value={meta.reference} />
+        ) : null}
         {meta.tableName ? <Row label="Masa" value={meta.tableName} /> : null}
         {meta.roomNumber ? <Row label="Oda" value={meta.roomNumber} /> : null}
         {meta.guestName ? <Row label="Misafir" value={meta.guestName} /> : null}

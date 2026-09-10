@@ -17,6 +17,12 @@ export const terminalOrderStatuses: ReadonlySet<string> = new Set([
   "VOIDED",
 ]);
 
+const zeroTotalCloseableStatuses: ReadonlySet<string> = new Set([
+  "SERVED",
+  "BILL_REQUESTED",
+  "PAYMENT_PENDING",
+]);
+
 function belongsToTable(
   order: CashierOrderReference,
   table: CashierTableReference,
@@ -37,7 +43,9 @@ export function selectCurrentTableOrder<T extends CashierOrderReference>(
   );
   if (openOrder) return openOrder;
   if (table.state === "AVAILABLE" || table.state === "DISABLED") return null;
-  return tableOrders.find((order) => terminalOrderStatuses.has(order.status)) ?? null;
+  return (
+    tableOrders.find((order) => terminalOrderStatuses.has(order.status)) ?? null
+  );
 }
 
 export function canCloseTableSession(
@@ -47,7 +55,11 @@ export function canCloseTableSession(
 ): boolean {
   if (!order?.table_session_id || !table) return false;
   if (table.state === "AVAILABLE" || table.state === "DISABLED") return false;
-  if (!terminalOrderStatuses.has(order.status)) return false;
+  if (
+    !terminalOrderStatuses.has(order.status) &&
+    !(remainingBalance <= 0.005 && zeroTotalCloseableStatuses.has(order.status))
+  ) {
+    return false;
+  }
   return order.status !== "PAID" || remainingBalance <= 0.005;
 }
-

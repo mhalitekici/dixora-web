@@ -488,12 +488,47 @@ async def close_table_session(
                     Order.branch_id == branch_id,
                     Order.table_session_id == table_session.id,
                 )
-                .options(selectinload(Order.payments))
+                .options(selectinload(Order.payments), selectinload(Order.items))
             )
         )
         .scalars()
         .all()
     )
+    zero_total_closeable_statuses = {
+        OrderStatus.SERVED,
+        OrderStatus.BILL_REQUESTED,
+        OrderStatus.PAYMENT_PENDING,
+    }
+    auto_settled_order_ids: list[str] = []
+    for order in orders:
+        completed_amount = sum(
+            (
+                payment.amount
+                for payment in order.payments
+                if payment.status == PaymentStatus.COMPLETED
+            ),
+            Decimal("0"),
+        )
+        if (
+            order.status in zero_total_closeable_statuses
+            and order.total == Decimal("0")
+            and completed_amount == Decimal("0")
+        ):
+            previous_status = order.status.value
+            order.status = OrderStatus.PAID
+            order.paid_at = utcnow()
+            order.version += 1
+            auto_settled_order_ids.append(str(order.id))
+            add_audit_log(
+                db,
+                identity=identity,
+                action="order.zero_total_settled",
+                resource_type="order",
+                resource_id=order.id,
+                previous_value={"status": previous_status, "total": "0.00"},
+                new_value={"status": OrderStatus.PAID.value, "payment_required": False},
+            )
+
     open_orders = [
         order
         for order in orders
@@ -562,6 +597,7 @@ async def close_table_session(
             "table_state": table.state.value,
             "table_version": table.version,
             "order_count": len(orders),
+            "zero_total_order_ids": auto_settled_order_ids,
         },
     )
     await db.commit()

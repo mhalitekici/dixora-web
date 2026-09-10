@@ -82,9 +82,7 @@ async def test_recipe_update_replaces_ingredients_and_returns_enriched_recipe(
 
     recipes_response = await api.client.get("/api/v1/inventory/recipes", headers=headers)
     assert recipes_response.status_code == 200, recipes_response.text
-    recipe = next(
-        item for item in recipes_response.json() if item["product_id"] == burger["id"]
-    )
+    recipe = next(item for item in recipes_response.json() if item["product_id"] == burger["id"])
     assert recipe["product_name"] == "Classic Burger"
     assert Decimal(recipe["yield_quantity"]) == Decimal("2")
 
@@ -93,6 +91,92 @@ async def test_recipe_update_replaces_ingredients_and_returns_enriched_recipe(
     assert ingredients["Burger Bun"]["unit"] == "piece"
     assert Decimal(ingredients["Burger Bun"]["quantity"]) == Decimal("2")
     assert Decimal(ingredients["Burger Sauce"]["quantity"]) == Decimal("35.5")
+
+
+async def test_recipe_units_convert_kg_and_l_and_complimentary_still_consumes_stock(
+    api: ApiContext,
+) -> None:
+    headers = auth_headers(await login(api))
+    resources = await seeded_resources(api, headers)
+
+    async def create_item(name: str, unit: str, opening: str) -> dict:
+        response = await api.client.post(
+            "/api/v1/inventory/items",
+            headers=headers,
+            json={
+                "name": name,
+                "unit": unit,
+                "minimum_stock": "1",
+                "opening_quantity": opening,
+            },
+        )
+        assert response.status_code == 201, response.text
+        return response.json()
+
+    coffee = await create_item("Unit Test Coffee", "kilogram", "3")
+    milk = await create_item("Unit Test Milk", "liter", "12")
+    recipe = await api.client.put(
+        f"/api/v1/inventory/recipes/{resources['burger']['id']}",
+        headers=headers,
+        json={
+            "product_id": resources["burger"]["id"],
+            "yield_quantity": "1",
+            "items": [
+                {"inventory_item_id": coffee["id"], "quantity": "18", "unit": "gram"},
+                {"inventory_item_id": milk["id"], "quantity": "250", "unit": "milliliter"},
+            ],
+        },
+    )
+    assert recipe.status_code == 204, recipe.text
+
+    order_response = await api.client.post(
+        "/api/v1/orders",
+        headers=headers,
+        json={
+            "table_id": resources["tables"][11]["id"],
+            "source": "CASHIER",
+            "items": [{"product_id": resources["burger"]["id"], "quantity": "2"}],
+            "idempotency_key": "unit-conversion-complimentary-order-0001",
+            "auto_accept": False,
+        },
+    )
+    assert order_response.status_code == 201, order_response.text
+    order = order_response.json()
+    complimentary = await api.client.patch(
+        f"/api/v1/orders/{order['id']}/items/{order['items'][0]['id']}",
+        headers=headers,
+        json={
+            "action": "SET_COMPLIMENTARY",
+            "expected_version": order["version"],
+            "idempotency_key": "unit-conversion-complimentary-item-0001",
+            "reason": "Test ikramı",
+        },
+    )
+    assert complimentary.status_code == 200, complimentary.text
+    assert Decimal(complimentary.json()["total"]) == Decimal("0")
+
+    accepted = await api.client.post(
+        f"/api/v1/orders/{order['id']}/accept",
+        headers=headers,
+    )
+    assert accepted.status_code == 200, accepted.text
+    replay = await api.client.post(f"/api/v1/orders/{order['id']}/accept", headers=headers)
+    assert replay.status_code == 200, replay.text
+
+    balances = (await api.client.get("/api/v1/inventory/items", headers=headers)).json()
+    assert Decimal(
+        next(item for item in balances if item["id"] == coffee["id"])["current_stock"]
+    ) == Decimal("2.964")
+    assert Decimal(
+        next(item for item in balances if item["id"] == milk["id"])["current_stock"]
+    ) == Decimal("11.5")
+
+    recipes = (await api.client.get("/api/v1/inventory/recipes", headers=headers)).json()
+    stored = next(item for item in recipes if item["product_id"] == resources["burger"]["id"])
+    assert {ingredient["unit"] for ingredient in stored["ingredients"]} == {
+        "gram",
+        "milliliter",
+    }
 
 
 async def test_stock_movement_is_idempotent_and_enforces_direction(
@@ -137,9 +221,7 @@ async def test_stock_movement_is_idempotent_and_enforces_direction(
 
     movements = await api.client.get("/api/v1/inventory/movements", headers=headers)
     assert movements.status_code == 200, movements.text
-    created_movements = [
-        item for item in movements.json() if item["id"] == created.json()["id"]
-    ]
+    created_movements = [item for item in movements.json() if item["id"] == created.json()["id"]]
     assert len(created_movements) == 1
     assert created_movements[0]["type"] == "PURCHASE"
     assert created_movements[0]["reason"] == "Regression test delivery"

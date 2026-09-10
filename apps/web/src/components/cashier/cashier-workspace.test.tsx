@@ -215,6 +215,14 @@ describe("CashierWorkspace", () => {
     expect(
       screen.getByText("Soğansız olsun, ekstra kızarmış"),
     ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Siparişi yazdır/ }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /Ürün taşı/ }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Hesabı böl")).not.toBeInTheDocument();
+    expect(screen.queryByText("Parçalı ödeme")).not.toBeInTheDocument();
   });
 
   it("exposes one-touch quantity controls and updates the row from the API result", async () => {

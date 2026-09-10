@@ -66,6 +66,16 @@ type PrintJob = {
   payload?: Record<string, unknown>;
 };
 
+type ReceiptHistory = {
+  id: string;
+  order_id: string;
+  business_date: string;
+  daily_number: number;
+  cashier_name?: string | null;
+  print_status: "QUEUED" | "PRINTED" | "REPRINTED";
+  reprint_count: number;
+};
+
 type CashierShift = {
   id: string;
   user_id: string;
@@ -97,12 +107,15 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers: { "Content-Type": "application/json", ...init?.headers },
   });
   const payload = (await response.json().catch(() => null)) as
-    | T
-    | { detail?: string; error?: { message?: string } }
-    | null;
+    T | { detail?: string; error?: { message?: string } } | null;
   if (!response.ok) {
-    const error = payload as { detail?: string; error?: { message?: string } } | null;
-    throw new Error(error?.detail ?? error?.error?.message ?? "İşlem tamamlanamadı.");
+    const error = payload as {
+      detail?: string;
+      error?: { message?: string };
+    } | null;
+    throw new Error(
+      error?.detail ?? error?.error?.message ?? "İşlem tamamlanamadı.",
+    );
   }
   return payload as T;
 }
@@ -112,17 +125,21 @@ function compactId(value: string) {
 }
 
 function statusLabel(status: string) {
-  return {
-    PAID: "Ödendi",
-    VOIDED: "İptal",
-    CANCELLED: "İptal",
-    COMPLETED: "Tamamlandı",
-    PRINTED: "Yazdırıldı",
-    PENDING: "Bekliyor",
-    CLAIMED: "İşleniyor",
-    SENT: "Gönderildi",
-    FAILED: "Hata",
-  }[status] ?? status;
+  return (
+    {
+      PAID: "Ödendi",
+      VOIDED: "İptal",
+      CANCELLED: "İptal",
+      COMPLETED: "Tamamlandı",
+      PRINTED: "Yazdırıldı",
+      REPRINTED: "Tekrar yazdırıldı",
+      QUEUED: "Baskı kuyruğunda",
+      PENDING: "Bekliyor",
+      CLAIMED: "İşleniyor",
+      SENT: "Gönderildi",
+      FAILED: "Hata",
+    }[status] ?? status
+  );
 }
 
 function statusClass(status: string) {
@@ -161,7 +178,10 @@ function OperationQueryState({
         icon={icon}
       />
       {loading ? (
-        <div className="flex min-h-72 items-center justify-center" role="status">
+        <div
+          className="flex min-h-72 items-center justify-center"
+          role="status"
+        >
           <Loader2 className="size-6 animate-spin text-brand" />
           <span className="sr-only">Veriler yükleniyor</span>
         </div>
@@ -198,13 +218,30 @@ export function ClosedOrdersPage() {
     },
     refetchInterval: 30_000,
   });
+  const receiptsQuery = useQuery({
+    queryKey: ["printing", "receipts"],
+    queryFn: () => request<ReceiptHistory[]>("/printing/receipts?limit=300"),
+    refetchInterval: 30_000,
+  });
   const orders = useMemo(() => query.data ?? [], [query.data]);
+  const receiptsByOrder = useMemo(
+    () =>
+      new Map(
+        (receiptsQuery.data ?? []).map((receipt) => [
+          receipt.order_id,
+          receipt,
+        ]),
+      ),
+    [receiptsQuery.data],
+  );
   const filtered = useMemo(() => {
     const needle = search.trim().toLocaleLowerCase("tr-TR");
     return orders.filter((order) => {
       const methodMatch =
         methodFilter === "ALL" ||
-        (order.payments ?? []).some((payment) => payment.method === methodFilter);
+        (order.payments ?? []).some(
+          (payment) => payment.method === methodFilter,
+        );
       if (!methodMatch) return false;
       if (!needle) return true;
       return [
@@ -215,7 +252,9 @@ export function ClosedOrdersPage() {
         ...orderRoomReferences(order),
       ]
         .filter(Boolean)
-        .some((value) => String(value).toLocaleLowerCase("tr-TR").includes(needle));
+        .some((value) =>
+          String(value).toLocaleLowerCase("tr-TR").includes(needle),
+        );
     });
   }, [orders, search, methodFilter]);
   const paidTotal = orders
@@ -231,11 +270,12 @@ export function ClosedOrdersPage() {
           order_id: order.id,
           kind: "REPRINT",
           idempotency_key: `receipt-reprint-${order.id}-${Date.now()}`,
-          payload: { template: "CUSTOMER_RECEIPT", order_id: order.id },
+          payload: { type: "BILL", order_id: order.id },
         }),
       }),
     onSuccess: () => toast.success("Fiş yeniden yazdırma kuyruğuna alındı."),
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Yazdırılamadı."),
+    onError: (error) =>
+      toast.error(error instanceof Error ? error.message : "Yazdırılamadı."),
   });
 
   if (query.isLoading || query.isError) {
@@ -260,15 +300,31 @@ export function ClosedOrdersPage() {
         description="Tahsilatı tamamlanan ve iptal edilen hesapları inceleyin; gerektiğinde fişi yeniden yazdırın."
         icon={History}
         actions={
-          <Button variant="outline" onClick={() => void query.refetch()} disabled={query.isFetching}>
-            <RefreshCw className={cn("size-4", query.isFetching && "animate-spin")} />
+          <Button
+            variant="outline"
+            onClick={() =>
+              void Promise.all([query.refetch(), receiptsQuery.refetch()])
+            }
+            disabled={query.isFetching || receiptsQuery.isFetching}
+          >
+            <RefreshCw
+              className={cn("size-4", query.isFetching && "animate-spin")}
+            />
             Yenile
           </Button>
         }
       />
       <div className="mb-5 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Metric label="Kapanan hesap" value={String(orders.length)} icon={CheckCircle2} />
-        <Metric label="Tahsilat toplamı" value={formatMoney(paidTotal)} icon={CircleDollarSign} />
+        <Metric
+          label="Kapanan hesap"
+          value={String(orders.length)}
+          icon={CheckCircle2}
+        />
+        <Metric
+          label="Tahsilat toplamı"
+          value={formatMoney(paidTotal)}
+          icon={CircleDollarSign}
+        />
         <Metric
           label="Kart / nakit"
           value={`${paymentCount(orders, "CARD")} / ${paymentCount(orders, "CASH")}`}
@@ -283,7 +339,9 @@ export function ClosedOrdersPage() {
       <Card>
         <CardHeader className="border-b">
           <CardTitle>İşlem geçmişi</CardTitle>
-          <CardDescription>En yeni kapanan hesaplar önce gösterilir.</CardDescription>
+          <CardDescription>
+            En yeni kapanan hesaplar önce gösterilir.
+          </CardDescription>
           <div className="mt-3 flex flex-wrap items-center gap-2">
             {METHOD_FILTERS.map((value) => (
               <button
@@ -312,38 +370,63 @@ export function ClosedOrdersPage() {
           </div>
         </CardHeader>
         <CardContent className="divide-y p-0">
-          {filtered.map((order) => (
-            <div
-              key={order.id}
-              className="grid gap-3 px-4 py-4 transition-colors hover:bg-muted/35 sm:grid-cols-[1.2fr_1fr_1fr_auto] sm:items-center"
-            >
-              <div>
-                <p className="font-semibold">{order.table_name ?? order.customer_name ?? compactId(order.id)}</p>
-                <p className="mt-0.5 text-xs text-muted-foreground">
-                  #{compactId(order.id)} · {order.source}
-                </p>
-              </div>
-              <div>
-                <p className="font-semibold">{formatMoney(order.total, order.currency)}</p>
-                <p className="text-xs text-muted-foreground">{paymentSummary(order)}</p>
-              </div>
-              <div>
-                <Badge variant="outline" className={statusClass(order.status)}>
-                  {statusLabel(order.status)}
-                </Badge>
-                <p className="mt-1.5 text-xs text-muted-foreground">{formatDateTime(order.created_at)}</p>
-              </div>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={order.status !== "PAID" || reprint.isPending}
-                onClick={() => reprint.mutate(order)}
+          {filtered.map((order) => {
+            const receipt = receiptsByOrder.get(order.id);
+            return (
+              <div
+                key={order.id}
+                className="grid gap-3 px-4 py-4 transition-colors hover:bg-muted/35 sm:grid-cols-[1.2fr_1fr_1fr_auto] sm:items-center"
               >
-                <Printer className="size-4" />
-                Fiş
-              </Button>
-            </div>
-          ))}
+                <div>
+                  <p className="font-semibold">
+                    {order.table_name ??
+                      order.customer_name ??
+                      compactId(order.id)}
+                  </p>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    {receipt ? `Fiş ${receipt.daily_number} · ` : ""}#
+                    {compactId(order.id)} · {order.source}
+                  </p>
+                </div>
+                <div>
+                  <p className="font-semibold">
+                    {formatMoney(order.total, order.currency)}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {paymentSummary(order)}
+                  </p>
+                </div>
+                <div>
+                  <Badge
+                    variant="outline"
+                    className={statusClass(order.status)}
+                  >
+                    {statusLabel(order.status)}
+                  </Badge>
+                  <p className="mt-1.5 text-xs text-muted-foreground">
+                    {formatDateTime(order.created_at)}
+                  </p>
+                  {receipt ? (
+                    <p className="mt-1 text-xs text-muted-foreground">
+                      {receipt.cashier_name ?? "Kasiyer"} ·{" "}
+                      {receipt.print_status === "REPRINTED"
+                        ? `${receipt.reprint_count} tekrar baskı`
+                        : statusLabel(receipt.print_status)}
+                    </p>
+                  ) : null}
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  disabled={order.status !== "PAID" || reprint.isPending}
+                  onClick={() => reprint.mutate(order)}
+                >
+                  <Printer className="size-4" />
+                  Fiş
+                </Button>
+              </div>
+            );
+          })}
           {filtered.length === 0 ? (
             <div className="px-4 py-14 text-center text-sm text-muted-foreground">
               Aramanızla eşleşen kapanmış sipariş bulunamadı.
@@ -392,14 +475,19 @@ export function CashierShiftPage() {
       await queryClient.invalidateQueries({ queryKey: ["shifts"] });
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Vardiya açılamadı."),
+      toast.error(
+        error instanceof Error ? error.message : "Vardiya açılamadı.",
+      ),
   });
   const closeShift = useMutation({
     mutationFn: () => {
       if (!shift) throw new Error("Açık vardiya bulunamadı.");
       return request<CashierShift>(`/shifts/${shift.id}/close`, {
         method: "POST",
-        body: JSON.stringify({ closing_cash: countedCash, note: closingNote || null }),
+        body: JSON.stringify({
+          closing_cash: countedCash,
+          note: closingNote || null,
+        }),
       });
     },
     onSuccess: async () => {
@@ -409,12 +497,15 @@ export function CashierShiftPage() {
       await queryClient.invalidateQueries({ queryKey: ["shifts"] });
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Vardiya kapatılamadı."),
+      toast.error(
+        error instanceof Error ? error.message : "Vardiya kapatılamadı.",
+      ),
   });
   const handoffShift = useMutation({
     mutationFn: () => {
       if (!shift) throw new Error("Açık vardiya bulunamadı.");
-      if (nextCashierName.trim().length < 2) throw new Error("Devralan kasiyerin adını yazın.");
+      if (nextCashierName.trim().length < 2)
+        throw new Error("Devralan kasiyerin adını yazın.");
       return request<ShiftHandoffResult>(`/shifts/${shift.id}/handoff`, {
         method: "POST",
         body: JSON.stringify({
@@ -436,7 +527,9 @@ export function CashierShiftPage() {
       await queryClient.invalidateQueries({ queryKey: ["shifts"] });
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Vardiya devredilemedi."),
+      toast.error(
+        error instanceof Error ? error.message : "Vardiya devredilemedi.",
+      ),
   });
 
   if (query.isLoading || query.isError) {
@@ -463,7 +556,9 @@ export function CashierShiftPage() {
         actions={
           <Badge
             variant="outline"
-            className={shift ? statusClass("COMPLETED") : statusClass("CANCELLED")}
+            className={
+              shift ? statusClass("COMPLETED") : statusClass("CANCELLED")
+            }
           >
             {shift ? "Vardiya açık" : "Vardiya kapalı"}
           </Badge>
@@ -472,7 +567,11 @@ export function CashierShiftPage() {
       <div className="grid gap-4 lg:grid-cols-[1.15fr_.85fr]">
         <div className="space-y-4">
           <div className="grid gap-3 sm:grid-cols-3">
-            <Metric label="Beklenen nakit" value={formatMoney(expectedCash)} icon={Banknote} />
+            <Metric
+              label="Beklenen nakit"
+              value={formatMoney(expectedCash)}
+              icon={Banknote}
+            />
             <Metric
               label="Kart tahsilatı"
               value={formatMoney(shift?.card_sales ?? 0)}
@@ -500,12 +599,25 @@ export function CashierShiftPage() {
                 label="Açılış bakiyesi"
                 value={formatMoney(shift?.opening_cash)}
               />
-              <ShiftRow label="Nakit tahsilat" value={formatMoney(shift?.cash_sales ?? 0)} />
-              <ShiftRow label="Kart tahsilat" value={formatMoney(shift?.card_sales ?? 0)} />
-              <ShiftRow label="Vardiya durumu" value={shift ? "Açık" : "Kapalı"} />
+              <ShiftRow
+                label="Nakit tahsilat"
+                value={formatMoney(shift?.cash_sales ?? 0)}
+              />
+              <ShiftRow
+                label="Kart tahsilat"
+                value={formatMoney(shift?.card_sales ?? 0)}
+              />
+              <ShiftRow
+                label="Vardiya durumu"
+                value={shift ? "Açık" : "Kapalı"}
+              />
               <ShiftRow
                 label="Kasiyer"
-                value={shift?.cashier_name || session.data?.user.displayName || "Kasa kullanıcısı"}
+                value={
+                  shift?.cashier_name ||
+                  session.data?.user.displayName ||
+                  "Kasa kullanıcısı"
+                }
               />
               {shift?.opening_note ? (
                 <ShiftRow label="Açılış notu" value={shift.opening_note} />
@@ -519,7 +631,11 @@ export function CashierShiftPage() {
         <Card className="h-fit">
           <CardHeader>
             <CardTitle>
-              {shift ? (action === "close" ? "Vardiyayı kapat" : "Vardiyayı devret") : "Yeni vardiya aç"}
+              {shift
+                ? action === "close"
+                  ? "Vardiyayı kapat"
+                  : "Vardiyayı devret"
+                : "Yeni vardiya aç"}
             </CardTitle>
             <CardDescription>
               {shift
@@ -580,7 +696,9 @@ export function CashierShiftPage() {
                       <Input
                         className="mt-2"
                         value={nextCashierName}
-                        onChange={(event) => setNextCashierName(event.target.value)}
+                        onChange={(event) =>
+                          setNextCashierName(event.target.value)
+                        }
                         placeholder="Örn. Zeynep Kaya"
                         autoFocus
                       />
@@ -591,8 +709,12 @@ export function CashierShiftPage() {
                         className="mt-2"
                         inputMode="decimal"
                         value={nextOpeningCash}
-                        onChange={(event) => setNextOpeningCash(event.target.value)}
-                        placeholder={countedCash ? `Varsayılan: ${countedCash}` : "0,00"}
+                        onChange={(event) =>
+                          setNextOpeningCash(event.target.value)
+                        }
+                        placeholder={
+                          countedCash ? `Varsayılan: ${countedCash}` : "0,00"
+                        }
                       />
                     </label>
                   </>
@@ -622,7 +744,11 @@ export function CashierShiftPage() {
                 ) : (
                   <Button
                     className="w-full"
-                    disabled={!countedCash || nextCashierName.trim().length < 2 || handoffShift.isPending}
+                    disabled={
+                      !countedCash ||
+                      nextCashierName.trim().length < 2 ||
+                      handoffShift.isPending
+                    }
                     onClick={() => handoffShift.mutate()}
                   >
                     {handoffShift.isPending ? (
@@ -666,7 +792,11 @@ export function CashierShiftPage() {
                 </label>
                 <Button
                   className="w-full"
-                  disabled={!openingFloat || cashierName.trim().length < 2 || openShift.isPending}
+                  disabled={
+                    !openingFloat ||
+                    cashierName.trim().length < 2 ||
+                    openShift.isPending
+                  }
                   onClick={() => openShift.mutate()}
                 >
                   {openShift.isPending ? (
@@ -679,7 +809,8 @@ export function CashierShiftPage() {
               </>
             )}
             <p className="text-xs leading-5 text-muted-foreground">
-              Vardiya hareketleri kasiyer, şube ve cihaz bilgisiyle denetim kaydına bağlanır.
+              Vardiya hareketleri kasiyer, şube ve cihaz bilgisiyle denetim
+              kaydına bağlanır.
             </p>
           </CardContent>
         </Card>
@@ -687,7 +818,6 @@ export function CashierShiftPage() {
     </div>
   );
 }
-
 
 function Metric({
   label,
@@ -733,7 +863,9 @@ function paymentMethodLabel(method: string) {
 }
 
 function paymentCount(orders: Order[], method: string) {
-  return orders.flatMap((order) => order.payments ?? []).filter((payment) => payment.method === method).length;
+  return orders
+    .flatMap((order) => order.payments ?? [])
+    .filter((payment) => payment.method === method).length;
 }
 
 function paymentTotal(orders: Order[], method: string) {
@@ -747,15 +879,20 @@ function orderRoomReferences(order: Order) {
   return [
     ...new Set(
       (order.payments ?? [])
-        .filter((payment) => payment.method === "ROOM_CHARGE" && payment.reference)
+        .filter(
+          (payment) => payment.method === "ROOM_CHARGE" && payment.reference,
+        )
         .map((payment) => payment.reference as string),
     ),
   ];
 }
 
 function paymentSummary(order: Order) {
-  const methods = [...new Set((order.payments ?? []).map((payment) => payment.method))];
-  if (!methods.length) return order.status === "PAID" ? "Tahsil edildi" : "Tahsilat yok";
+  const methods = [
+    ...new Set((order.payments ?? []).map((payment) => payment.method)),
+  ];
+  if (!methods.length)
+    return order.status === "PAID" ? "Tahsil edildi" : "Tahsilat yok";
   const rooms = orderRoomReferences(order);
   const label = methods.map(paymentMethodLabel).join(" + ");
   return rooms.length ? `${label} · ${rooms.join(", ")}` : label;

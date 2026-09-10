@@ -50,6 +50,8 @@ export interface ReceiptTotals {
 export interface ReceiptMeta {
   /** Short human reference, never a raw internal UUID. */
   reference?: string | null;
+  dailyReceiptNumber?: number | null;
+  businessDate?: string | null;
   tableName?: string | null;
   roomNumber?: string | null;
   guestName?: string | null;

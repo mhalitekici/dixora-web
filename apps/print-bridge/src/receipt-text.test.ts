@@ -113,6 +113,15 @@ test("marks a reprint distinctly from an original", () => {
   assert.match(reprint, /TEKRAR YAZDIRILDI/);
 });
 
+test("prints the branch-local daily receipt number separately from the order reference", () => {
+  const text = renderReceiptText(
+    job({ document: { ...job().document, receiptNumber: 42 } }),
+  );
+
+  assert.match(text, /FİŞ NO:\s+42/);
+  assert.match(text, /Sipariş No:\s+A1042/);
+});
+
 test("marks extra copies as COPY rather than REPRINT", () => {
   const text = renderReceiptText(job({ isReprint: true, copies: 2 }));
 

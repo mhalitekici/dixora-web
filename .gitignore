@@ -57,6 +57,7 @@ Thumbs.db
 .docker/
 .turbo/
 .cache/
+artifacts/
 
 
 # Database dumps contain customer data — never commit them.

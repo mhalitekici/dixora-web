@@ -113,6 +113,8 @@ export interface ReceiptDocument {
   branchName: string;
   stationName: string;
   orderNumber: string;
+  receiptNumber?: number;
+  businessDate?: string;
   tableName?: string;
   waiterName?: string;
   submittedAt: IsoDateTime;

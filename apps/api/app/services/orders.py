@@ -23,6 +23,7 @@ from app.models import (
     KitchenTicket,
     KitchenTicketItem,
     Modifier,
+    ModifierGroup,
     Order,
     OrderItem,
     OrderItemModifier,
@@ -35,6 +36,7 @@ from app.models import (
     Product,
     ProductModifierGroup,
     ProductRecipe,
+    ProductRecipeItem,
     StockBalance,
     StockMovement,
     TableSession,
@@ -64,6 +66,7 @@ from app.schemas import (
     PaymentCreate,
 )
 from app.services.audit import add_audit_log
+from app.services.inventory_units import convert_quantity
 from app.services.loyalty import accrue_paid_order, reverse_order_redemptions
 
 CENT = Decimal("0.01")
@@ -71,6 +74,93 @@ CENT = Decimal("0.01")
 
 def money(value: Decimal) -> Decimal:
     return value.quantize(CENT, rounding=ROUND_HALF_UP)
+
+
+async def _validated_modifier_map(
+    db: AsyncSession,
+    *,
+    tenant_id: UUID,
+    product_ids: set[UUID],
+    items: list[OrderItemInput],
+) -> dict[UUID, Modifier]:
+    """Validate selections against the same catalogue rules for every order source."""
+
+    links = (
+        await db.execute(
+            select(ProductModifierGroup.product_id, ModifierGroup)
+            .join(ModifierGroup, ModifierGroup.id == ProductModifierGroup.modifier_group_id)
+            .where(
+                ProductModifierGroup.tenant_id == tenant_id,
+                ProductModifierGroup.product_id.in_(product_ids),
+                ModifierGroup.tenant_id == tenant_id,
+                ModifierGroup.is_active.is_(True),
+            )
+        )
+    ).all()
+    groups_by_product: dict[UUID, list[ModifierGroup]] = defaultdict(list)
+    for product_id, group in links:
+        groups_by_product[product_id].append(group)
+
+    modifier_ids = {selected.modifier_id for item in items for selected in item.modifiers}
+    modifiers = (
+        (
+            await db.execute(
+                select(Modifier).where(
+                    Modifier.tenant_id == tenant_id,
+                    Modifier.id.in_(modifier_ids),
+                    Modifier.is_active.is_(True),
+                )
+            )
+        )
+        .scalars()
+        .all()
+        if modifier_ids
+        else []
+    )
+    modifier_map = {modifier.id: modifier for modifier in modifiers}
+    if len(modifier_map) != len(modifier_ids):
+        raise DomainError(
+            "modifier_not_found", "One or more modifiers were not found", status_code=404
+        )
+
+    for item in items:
+        selected_by_group: dict[UUID, int] = defaultdict(int)
+        seen: set[UUID] = set()
+        allowed_group_ids = {group.id for group in groups_by_product[item.product_id]}
+        for selected in item.modifiers:
+            if selected.modifier_id in seen:
+                raise DomainError(
+                    "duplicate_modifier",
+                    "A modifier can only be selected once per order line",
+                    status_code=422,
+                )
+            seen.add(selected.modifier_id)
+            modifier = modifier_map[selected.modifier_id]
+            if modifier.group_id not in allowed_group_ids:
+                raise DomainError(
+                    "modifier_not_allowed",
+                    "A selected modifier is not available for this product",
+                    status_code=409,
+                )
+            selected_by_group[modifier.group_id] += selected.quantity
+        for group in groups_by_product[item.product_id]:
+            count = selected_by_group[group.id]
+            minimum = max(group.minimum_selection, 1 if group.is_required else 0)
+            if count < minimum or (
+                group.maximum_selection is not None and count > group.maximum_selection
+            ):
+                raise DomainError(
+                    "invalid_modifier_selection",
+                    "Modifier selections do not satisfy the product rules",
+                    status_code=422,
+                    details={
+                        "group_id": str(group.id),
+                        "minimum": minimum,
+                        "maximum": group.maximum_selection,
+                        "selected": count,
+                    },
+                )
+    return modifier_map
 
 
 def apply_branch_service_charge_snapshot(order: Order, branch: Branch) -> None:
@@ -336,6 +426,7 @@ async def load_order(
             selectinload(Order.items).selectinload(OrderItem.modifiers),
             selectinload(Order.payments),
         )
+        .execution_options(populate_existing=True)
     )
     if lock:
         statement = statement.with_for_update()
@@ -454,6 +545,7 @@ async def create_order(
                 actor_user_id=actor_user_id,
                 items=payload.items,
                 idempotency_key=payload.idempotency_key,
+                auto_accept=payload.auto_accept,
             )
             return order, False
 
@@ -481,51 +573,12 @@ async def create_order(
             status_code=409,
         )
 
-    modifier_ids = {modifier.modifier_id for item in payload.items for modifier in item.modifiers}
-    modifiers = (
-        (
-            await db.execute(
-                select(Modifier).where(
-                    Modifier.tenant_id == tenant_id,
-                    Modifier.id.in_(modifier_ids),
-                    Modifier.is_active.is_(True),
-                )
-            )
-        )
-        .scalars()
-        .all()
-        if modifier_ids
-        else []
+    modifier_map = await _validated_modifier_map(
+        db,
+        tenant_id=tenant_id,
+        product_ids=product_ids,
+        items=payload.items,
     )
-    modifier_map = {modifier.id: modifier for modifier in modifiers}
-    if len(modifier_map) != len(modifier_ids):
-        raise DomainError(
-            "modifier_not_found", "One or more modifiers were not found", status_code=404
-        )
-
-    if modifier_ids:
-        group_links = (
-            await db.execute(
-                select(
-                    ProductModifierGroup.product_id, ProductModifierGroup.modifier_group_id
-                ).where(
-                    ProductModifierGroup.tenant_id == tenant_id,
-                    ProductModifierGroup.product_id.in_(product_ids),
-                )
-            )
-        ).all()
-        allowed_groups: dict[UUID, set[UUID]] = defaultdict(set)
-        for product_id, group_id in group_links:
-            allowed_groups[product_id].add(group_id)
-        for item in payload.items:
-            for selected in item.modifiers:
-                modifier = modifier_map[selected.modifier_id]
-                if modifier.group_id not in allowed_groups[item.product_id]:
-                    raise DomainError(
-                        "modifier_not_allowed",
-                        "A selected modifier is not available for this product",
-                        status_code=409,
-                    )
 
     tenant = await db.get(Tenant, tenant_id)
     if tenant is None:
@@ -633,6 +686,7 @@ async def append_order_items(
     actor_user_id: UUID | None,
     items: list[OrderItemInput],
     idempotency_key: str,
+    auto_accept: bool = True,
 ) -> tuple[Order, bool]:
     operation = (
         await db.execute(
@@ -687,51 +741,12 @@ async def append_order_items(
             "One or more products are unavailable",
             status_code=409,
         )
-    modifier_ids = {selected.modifier_id for item in items for selected in item.modifiers}
-    modifier_map: dict[UUID, Modifier] = {}
-    if modifier_ids:
-        modifiers = (
-            (
-                await db.execute(
-                    select(Modifier).where(
-                        Modifier.tenant_id == tenant_id,
-                        Modifier.id.in_(modifier_ids),
-                        Modifier.is_active.is_(True),
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        modifier_map = {modifier.id: modifier for modifier in modifiers}
-        if len(modifier_map) != len(modifier_ids):
-            raise DomainError(
-                "modifier_not_found",
-                "One or more modifiers were not found",
-                status_code=404,
-            )
-        links = (
-            await db.execute(
-                select(
-                    ProductModifierGroup.product_id,
-                    ProductModifierGroup.modifier_group_id,
-                ).where(
-                    ProductModifierGroup.tenant_id == tenant_id,
-                    ProductModifierGroup.product_id.in_(product_ids),
-                )
-            )
-        ).all()
-        allowed: dict[UUID, set[UUID]] = defaultdict(set)
-        for product_id, group_id in links:
-            allowed[product_id].add(group_id)
-        for item in items:
-            for selected in item.modifiers:
-                if modifier_map[selected.modifier_id].group_id not in allowed[item.product_id]:
-                    raise DomainError(
-                        "modifier_not_allowed",
-                        "A selected modifier is not available for this product",
-                        status_code=409,
-                    )
+    modifier_map = await _validated_modifier_map(
+        db,
+        tenant_id=tenant_id,
+        product_ids=product_ids,
+        items=items,
+    )
 
     station_map = await branch_station_map(
         db,
@@ -792,76 +807,6 @@ async def append_order_items(
     recalculate_order_totals(order)
     await db.flush()
 
-    # Existing movement keys make this safe for every previously accepted item.
-    await _deduct_inventory(db, order=order, actor_user_id=actor_user_id)
-    by_station: dict[UUID, list[OrderItem]] = defaultdict(list)
-    for order_item in new_items:
-        order_item.status = OrderItemStatus.ACCEPTED
-        if order_item.preparation_station_id:
-            by_station[order_item.preparation_station_id].append(order_item)
-    for station_id, station_items in by_station.items():
-        highest_batch = (
-            await db.execute(
-                select(func.coalesce(func.max(KitchenTicket.batch_number), 0)).where(
-                    KitchenTicket.tenant_id == tenant_id,
-                    KitchenTicket.order_id == order.id,
-                    KitchenTicket.preparation_station_id == station_id,
-                )
-            )
-        ).scalar_one()
-        ticket = KitchenTicket(
-            tenant_id=tenant_id,
-            branch_id=order.branch_id,
-            order_id=order.id,
-            preparation_station_id=station_id,
-            batch_number=int(highest_batch) + 1,
-            status=KitchenTicketStatus.NEW,
-        )
-        db.add(ticket)
-        await db.flush()
-        for order_item in station_items:
-            db.add(
-                KitchenTicketItem(
-                    tenant_id=tenant_id,
-                    branch_id=order.branch_id,
-                    ticket_id=ticket.id,
-                    order_item_id=order_item.id,
-                    status=OrderItemStatus.ACCEPTED,
-                )
-            )
-        print_key = f"order-append:{idempotency_key}:station:{station_id}"
-        printer_device_id = await _station_printer_id(
-            db,
-            tenant_id=tenant_id,
-            branch_id=order.branch_id,
-            station_id=station_id,
-        )
-        station = await db.get(PreparationStation, station_id)
-        job_payload = await _build_kitchen_ticket_payload(
-            db,
-            order=order,
-            station=station,
-            items=station_items,
-            actor_user_id=actor_user_id,
-            kind=PrintJobKind.ORIGINAL,
-        )
-        job_payload["ticket_id"] = str(ticket.id)
-        job_payload["batch_number"] = ticket.batch_number
-        job_payload["new_items_only"] = True
-        db.add(
-            PrintJob(
-                tenant_id=tenant_id,
-                branch_id=order.branch_id,
-                preparation_station_id=station_id,
-                printer_device_id=printer_device_id,
-                order_id=order.id,
-                kitchen_ticket_id=ticket.id,
-                payload=job_payload,
-                status=PrintJobStatus.PENDING,
-                kind=PrintJobKind.ORIGINAL,
-                idempotency_key=print_key,
-            )
-        )
     operation = OrderOperation(
         tenant_id=tenant_id,
         branch_id=order.branch_id,
@@ -872,15 +817,22 @@ async def append_order_items(
         result={"item_ids": [str(item.id) for item in new_items]},
     )
     db.add(operation)
-    order.status = OrderStatus.ACCEPTED
     order.version += 1
     operation.result["order_version"] = order.version
-    if order.table_session_id:
+    if auto_accept:
+        await _send_items_to_preparation(
+            db,
+            order=order,
+            items=new_items,
+            actor_user_id=actor_user_id,
+            require_configured_printer=False,
+        )
+    elif order.table_session_id:
         table_session = await db.get(TableSession, order.table_session_id)
         if table_session:
             table = await db.get(DiningTable, table_session.table_id)
             if table:
-                table.state = TableState.PREPARING
+                table.state = TableState.ORDER_PENDING
                 table.version += 1
     await db.flush()
     return await load_order(db, tenant_id, order.id), False
@@ -1171,6 +1123,12 @@ async def remove_unprinted_order_item(
     item.line_total = Decimal("0.00")
     recalculate_order_totals(order)
     order.version += 1
+    if all(
+        candidate.status in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}
+        for candidate in order.items
+    ):
+        order.status = OrderStatus.VOIDED
+        await _release_table_if_no_open_checks(db, order)
     after = _item_snapshot(item)
     db.add(
         OrderOperation(
@@ -1207,6 +1165,7 @@ async def _deduct_inventory(
     db: AsyncSession,
     *,
     order: Order,
+    items: list[OrderItem],
     actor_user_id: UUID | None,
 ) -> None:
     tenant = await db.get(Tenant, order.tenant_id)
@@ -1222,7 +1181,7 @@ async def _deduct_inventory(
         )
     ).scalar_one_or_none()
 
-    for order_item in order.items:
+    for order_item in items:
         product = await db.get(Product, order_item.product_id)
         if product is None or not product.track_inventory:
             continue
@@ -1235,7 +1194,9 @@ async def _deduct_inventory(
                     ProductRecipe.product_id == order_item.product_id,
                     ProductRecipe.is_active.is_(True),
                 )
-                .options(selectinload(ProductRecipe.items))
+                .options(
+                    selectinload(ProductRecipe.items).selectinload(ProductRecipeItem.inventory_item)
+                )
             )
         ).scalar_one_or_none()
         if recipe is None:
@@ -1264,9 +1225,12 @@ async def _deduct_inventory(
             ).scalar_one_or_none()
             if existing is not None:
                 continue
-            required = (
-                recipe_item.quantity * order_item.quantity / recipe.yield_quantity
-            ).quantize(Decimal("0.000001"))
+            recipe_usage = recipe_item.quantity * order_item.quantity / recipe.yield_quantity
+            required = convert_quantity(
+                recipe_usage,
+                source_unit=recipe_item.unit,
+                target_unit=recipe_item.inventory_item.unit,
+            )
             balance = (
                 await db.execute(
                     select(StockBalance)
@@ -1312,116 +1276,114 @@ async def _deduct_inventory(
             )
 
 
-async def accept_order(
+async def _send_items_to_preparation(
     db: AsyncSession,
-    order: Order,
     *,
+    order: Order,
+    items: list[OrderItem],
     actor_user_id: UUID | None,
-) -> Order:
-    if order.status in {
-        OrderStatus.ACCEPTED,
-        OrderStatus.PREPARING,
-        OrderStatus.PARTIALLY_READY,
-        OrderStatus.READY,
-        OrderStatus.SERVED,
-        OrderStatus.BILL_REQUESTED,
-        OrderStatus.PAYMENT_PENDING,
-        OrderStatus.PAID,
-    }:
-        return order
-    if order.status not in {OrderStatus.SUBMITTED, OrderStatus.AWAITING_APPROVAL}:
-        raise DomainError(
-            "invalid_order_transition",
-            f"Order cannot be accepted from {order.status.value}",
-            status_code=409,
-        )
-    await _deduct_inventory(db, order=order, actor_user_id=actor_user_id)
+    require_configured_printer: bool,
+) -> list[UUID]:
     tickets_by_station: dict[UUID, list[OrderItem]] = defaultdict(list)
-    for item in order.items:
-        item.status = OrderItemStatus.ACCEPTED
+    for item in items:
         if item.preparation_station_id is not None:
             tickets_by_station[item.preparation_station_id].append(item)
-    for station_id, items in tickets_by_station.items():
-        ticket = (
+    station_context: dict[UUID, tuple[PreparationStation | None, UUID | None]] = {}
+    for station_id in tickets_by_station:
+        station = await db.get(PreparationStation, station_id)
+        printer_device_id = await _station_printer_id(
+            db,
+            tenant_id=order.tenant_id,
+            branch_id=order.branch_id,
+            station_id=station_id,
+        )
+        if require_configured_printer and printer_device_id is None:
+            raise DomainError(
+                "preparation_printer_not_configured",
+                f"{station.name if station else 'Preparation station'} printer is not configured",
+                status_code=409,
+                details={
+                    "station_id": str(station_id),
+                    "station_name": station.name if station else None,
+                },
+            )
+        station_context[station_id] = (station, printer_device_id)
+
+    await _deduct_inventory(
+        db,
+        order=order,
+        items=items,
+        actor_user_id=actor_user_id,
+    )
+    now = datetime.now(UTC)
+    for item in items:
+        if item.status == OrderItemStatus.DRAFT:
+            item.submitted_at = now
+        item.status = OrderItemStatus.ACCEPTED
+
+    for station_id, station_items in tickets_by_station.items():
+        highest_batch = (
             await db.execute(
-                select(KitchenTicket).where(
+                select(func.coalesce(func.max(KitchenTicket.batch_number), 0)).where(
                     KitchenTicket.tenant_id == order.tenant_id,
                     KitchenTicket.order_id == order.id,
                     KitchenTicket.preparation_station_id == station_id,
                 )
             )
-        ).scalar_one_or_none()
-        if ticket is None:
-            ticket = KitchenTicket(
-                tenant_id=order.tenant_id,
-                branch_id=order.branch_id,
-                order_id=order.id,
-                preparation_station_id=station_id,
-                status=KitchenTicketStatus.NEW,
-            )
-            db.add(ticket)
-            await db.flush()
-        for item in items:
-            existing_item = (
-                await db.execute(
-                    select(KitchenTicketItem.id).where(
-                        KitchenTicketItem.ticket_id == ticket.id,
-                        KitchenTicketItem.order_item_id == item.id,
-                    )
-                )
-            ).scalar_one_or_none()
-            if existing_item is None:
-                db.add(
-                    KitchenTicketItem(
-                        tenant_id=order.tenant_id,
-                        branch_id=order.branch_id,
-                        ticket_id=ticket.id,
-                        order_item_id=item.id,
-                        status=OrderItemStatus.ACCEPTED,
-                    )
-                )
-        print_key = f"kitchen-ticket:{ticket.id}:original"
-        existing_job = (
-            await db.execute(
-                select(PrintJob.id).where(
-                    PrintJob.tenant_id == order.tenant_id,
-                    PrintJob.idempotency_key == print_key,
-                )
-            )
-        ).scalar_one_or_none()
-        if existing_job is None:
-            printer_device_id = await _station_printer_id(
-                db,
-                tenant_id=order.tenant_id,
-                branch_id=order.branch_id,
-                station_id=station_id,
-            )
-            station = await db.get(PreparationStation, station_id)
-            job_payload = await _build_kitchen_ticket_payload(
-                db,
-                order=order,
-                station=station,
-                items=items,
-                actor_user_id=actor_user_id,
-                kind=PrintJobKind.ORIGINAL,
-            )
-            job_payload["ticket_id"] = str(ticket.id)
+        ).scalar_one()
+        ticket = KitchenTicket(
+            tenant_id=order.tenant_id,
+            branch_id=order.branch_id,
+            order_id=order.id,
+            preparation_station_id=station_id,
+            batch_number=int(highest_batch) + 1,
+            status=KitchenTicketStatus.NEW,
+        )
+        db.add(ticket)
+        await db.flush()
+        for item in station_items:
             db.add(
-                PrintJob(
+                KitchenTicketItem(
                     tenant_id=order.tenant_id,
                     branch_id=order.branch_id,
-                    preparation_station_id=station_id,
-                    printer_device_id=printer_device_id,
-                    order_id=order.id,
-                    kitchen_ticket_id=ticket.id,
-                    payload=job_payload,
-                    status=PrintJobStatus.PENDING,
-                    kind=PrintJobKind.ORIGINAL,
-                    idempotency_key=print_key,
+                    ticket_id=ticket.id,
+                    order_item_id=item.id,
+                    status=OrderItemStatus.ACCEPTED,
                 )
             )
-    order.status = OrderStatus.ACCEPTED
-    order.accepted_at = datetime.now(UTC)
+        station, printer_device_id = station_context[station_id]
+        job_payload = await _build_kitchen_ticket_payload(
+            db,
+            order=order,
+            station=station,
+            items=station_items,
+            actor_user_id=actor_user_id,
+            kind=PrintJobKind.ORIGINAL,
+        )
+        job_payload["ticket_id"] = str(ticket.id)
+        job_payload["batch_number"] = ticket.batch_number
+        job_payload["new_items_only"] = True
+        db.add(
+            PrintJob(
+                tenant_id=order.tenant_id,
+                branch_id=order.branch_id,
+                preparation_station_id=station_id,
+                printer_device_id=printer_device_id,
+                order_id=order.id,
+                kitchen_ticket_id=ticket.id,
+                payload=job_payload,
+                status=PrintJobStatus.PENDING,
+                kind=PrintJobKind.ORIGINAL,
+                idempotency_key=f"kitchen-ticket:{ticket.id}:original",
+            )
+        )
+
+    order.status = (
+        OrderStatus.PREPARING
+        if order.status in {OrderStatus.PREPARING, OrderStatus.PARTIALLY_READY}
+        else OrderStatus.ACCEPTED
+    )
+    order.accepted_at = order.accepted_at or now
     order.version += 1
     if order.table_session_id:
         table_session = await db.get(TableSession, order.table_session_id)
@@ -1431,7 +1393,56 @@ async def accept_order(
                 table.state = TableState.PREPARING
                 table.version += 1
     await db.flush()
-    return order
+    return [item.id for item in items]
+
+
+async def accept_order(
+    db: AsyncSession,
+    order: Order,
+    *,
+    actor_user_id: UUID | None,
+    require_configured_printer: bool = False,
+) -> list[UUID]:
+    if order.status in {
+        OrderStatus.BILL_REQUESTED,
+        OrderStatus.PAYMENT_PENDING,
+        OrderStatus.PAID,
+        OrderStatus.CANCELLED,
+        OrderStatus.VOIDED,
+    }:
+        raise DomainError(
+            "invalid_order_transition",
+            f"Order cannot be sent to preparation from {order.status.value}",
+            status_code=409,
+        )
+    if order.status not in {
+        OrderStatus.SUBMITTED,
+        OrderStatus.AWAITING_APPROVAL,
+        OrderStatus.ACCEPTED,
+        OrderStatus.PREPARING,
+        OrderStatus.PARTIALLY_READY,
+        OrderStatus.READY,
+        OrderStatus.SERVED,
+    }:
+        raise DomainError(
+            "invalid_order_transition",
+            f"Order cannot be accepted from {order.status.value}",
+            status_code=409,
+        )
+    pending_items = [
+        item
+        for item in order.items
+        if item.status in {OrderItemStatus.DRAFT, OrderItemStatus.SUBMITTED}
+    ]
+    if not pending_items:
+        return []
+    return await _send_items_to_preparation(
+        db,
+        order=order,
+        items=pending_items,
+        actor_user_id=actor_user_id,
+        require_configured_printer=require_configured_printer,
+    )
 
 
 async def mark_order_bill_requested(db: AsyncSession, *, order: Order) -> Order:
@@ -1960,7 +1971,7 @@ async def merge_table_order(
         clone = OrderItem(
             tenant_id=item.tenant_id,
             branch_id=item.branch_id,
-            order_id=destination_order.id,
+            order=destination_order,
             product_id=item.product_id,
             preparation_station_id=item.preparation_station_id,
             product_name_snapshot=item.product_name_snapshot,
@@ -2247,8 +2258,29 @@ async def transfer_order_items(
         destination_order = await load_order(
             db, source_order.tenant_id, destination_order_id, lock=True
         )
+        destination_paid_count = (
+            await db.execute(
+                select(func.count(Payment.id)).where(
+                    Payment.tenant_id == source_order.tenant_id,
+                    Payment.order_id == destination_order.id,
+                    Payment.status == PaymentStatus.COMPLETED,
+                )
+            )
+        ).scalar_one()
+        if destination_paid_count or destination_order.discount_total:
+            raise DomainError(
+                "item_transfer_financial_conflict",
+                "Orders with payments or discounts cannot receive transferred items",
+                status_code=409,
+            )
 
     requested = {line.item_id: line.quantity for line in items}
+    if len(requested) != len(items):
+        raise DomainError(
+            "duplicate_transfer_item",
+            "Each order item can only be selected once",
+            status_code=422,
+        )
     selected_items = [item for item in source_order.items if item.id in requested]
     if len(selected_items) != len(requested):
         raise DomainError(
@@ -2257,6 +2289,7 @@ async def transfer_order_items(
 
     transferred_total = Decimal("0.00")
     transferred_lines: list[dict[str, str]] = []
+    transferred_items: list[tuple[OrderItem, OrderItem]] = []
     for item in selected_items:
         if item.status in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}:
             raise DomainError(
@@ -2272,6 +2305,16 @@ async def transfer_order_items(
                 status_code=409,
             )
         line_total = Decimal("0.00") if item.is_complimentary else money(item.unit_price * quantity)
+        cloned_modifiers = [
+            OrderItemModifier(
+                tenant_id=modifier.tenant_id,
+                modifier_id=modifier.modifier_id,
+                name_snapshot=modifier.name_snapshot,
+                price_delta_snapshot=modifier.price_delta_snapshot,
+                quantity=modifier.quantity,
+            )
+            for modifier in item.modifiers
+        ]
         clone = OrderItem(
             tenant_id=item.tenant_id,
             branch_id=item.branch_id,
@@ -2291,20 +2334,11 @@ async def transfer_order_items(
             status=item.status,
             note=item.note,
             submitted_at=item.submitted_at,
+            modifiers=cloned_modifiers,
         )
         db.add(clone)
         await db.flush()
-        for modifier in item.modifiers:
-            db.add(
-                OrderItemModifier(
-                    tenant_id=modifier.tenant_id,
-                    order_item_id=clone.id,
-                    modifier_id=modifier.modifier_id,
-                    name_snapshot=modifier.name_snapshot,
-                    price_delta_snapshot=modifier.price_delta_snapshot,
-                    quantity=modifier.quantity,
-                )
-            )
+        transferred_items.append((item, clone))
         if quantity == item.quantity:
             item.status = OrderItemStatus.VOIDED
         else:
@@ -2327,8 +2361,25 @@ async def transfer_order_items(
     ):
         source_order.status = OrderStatus.VOIDED
         await _release_table_if_no_open_checks(db, source_order)
-    destination_table.state = TableState.PREPARING
+    destination_table.state = (
+        TableState.ORDER_PENDING
+        if any(
+            clone.status in {OrderItemStatus.DRAFT, OrderItemStatus.SUBMITTED}
+            for _, clone in transferred_items
+        )
+        else TableState.PREPARING
+    )
     destination_table.version += 1
+    await _queue_item_transfer_prints(
+        db,
+        source_order=source_order,
+        destination_order=destination_order,
+        source_table_name=source_order.table_name,
+        destination_table_name=destination_table.name,
+        transferred_items=transferred_items,
+        actor_user_id=identity.user_id,
+        idempotency_key=idempotency_key,
+    )
     db.add(
         OrderOperation(
             tenant_id=source_order.tenant_id,
@@ -2363,6 +2414,79 @@ async def transfer_order_items(
         await load_order(db, source_order.tenant_id, source_order.id),
         await load_order(db, source_order.tenant_id, destination_order.id),
     )
+
+
+async def _queue_item_transfer_prints(
+    db: AsyncSession,
+    *,
+    source_order: Order,
+    destination_order: Order,
+    source_table_name: str | None,
+    destination_table_name: str,
+    transferred_items: list[tuple[OrderItem, OrderItem]],
+    actor_user_id: UUID | None,
+    idempotency_key: str,
+) -> None:
+    """Notify stations about already-routed lines without producing another ORIGINAL."""
+
+    source_item_ids = [source.id for source, _ in transferred_items]
+    printed_source_ids = set(
+        (
+            await db.execute(
+                select(KitchenTicketItem.order_item_id).where(
+                    KitchenTicketItem.tenant_id == source_order.tenant_id,
+                    KitchenTicketItem.order_item_id.in_(source_item_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    by_station: dict[UUID, list[OrderItem]] = defaultdict(list)
+    for source, clone in transferred_items:
+        if source.id in printed_source_ids and clone.preparation_station_id is not None:
+            by_station[clone.preparation_station_id].append(clone)
+
+    for station_id, station_items in by_station.items():
+        station = await db.get(PreparationStation, station_id)
+        if station is None:
+            continue
+        payload = await _build_kitchen_ticket_payload(
+            db,
+            order=destination_order,
+            station=station,
+            items=station_items,
+            actor_user_id=actor_user_id,
+            kind=PrintJobKind.COPY,
+        )
+        document = cast(dict[str, object], payload["document"])
+        document["title"] = "MASA DEĞİŞİKLİĞİ"
+        document["footer"] = [f"{source_table_name or 'Kaynak masa'} → {destination_table_name}"]
+        payload["transfer"] = {
+            "source_order_id": str(source_order.id),
+            "destination_order_id": str(destination_order.id),
+            "source_table_name": source_table_name,
+            "destination_table_name": destination_table_name,
+        }
+        printer_device_id = await _station_printer_id(
+            db,
+            tenant_id=source_order.tenant_id,
+            branch_id=source_order.branch_id,
+            station_id=station_id,
+        )
+        db.add(
+            PrintJob(
+                tenant_id=source_order.tenant_id,
+                branch_id=source_order.branch_id,
+                preparation_station_id=station_id,
+                printer_device_id=printer_device_id,
+                order_id=destination_order.id,
+                payload=payload,
+                status=PrintJobStatus.PENDING,
+                kind=PrintJobKind.COPY,
+                idempotency_key=f"item-transfer:{idempotency_key}:station:{station_id}",
+            )
+        )
 
 
 async def plan_amount_split(
@@ -2549,60 +2673,11 @@ async def approve_cancellation(
         order_item_ids={item.id for item in target_items},
     )
     for item in target_items:
-        movements = (
-            (
-                await db.execute(
-                    select(StockMovement).where(
-                        StockMovement.tenant_id == order.tenant_id,
-                        StockMovement.order_item_id == item.id,
-                        StockMovement.movement_type == StockMovementType.SALE,
-                    )
-                )
-            )
-            .scalars()
-            .all()
-        )
-        for movement in movements:
-            reversal_key = f"cancellation:{approval.id}:movement:{movement.id}"
-            reversal_exists = (
-                await db.execute(
-                    select(StockMovement.id).where(
-                        StockMovement.tenant_id == order.tenant_id,
-                        StockMovement.idempotency_key == reversal_key,
-                    )
-                )
-            ).scalar_one_or_none()
-            if reversal_exists:
-                continue
-            balance = (
-                await db.execute(
-                    select(StockBalance)
-                    .where(
-                        StockBalance.tenant_id == order.tenant_id,
-                        StockBalance.inventory_item_id == movement.inventory_item_id,
-                        StockBalance.location_id == movement.location_id,
-                    )
-                    .with_for_update()
-                )
-            ).scalar_one()
-            quantity = -movement.quantity_delta
-            balance.quantity += quantity
-            balance.version += 1
-            db.add(
-                StockMovement(
-                    tenant_id=order.tenant_id,
-                    branch_id=order.branch_id,
-                    inventory_item_id=movement.inventory_item_id,
-                    location_id=movement.location_id,
-                    order_item_id=item.id,
-                    actor_user_id=identity.user_id,
-                    movement_type=StockMovementType.RETURN,
-                    quantity_delta=quantity,
-                    balance_after=balance.quantity,
-                    reason=approval.reason,
-                    idempotency_key=reversal_key,
-                )
-            )
+        # Acceptance/send-to-preparation is the physical consumption boundary.
+        # Once a line has crossed it, a later cancellation must not silently put
+        # ingredients back on the shelf. Draft/submitted lines have no sale
+        # movement in the deferred cashier flow, so cancelling them is naturally
+        # stock-neutral without a second waste subsystem.
         item.status = (
             OrderItemStatus.CANCELLED
             if approval.approval_type == ApprovalType.ITEM_CANCELLATION
