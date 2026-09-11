@@ -58,7 +58,9 @@ export function CashierModifierDialog({
         invalid.minimum_selection,
         invalid.is_required ? 1 : 0,
       );
-      setError(`${invalid.name} grubundan en az ${minimum} seçim yapın.`);
+      setError(
+        `Lütfen ${invalid.name} seçeneğinden en az ${minimum} seçim yapın.`,
+      );
       return;
     }
     onConfirm(options.map((option) => option.id));
