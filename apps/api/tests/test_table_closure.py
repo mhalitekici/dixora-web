@@ -71,6 +71,17 @@ async def test_cashier_closes_only_the_exact_fully_settled_table_session(
     assert waiter_close.status_code == 403
     assert waiter_close.json()["error"]["code"] == "permission_denied"
 
+    opened_shift = await api.client.post(
+        "/api/v1/shifts/open",
+        headers=headers,
+        json={
+            "username": "cashier@dixora.test",
+            "pin": "1357",
+            "opening_cash": "0.00",
+        },
+    )
+    assert opened_shift.status_code == 201, opened_shift.text
+
     payment = await api.client.post(
         f"/api/v1/orders/{order['id']}/payments",
         headers=headers,

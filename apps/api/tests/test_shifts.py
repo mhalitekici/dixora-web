@@ -1,327 +1,338 @@
 from __future__ import annotations
 
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import select
 
-from app.models import Role, User
+from app.models import AuditLog, Branch, Payment, Role, User
 from app.security import hash_password
+from app.services.cashier_reconciliation import business_window
 from tests.conftest import ApiContext, auth_headers, login, seeded_resources
 from tests.test_orders import _create_burger_order
-from tests.test_tenant_isolation import _create_tenant_b
+
+CASHIER = {"username": "cashier@dixora.test", "pin": "1357"}
 
 
-async def _create_second_cashier(api: ApiContext, tenant_id: UUID, branch_id: UUID) -> dict:
+def test_business_window_uses_branch_timezone_not_server_utc() -> None:
+    business_date, start, end = business_window("Europe/Istanbul", date(2026, 9, 10))
+    assert business_date == date(2026, 9, 10)
+    assert start == datetime(2026, 9, 9, 21, 0, tzinfo=UTC)
+    assert end.date() == date(2026, 9, 10)
+
+
+async def _cashier_headers(api: ApiContext) -> dict[str, str]:
+    return auth_headers(await login(api, username=CASHIER["username"]))
+
+
+async def _manager_pin(api: ApiContext, pin: str = "8642") -> None:
     async with api.database.session_factory() as db:
-        role = (
-            await db.execute(
-                select(Role).where(Role.tenant_id == tenant_id, Role.code == "CASHIER")
-            )
+        manager = (
+            await db.execute(select(User).where(User.username == "manager@dixora.test"))
         ).scalar_one()
-        user = User(
-            tenant_id=tenant_id,
-            branch_id=branch_id,
-            role_id=role.id,
-            username="cashier2@dixora.test",
-            email="cashier2@dixora.test",
-            display_name="İkinci Kasiyer",
-            password_hash=hash_password("Cashier2!2026"),
-        )
-        db.add(user)
+        manager.pin_hash = hash_password(pin)
         await db.commit()
-        await db.refresh(user)
-        return {
-            "id": str(user.id),
-            "username": user.username,
-            "password": "Cashier2!2026",
-            "display_name": user.display_name,
-        }
 
 
-async def test_cashier_shift_open_current_close_and_history(api: ApiContext) -> None:
-    cashier = await login(api, username="cashier@dixora.test")
-    headers = auth_headers(cashier)
-    opened = await api.client.post(
+async def _open(api: ApiContext, headers: dict[str, str], amount: str = "0.00") -> dict:
+    response = await api.client.post(
         "/api/v1/shifts/open",
         headers=headers,
-        json={"cashier_name": "Ahmet", "opening_cash": "500.00", "note": "Kasa sayıldı"},
+        json={**CASHIER, "opening_cash": amount, "note": "Sayım tamam"},
     )
-    assert opened.status_code == 201, opened.text
-    assert opened.json()["cashier_name"] == "Ahmet"
-    assert opened.json()["opening_note"] == "Kasa sayıldı"
-    current = await api.client.get("/api/v1/shifts/current", headers=headers)
-    assert current.status_code == 200
-    assert current.json()["id"] == opened.json()["id"]
-    closed = await api.client.post(
-        f"/api/v1/shifts/{opened.json()['id']}/close",
-        headers=headers,
-        json={"closing_cash": "500.00", "note": "Balanced"},
-    )
-    assert closed.status_code == 200, closed.text
-    assert closed.json()["status"] == "CLOSED"
-    assert closed.json()["cash_variance"] == "0.00"
-    history = await api.client.get("/api/v1/shifts/history", headers=headers)
-    assert history.status_code == 200
-    assert history.json()[0]["id"] == opened.json()["id"]
+    assert response.status_code == 201, response.text
+    return response.json()
 
 
-async def test_shift_open_requires_a_cashier_name(api: ApiContext) -> None:
-    cashier = await login(api, username="cashier@dixora.test")
-    headers = auth_headers(cashier)
-    missing_name = await api.client.post(
-        "/api/v1/shifts/open", headers=headers, json={"opening_cash": "100.00"}
-    )
-    assert missing_name.status_code == 422
-    blank_name = await api.client.post(
-        "/api/v1/shifts/open",
-        headers=headers,
-        json={"cashier_name": "A", "opening_cash": "100.00"},
-    )
-    assert blank_name.status_code == 422
-
-
-async def test_shift_cannot_open_twice_for_same_cashier(api: ApiContext) -> None:
-    cashier = await login(api, username="cashier@dixora.test")
-    headers = auth_headers(cashier)
-    first = await api.client.post(
-        "/api/v1/shifts/open",
-        headers=headers,
-        json={"cashier_name": "Ahmet", "opening_cash": "100.00"},
-    )
-    assert first.status_code == 201, first.text
-    conflict = await api.client.post(
-        "/api/v1/shifts/open",
-        headers=headers,
-        json={"cashier_name": "Ahmet", "opening_cash": "50.00"},
-    )
-    assert conflict.status_code == 409
-    assert conflict.json()["error"]["code"] == "shift_already_open"
-
-
-async def test_shift_close_is_idempotent_and_does_not_recompute(api: ApiContext) -> None:
-    cashier = await login(api, username="cashier@dixora.test")
-    headers = auth_headers(cashier)
-    opened = await api.client.post(
-        "/api/v1/shifts/open",
-        headers=headers,
-        json={"cashier_name": "Ahmet", "opening_cash": "200.00"},
-    )
-    shift_id = opened.json()["id"]
-    first_close = await api.client.post(
+async def _close(
+    api: ApiContext,
+    headers: dict[str, str],
+    shift_id: str,
+    amount: str,
+    card: str | None = None,
+) -> dict:
+    payload = {**CASHIER, "closing_cash": amount, "note": "Kapanış sayımı"}
+    if card is not None:
+        payload["reported_card_total"] = card
+    response = await api.client.post(
         f"/api/v1/shifts/{shift_id}/close",
         headers=headers,
-        json={"closing_cash": "200.00", "note": "First close"},
+        json=payload,
     )
-    assert first_close.status_code == 200, first_close.text
-    second_close = await api.client.post(
-        f"/api/v1/shifts/{shift_id}/close",
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+async def test_staff_pin_verification_enforces_credentials_status_branch_and_permission(
+    api: ApiContext,
+) -> None:
+    headers = await _cashier_headers(api)
+    valid = await api.client.post("/api/v1/shifts/verify", headers=headers, json=CASHIER)
+    assert valid.status_code == 200
+    assert valid.json()["display_name"] == "Kasa Kullanıcısı"
+
+    wrong = await api.client.post(
+        "/api/v1/shifts/verify", headers=headers, json={**CASHIER, "pin": "9999"}
+    )
+    assert wrong.status_code == 401
+    waiter = await api.client.post(
+        "/api/v1/shifts/verify",
         headers=headers,
-        # Different payload — must NOT be applied since the shift is already closed.
-        json={"closing_cash": "999.00", "note": "Should not apply"},
+        json={"username": "waiter@dixora.test", "pin": "2468"},
     )
-    assert second_close.status_code == 200, second_close.text
-    assert second_close.json()["closing_cash"] == "200.00"
-    assert second_close.json()["closing_note"] == "First close"
+    assert waiter.status_code == 403
+    assert waiter.json()["error"]["code"] == "staff_permission_required"
+
+    async with api.database.session_factory() as db:
+        cashier = (
+            await db.execute(select(User).where(User.username == CASHIER["username"]))
+        ).scalar_one()
+        cashier.is_active = False
+        await db.commit()
+    disabled = await api.client.post("/api/v1/shifts/verify", headers=headers, json=CASHIER)
+    assert disabled.status_code == 401
 
 
-async def test_shift_expected_cash_and_counted_cash_variance(api: ApiContext) -> None:
-    cashier = await login(api, username="cashier@dixora.test")
-    headers = auth_headers(cashier)
+async def test_shift_open_allows_zero_prevents_duplicates_and_audits(api: ApiContext) -> None:
+    headers = await _cashier_headers(api)
+    opened = await _open(api, headers)
+    assert opened["opening_cash"] == "0.00"
+    assert opened["cashier_name"] == "Kasa Kullanıcısı"
+    assert opened["opened_by_user_id"] == opened["user_id"]
+    duplicate = await api.client.post(
+        "/api/v1/shifts/open", headers=headers, json={**CASHIER, "opening_cash": "10.00"}
+    )
+    assert duplicate.status_code == 409
+    async with api.database.session_factory() as db:
+        audit = (
+            await db.execute(select(AuditLog).where(AuditLog.action == "shift.opened"))
+        ).scalar_one()
+        assert audit.new_value["cashier_user_id"] == opened["user_id"]
+
+
+async def test_cashier_payment_requires_and_is_attributed_to_current_shift(api: ApiContext) -> None:
+    headers = await _cashier_headers(api)
     resources = await seeded_resources(api, headers)
-    opened = await api.client.post(
-        "/api/v1/shifts/open",
-        headers=headers,
-        json={"cashier_name": "Ahmet", "opening_cash": "1500.00"},
-    )
-    assert opened.status_code == 201, opened.text
-
     order = await _create_burger_order(
         api,
         headers,
         table_id=resources["tables"][11]["id"],
         product_id=resources["burger"]["id"],
-        key="shift-cash-order-key-0001",
+        key="shift-required-order-0001",
     )
-    cash_payment = await api.client.post(
+    blocked = await api.client.post(
         f"/api/v1/orders/{order['id']}/payments",
         headers=headers,
-        json={"method": "CASH", "amount": "200.00", "idempotency_key": "shift-pay-cash-0001"},
+        json={"method": "CASH", "amount": "10.00", "idempotency_key": "shift-required-pay-0001"},
     )
-    assert cash_payment.status_code == 201, cash_payment.text
-    card_payment = await api.client.post(
+    assert blocked.status_code == 409
+    shift = await _open(api, headers, "100.00")
+    paid = await api.client.post(
         f"/api/v1/orders/{order['id']}/payments",
         headers=headers,
-        json={"method": "CARD", "amount": "160.00", "idempotency_key": "shift-pay-card-0001"},
+        json={"method": "CASH", "amount": "10.01", "idempotency_key": "shift-attached-pay-0001"},
     )
-    assert card_payment.status_code == 201, card_payment.text
+    assert paid.status_code == 201, paid.text
+    assert paid.json()["shift_id"] == shift["id"]
+    async with api.database.session_factory() as db:
+        payment = await db.get(Payment, UUID(paid.json()["id"]))
+        assert payment is not None and payment.branch_id == UUID(shift["branch_id"])
 
-    # Expected cash = opening (1500) + cash sales (200) = 1700; count 1650 -> variance -50.
-    closed = await api.client.post(
-        f"/api/v1/shifts/{opened.json()['id']}/close",
+
+async def test_shift_expected_cash_refunds_and_decimal_variance(api: ApiContext) -> None:
+    headers = await _cashier_headers(api)
+    resources = await seeded_resources(api, headers)
+    shift = await _open(api, headers, "1500.10")
+    order = await _create_burger_order(
+        api,
+        headers,
+        table_id=resources["tables"][11]["id"],
+        product_id=resources["burger"]["id"],
+        key="shift-totals-order-0001",
+    )
+    cash = await api.client.post(
+        f"/api/v1/orders/{order['id']}/payments",
         headers=headers,
-        json={"closing_cash": "1650.00", "note": "50 TL eksik"},
+        json={"method": "CASH", "amount": "200.05", "idempotency_key": "shift-cash-pay-0001"},
     )
-    assert closed.status_code == 200, closed.text
-    body = closed.json()
-    assert Decimal(body["cash_sales"]) == Decimal("200.00")
-    assert Decimal(body["card_sales"]) == Decimal("160.00")
-    assert Decimal(body["total_sales"]) == Decimal("360.00")
-    assert Decimal(body["cash_variance"]) == Decimal("-50.00")
-
-
-async def test_shift_handoff_closes_current_and_opens_successor_on_same_login(
-    api: ApiContext,
-) -> None:
-    """Handoff stays on the same authenticated login (cafes commonly share one
-    terminal account) — only the typed cashier_name changes hands."""
-    cashier = await login(api, username="cashier@dixora.test")
-    headers = auth_headers(cashier)
-    opened = await api.client.post(
-        "/api/v1/shifts/open",
+    card = await api.client.post(
+        f"/api/v1/orders/{order['id']}/payments",
         headers=headers,
-        json={"cashier_name": "Ahmet", "opening_cash": "1000.00"},
+        json={"method": "CARD", "amount": "159.95", "idempotency_key": "shift-card-pay-0001"},
     )
-    shift_id = opened.json()["id"]
+    assert cash.status_code == card.status_code == 201
+    refunded = await api.client.post(
+        f"/api/v1/orders/{order['id']}/payments/{cash.json()['id']}/refund",
+        headers=headers,
+        json={"reason": "Müşteri iadesi"},
+    )
+    assert refunded.status_code == 200, refunded.text
+    current = await api.client.get("/api/v1/shifts/current", headers=headers)
+    assert Decimal(current.json()["expected_cash"]) == Decimal("1500.10")
+    assert Decimal(current.json()["card_sales"]) == Decimal("159.95")
+    closed = await _close(api, headers, shift["id"], "1500.09", "160.00")
+    assert Decimal(closed["cash_refunds"]) == Decimal("200.05")
+    assert Decimal(closed["cash_variance"]) == Decimal("-0.01")
+    assert Decimal(closed["reported_card_total"]) == Decimal("160.00")
+    assert Decimal(closed["card_variance"]) == Decimal("0.05")
+    again = await api.client.post(
+        f"/api/v1/shifts/{shift['id']}/close",
+        headers=headers,
+        json={**CASHIER, "closing_cash": "0"},
+    )
+    assert again.status_code == 409
 
+
+async def test_handoff_requires_both_employees_and_explicit_opening_cash(api: ApiContext) -> None:
+    headers = await _cashier_headers(api)
+    shift = await _open(api, headers, "50.00")
+    async with api.database.session_factory() as db:
+        cashier = (
+            await db.execute(select(User).where(User.username == CASHIER["username"]))
+        ).scalar_one()
+        role = (
+            await db.execute(
+                select(Role).where(Role.tenant_id == cashier.tenant_id, Role.code == "CASHIER")
+            )
+        ).scalar_one()
+        next_user = User(
+            tenant_id=cashier.tenant_id,
+            branch_id=cashier.branch_id,
+            role_id=role.id,
+            username="next.cashier",
+            display_name="Yeni Kasiyer",
+            password_hash=hash_password("unused-password"),
+            pin_hash=hash_password("9753"),
+        )
+        db.add(next_user)
+        await db.commit()
     handoff = await api.client.post(
-        f"/api/v1/shifts/{shift_id}/handoff",
+        f"/api/v1/shifts/{shift['id']}/handoff",
         headers=headers,
         json={
-            "counted_cash": "950.00",
-            "next_cashier_name": "Zeynep",
-            "note": "Vardiya devri",
+            **CASHIER,
+            "closing_cash": "49.00",
+            "reported_card_total": "0.00",
+            "next_username": "next.cashier",
+            "next_pin": "9753",
+            "next_opening_cash": "45.00",
         },
     )
     assert handoff.status_code == 200, handoff.text
-    body = handoff.json()
-    assert body["closed"]["id"] == shift_id
-    assert body["closed"]["status"] == "CLOSED"
-    assert body["closed"]["closing_cash"] == "950.00"
-    assert body["closed"]["cashier_name"] == "Ahmet"
-    assert body["opened"]["predecessor_shift_id"] == shift_id
-    assert body["opened"]["opening_cash"] == "950.00"
-    assert body["opened"]["status"] == "OPEN"
-    assert body["opened"]["cashier_name"] == "Zeynep"
-    assert body["opened"]["user_id"] == body["closed"]["user_id"]
-
-    current = await api.client.get("/api/v1/shifts/current", headers=headers)
+    assert handoff.json()["opened"]["cashier_name"] == "Yeni Kasiyer"
+    assert handoff.json()["opened"]["opening_cash"] == "45.00"
+    assert handoff.json()["closed"]["reported_card_total"] == "0.00"
+    next_headers = auth_headers(
+        await login(api, username="next.cashier", password="unused-password")
+    )
+    current = await api.client.get("/api/v1/shifts/current", headers=next_headers)
     assert current.status_code == 200
-    assert current.json()["id"] == body["opened"]["id"]
-    assert current.json()["cashier_name"] == "Zeynep"
+    assert current.json()["id"] == handoff.json()["opened"]["id"]
 
-    # Idempotent replay: same result, no duplicate successor shift.
-    replay = await api.client.post(
-        f"/api/v1/shifts/{shift_id}/handoff",
-        headers=headers,
-        json={"counted_cash": "1.00", "next_cashier_name": "Someone Else"},
+
+async def test_business_day_close_blocks_open_shift_and_is_unique(api: ApiContext) -> None:
+    await _manager_pin(api)
+    cashier_headers = await _cashier_headers(api)
+    shift = await _open(api, cashier_headers, "100.00")
+    resources = await seeded_resources(api, cashier_headers)
+    order = await _create_burger_order(
+        api,
+        cashier_headers,
+        table_id=resources["tables"][11]["id"],
+        product_id=resources["burger"]["id"],
+        key="day-close-order-0001",
     )
-    assert replay.status_code == 200, replay.text
-    assert replay.json()["opened"]["id"] == body["opened"]["id"]
-    assert replay.json()["opened"]["cashier_name"] == "Zeynep"
-    assert replay.json()["closed"]["closing_cash"] == "950.00"
-
-
-async def test_shift_handoff_requires_a_next_cashier_name(api: ApiContext) -> None:
-    cashier = await login(api, username="cashier@dixora.test")
-    headers = auth_headers(cashier)
-    opened = await api.client.post(
-        "/api/v1/shifts/open",
-        headers=headers,
-        json={"cashier_name": "Ahmet", "opening_cash": "100.00"},
-    )
-    shift_id = opened.json()["id"]
-
-    missing_name = await api.client.post(
-        f"/api/v1/shifts/{shift_id}/handoff",
-        headers=headers,
-        json={"counted_cash": "100.00"},
-    )
-    assert missing_name.status_code == 422
-
-
-async def test_shift_handoff_on_already_closed_shift_without_handoff_conflicts(
-    api: ApiContext,
-) -> None:
-    cashier = await login(api, username="cashier@dixora.test")
-    headers = auth_headers(cashier)
-    opened = await api.client.post(
-        "/api/v1/shifts/open",
-        headers=headers,
-        json={"cashier_name": "Ahmet", "opening_cash": "100.00"},
-    )
-    shift_id = opened.json()["id"]
-    plain_close = await api.client.post(
-        f"/api/v1/shifts/{shift_id}/close", headers=headers, json={"closing_cash": "100.00"}
-    )
-    assert plain_close.status_code == 200, plain_close.text
-
-    handoff_after_plain_close = await api.client.post(
-        f"/api/v1/shifts/{shift_id}/handoff",
-        headers=headers,
-        json={"counted_cash": "100.00", "next_cashier_name": "Zeynep"},
-    )
-    assert handoff_after_plain_close.status_code == 409
-    assert handoff_after_plain_close.json()["error"]["code"] == "shift_already_closed"
-
-
-async def test_shift_is_tenant_and_branch_scoped(api: ApiContext) -> None:
-    other = await _create_tenant_b(api)
-    _ = other
-    cashier_headers = auth_headers(await login(api, username="cashier@dixora.test"))
-    opened = await api.client.post(
-        "/api/v1/shifts/open",
-        headers=cashier_headers,
-        json={"cashier_name": "Ahmet", "opening_cash": "10.00"},
-    )
-    shift_id = opened.json()["id"]
-
-    other_owner_headers = auth_headers(
-        await login(
-            api,
-            username="owner@other.test",
-            password="Other!2026",
-            business="other-restaurant",
+    for method, amount, key in (
+        ("CASH", "10.00", "day-close-cash-0001"),
+        ("CARD", "20.00", "day-close-card-0001"),
+    ):
+        payment = await api.client.post(
+            f"/api/v1/orders/{order['id']}/payments",
+            headers=cashier_headers,
+            json={"method": method, "amount": amount, "idempotency_key": key},
         )
+        assert payment.status_code == 201, payment.text
+    manager_headers = auth_headers(await login(api, username="manager@dixora.test"))
+    payload = {
+        "username": "manager@dixora.test",
+        "pin": "8642",
+        "counted_cash": "110.00",
+        "reported_card_total": "20.00",
+        "note": "Fiziksel Z kontrol edildi",
+    }
+    cashier_denied = await api.client.post(
+        "/api/v1/shifts/business-day-close",
+        headers=cashier_headers,
+        json={**payload, **CASHIER},
     )
-    cross_tenant_close = await api.client.post(
-        f"/api/v1/shifts/{shift_id}/close",
-        headers=other_owner_headers,
-        json={"closing_cash": "10.00"},
+    assert cashier_denied.status_code == 403
+    blocked = await api.client.post(
+        "/api/v1/shifts/business-day-close", headers=manager_headers, json=payload
     )
-    assert cross_tenant_close.status_code == 404
+    assert blocked.status_code == 409
+    assert blocked.json()["error"]["code"] == "open_shifts_exist"
+    manager_close = await api.client.post(
+        f"/api/v1/shifts/{shift['id']}/close",
+        headers=manager_headers,
+        json={
+            "username": "manager@dixora.test",
+            "pin": "8642",
+            "closing_cash": "110.00",
+            "reported_card_total": "20.00",
+        },
+    )
+    assert manager_close.status_code == 200, manager_close.text
+    assert manager_close.json()["closed_by_display_name"] == "Şube Yöneticisi"
+    assert manager_close.json()["card_variance"] == "0.00"
+    closed = await api.client.post(
+        "/api/v1/shifts/business-day-close", headers=manager_headers, json=payload
+    )
+    assert closed.status_code == 201, closed.text
+    assert closed.json()["system_cash_total"] == "10.00"
+    assert closed.json()["system_card_total"] == "20.00"
+    assert closed.json()["expected_cash"] == "110.00"
+    assert closed.json()["cash_difference"] == "0.00"
+    assert closed.json()["card_difference"] == "0.00"
+    duplicate = await api.client.post(
+        "/api/v1/shifts/business-day-close", headers=manager_headers, json=payload
+    )
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"]["code"] == "already_closed"
+    history = await api.client.get("/api/v1/shifts/day/history", headers=manager_headers)
+    assert history.status_code == 200
+    assert history.json()[0]["id"] == closed.json()["id"]
 
-    close = await api.client.post(
-        f"/api/v1/shifts/{shift_id}/close", headers=cashier_headers, json={"closing_cash": "10.00"}
-    )
-    assert close.status_code == 200, close.text
 
-
-async def test_shift_history_scopes_cashier_to_own_shifts(api: ApiContext) -> None:
-    owner = await login(api)
-    owner_headers = auth_headers(owner)
-    tenant_id = UUID(owner["user"]["tenant_id"])
-    branch_id = UUID(owner["user"]["branch_id"])
-    second = await _create_second_cashier(api, tenant_id, branch_id)
-    second_headers = auth_headers(
-        await login(api, username=second["username"], password=second["password"])
+async def test_wrong_branch_employee_is_rejected(api: ApiContext) -> None:
+    headers = await _cashier_headers(api)
+    async with api.database.session_factory() as db:
+        cashier = (
+            await db.execute(select(User).where(User.username == CASHIER["username"]))
+        ).scalar_one()
+        role = (
+            await db.execute(
+                select(Role).where(Role.tenant_id == cashier.tenant_id, Role.code == "CASHIER")
+            )
+        ).scalar_one()
+        branch = Branch(
+            tenant_id=cashier.tenant_id, name="Other", slug="other", timezone="Europe/Istanbul"
+        )
+        db.add(branch)
+        await db.flush()
+        outsider = User(
+            tenant_id=cashier.tenant_id,
+            branch_id=branch.id,
+            role_id=role.id,
+            username="other.cashier",
+            display_name="Other Cashier",
+            password_hash=hash_password("unused-password"),
+            pin_hash=hash_password("1122"),
+        )
+        db.add(outsider)
+        await db.commit()
+    response = await api.client.post(
+        "/api/v1/shifts/verify", headers=headers, json={"username": "other.cashier", "pin": "1122"}
     )
-    opened = await api.client.post(
-        "/api/v1/shifts/open",
-        headers=second_headers,
-        json={"cashier_name": "İkinci Kasiyer", "opening_cash": "20.00"},
-    )
-    assert opened.status_code == 201, opened.text
-
-    cashier_headers = auth_headers(await login(api, username="cashier@dixora.test"))
-    cashier_history = await api.client.get("/api/v1/shifts/history", headers=cashier_headers)
-    assert cashier_history.status_code == 200
-    assert all(row["user_id"] != second["id"] for row in cashier_history.json()), (
-        "CASHIER role must not see another cashier's shift history"
-    )
-
-    owner_history = await api.client.get(
-        "/api/v1/shifts/history", headers=owner_headers, params={"user_id": second["id"]}
-    )
-    assert owner_history.status_code == 200
-    assert any(row["id"] == opened.json()["id"] for row in owner_history.json())
+    assert response.status_code == 403
+    assert response.json()["error"]["code"] == "staff_branch_forbidden"

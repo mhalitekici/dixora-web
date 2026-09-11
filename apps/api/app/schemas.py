@@ -1008,6 +1008,9 @@ class PaymentOut(ORMModel):
     amount: Decimal
     status: str
     reference: str | None
+    shift_id: UUID | None = None
+    refund_shift_id: UUID | None = None
+    refunded_at: datetime | None = None
 
 
 class OrderOut(ORMModel):
@@ -1039,6 +1042,10 @@ class PaymentCreate(BaseModel):
     amount: Decimal = Field(gt=0, max_digits=14, decimal_places=2)
     idempotency_key: str = Field(min_length=8, max_length=160)
     reference: str | None = Field(default=None, max_length=160)
+
+
+class PaymentRefund(BaseModel):
+    reason: str = Field(min_length=3, max_length=255)
 
 
 class TranslationFieldsIn(BaseModel):
@@ -1808,21 +1815,32 @@ class PrinterDeviceOut(ORMModel):
     settings: dict[str, object]
 
 
-class ShiftOpen(BaseModel):
-    cashier_name: str = Field(min_length=2, max_length=120)
-    opening_cash: Decimal = Field(default=Decimal("0.00"), ge=0)
+class StaffPinVerification(BaseModel):
+    username: str = Field(min_length=2, max_length=100)
+    pin: str = Field(min_length=4, max_length=32)
+
+
+class StaffPinVerificationOut(BaseModel):
+    user_id: UUID
+    username: str
+    display_name: str
+
+
+class ShiftOpen(StaffPinVerification):
+    opening_cash: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
     note: str | None = Field(default=None, max_length=500)
 
 
-class ShiftClose(BaseModel):
-    closing_cash: Decimal = Field(ge=0)
+class ShiftClose(StaffPinVerification):
+    closing_cash: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    reported_card_total: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
     note: str | None = Field(default=None, max_length=500)
 
 
-class ShiftHandoff(BaseModel):
-    counted_cash: Decimal = Field(ge=0)
-    next_cashier_name: str = Field(min_length=2, max_length=120)
-    next_opening_cash: Decimal | None = Field(default=None, ge=0)
+class ShiftHandoff(ShiftClose):
+    next_username: str = Field(min_length=2, max_length=100)
+    next_pin: str = Field(min_length=4, max_length=32)
+    next_opening_cash: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
     note: str | None = Field(default=None, max_length=500)
 
 
@@ -1832,6 +1850,10 @@ class ShiftOut(ORMModel):
     branch_id: UUID
     user_id: UUID
     user_display_name: str | None = None
+    opened_by_user_id: UUID | None
+    closed_by_user_id: UUID | None
+    closed_by_display_name: str | None = None
+    business_date: date
     cashier_name: str | None
     predecessor_shift_id: UUID | None
     status: str
@@ -1840,7 +1862,12 @@ class ShiftOut(ORMModel):
     closing_cash: Decimal | None
     cash_sales: Decimal
     card_sales: Decimal
+    reported_card_total: Decimal | None
+    card_variance: Decimal | None
+    cash_refunds: Decimal
+    card_refunds: Decimal
     total_sales: Decimal
+    expected_cash: Decimal
     cash_variance: Decimal | None
     opened_at: datetime
     closed_at: datetime | None
@@ -1850,6 +1877,44 @@ class ShiftOut(ORMModel):
 class ShiftHandoffOut(BaseModel):
     closed: ShiftOut
     opened: ShiftOut
+
+
+class BusinessDayCloseCreate(StaffPinVerification):
+    counted_cash: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    reported_card_total: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class BusinessDayPreviewOut(BaseModel):
+    branch_id: UUID
+    business_date: date
+    opening_cash: Decimal
+    system_cash_total: Decimal
+    system_card_total: Decimal
+    cash_refunds: Decimal
+    card_refunds: Decimal
+    expected_cash: Decimal
+    sales_total: Decimal
+    discounts_total: Decimal
+    complimentary_total: Decimal
+    service_charge_total: Decimal
+    receipt_count: int
+    open_shift_count: int
+
+
+class BusinessDayCloseOut(BusinessDayPreviewOut):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    tenant_id: UUID
+    closed_by_user_id: UUID
+    closed_by_display_name: str | None = None
+    closed_at: datetime
+    counted_cash: Decimal
+    reported_card_total: Decimal
+    cash_difference: Decimal
+    card_difference: Decimal
+    note: str | None
+    open_shift_count: int = 0
 
 
 class DashboardHourlySaleOut(BaseModel):

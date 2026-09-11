@@ -279,6 +279,17 @@ class Payment(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     recorded_by_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
+    shift_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("cashier_shifts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    refund_shift_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("cashier_shifts.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+    refunded_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    refunded_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    refund_reason: Mapped[str | None] = mapped_column(String(255), nullable=True)
     method: Mapped[str] = mapped_column(String(40), nullable=False)
     amount: Mapped[Decimal] = mapped_column(MONEY, nullable=False)
     status: Mapped[PaymentStatus] = mapped_column(
