@@ -199,6 +199,7 @@ type CashierShiftSummary = {
   opening_cash: string | number;
   cash_sales: string | number;
   card_sales: string | number;
+  opened_at: string;
 };
 type MergeCandidate = {
   table: DiningTable;
@@ -1332,6 +1333,11 @@ export function CashierWorkspace() {
             <MonitorDot className="size-3.5" />
             {shiftQuery.data.cashier_name || "Vardiya Açık"}
             <span className="hidden text-[0.68rem] font-normal opacity-80 sm:inline">
+              {new Date(shiftQuery.data.opened_at).toLocaleTimeString("tr-TR", {
+                hour: "2-digit",
+                minute: "2-digit",
+              })}
+              {" · "}
               Açılış {currency.format(Number(shiftQuery.data.opening_cash))}
             </span>
           </Link>

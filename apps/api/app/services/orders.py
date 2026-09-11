@@ -1483,6 +1483,7 @@ async def add_payment(
     order: Order,
     payload: PaymentCreate,
     actor_user_id: UUID,
+    shift_id: UUID | None = None,
 ) -> Payment:
     existing = (
         await db.execute(
@@ -1518,6 +1519,7 @@ async def add_payment(
         branch_id=order.branch_id,
         order_id=order.id,
         recorded_by_user_id=actor_user_id,
+        shift_id=shift_id,
         method=payload.method,
         amount=payload.amount,
         status=PaymentStatus.COMPLETED,

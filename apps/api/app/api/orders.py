@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
 
 from app.dependencies import (
@@ -16,7 +17,7 @@ from app.dependencies import (
     require_tenant,
 )
 from app.errors import DomainError
-from app.models import Order, OrderItem, Payment, TableSession, User
+from app.models import CashierShift, Order, OrderItem, Payment, TableSession, User
 from app.models.enums import (
     ApprovalStatus,
     ApprovalType,
@@ -45,6 +46,7 @@ from app.schemas import (
     Page,
     PaymentCreate,
     PaymentOut,
+    PaymentRefund,
     RoomFolioOrderOut,
     RoomFolioOut,
     TableMergeRequest,
@@ -484,11 +486,37 @@ async def record_payment(
     db: DbSession,
 ) -> PaymentOut:
     order = await _scoped_order(identity, db, order_id, lock=True)
+    shift = (
+        await db.execute(
+            select(CashierShift)
+            .where(
+                CashierShift.tenant_id == order.tenant_id,
+                CashierShift.branch_id == order.branch_id,
+                or_(
+                    CashierShift.opened_by_user_id == identity.user_id,
+                    CashierShift.user_id == identity.user_id,
+                ),
+                CashierShift.status == "OPEN",
+            )
+            .order_by(
+                (CashierShift.user_id == identity.user_id).desc(),
+                CashierShift.opened_at.desc(),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if identity.role == "CASHIER" and shift is None:
+        raise DomainError(
+            "cashier_shift_required",
+            "Open a cashier shift before recording a payment",
+            status_code=409,
+        )
     payment = await add_payment(
         db,
         order=order,
         payload=payload,
         actor_user_id=identity.user_id,
+        shift_id=shift.id if shift else None,
     )
     add_audit_log(
         db,
@@ -501,6 +529,83 @@ async def record_payment(
             "amount": str(payment.amount),
             "method": payment.method,
         },
+    )
+    await db.commit()
+    await _broadcast(request, order)
+    return PaymentOut.model_validate(payment)
+
+
+@router.post("/{order_id}/payments/{payment_id}/refund", response_model=PaymentOut)
+async def refund_payment(
+    order_id: UUID,
+    payment_id: UUID,
+    payload: PaymentRefund,
+    request: Request,
+    identity: PaymentManager,
+    db: DbSession,
+) -> PaymentOut:
+    order = await _scoped_order(identity, db, order_id, lock=True)
+    payment = (
+        await db.execute(
+            select(Payment)
+            .where(
+                Payment.id == payment_id,
+                Payment.order_id == order.id,
+                Payment.tenant_id == order.tenant_id,
+                Payment.branch_id == order.branch_id,
+            )
+            .with_for_update()
+        )
+    ).scalar_one_or_none()
+    if payment is None:
+        raise DomainError("payment_not_found", "Payment not found", status_code=404)
+    if payment.status == PaymentStatus.REFUNDED:
+        return PaymentOut.model_validate(payment)
+    if payment.status != PaymentStatus.COMPLETED:
+        raise DomainError("payment_not_refundable", "Payment cannot be refunded", status_code=409)
+    shift = (
+        await db.execute(
+            select(CashierShift)
+            .where(
+                CashierShift.tenant_id == order.tenant_id,
+                CashierShift.branch_id == order.branch_id,
+                or_(
+                    CashierShift.opened_by_user_id == identity.user_id,
+                    CashierShift.user_id == identity.user_id,
+                ),
+                CashierShift.status == "OPEN",
+            )
+            .order_by(
+                (CashierShift.user_id == identity.user_id).desc(),
+                CashierShift.opened_at.desc(),
+            )
+            .limit(1)
+        )
+    ).scalar_one_or_none()
+    if identity.role == "CASHIER" and shift is None:
+        raise DomainError(
+            "cashier_shift_required",
+            "Open a cashier shift before refunding a payment",
+            status_code=409,
+        )
+    payment.status = PaymentStatus.REFUNDED
+    payment.refunded_at = datetime.now(UTC)
+    payment.refunded_by_user_id = identity.user_id
+    payment.refund_shift_id = shift.id if shift else None
+    payment.refund_reason = payload.reason.strip()
+    add_audit_log(
+        db,
+        identity=identity,
+        action="payment.refunded",
+        resource_type="payment",
+        resource_id=payment.id,
+        new_value={
+            "order_id": str(order.id),
+            "amount": str(payment.amount),
+            "method": payment.method,
+            "refund_shift_id": str(payment.refund_shift_id) if payment.refund_shift_id else None,
+        },
+        reason=payment.refund_reason,
     )
     await db.commit()
     await _broadcast(request, order)

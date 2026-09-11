@@ -85,7 +85,7 @@ from app.models.printing import (
     Receipt,
 )
 from app.models.qr import QrMenuConfig, QrOrderRequest
-from app.models.shifts import CashierShift
+from app.models.shifts import BusinessDayClose, CashierShift
 from app.models.subscriptions import (
     Invoice,
     Subscription,
@@ -102,6 +102,7 @@ __all__ = [
     "AuthSession",
     "Base",
     "Branch",
+    "BusinessDayClose",
     "BusinessRegistrationVerification",
     "Cancellation",
     "CashierShift",
