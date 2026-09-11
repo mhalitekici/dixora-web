@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import select
@@ -64,6 +65,51 @@ async def test_takeaway_needs_no_address(api: ApiContext) -> None:
         json=_payload(product_id, channel="TAKEAWAY"),
     )
     assert response.status_code == 201, response.text
+
+
+async def test_delivery_modifier_rules_and_server_price_are_enforced(
+    api: ApiContext,
+) -> None:
+    headers, product_id = await _staff(api)
+    groups_response = await api.client.get("/api/v1/catalog/modifier-groups", headers=headers)
+    group = next(item for item in groups_response.json() if item["name"] == "Burger Extras")
+    required = await api.client.patch(
+        f"/api/v1/catalog/modifier-groups/{group['id']}",
+        headers=headers,
+        json={"is_required": True, "minimum_selection": 1, "maximum_selection": 1},
+    )
+    assert required.status_code == 200, required.text
+
+    missing = await api.client.post("/api/v1/delivery", headers=headers, json=_payload(product_id))
+    assert missing.status_code == 422, missing.text
+    assert missing.json()["error"]["code"] == "invalid_modifier_selection"
+
+    option = group["modifiers"][0]
+    selected = await api.client.post(
+        "/api/v1/delivery",
+        headers=headers,
+        json=_payload(
+            product_id,
+            items=[
+                {
+                    "product_id": product_id,
+                    "quantity": "1",
+                    "unit_price": "0.01",
+                    "modifiers": [
+                        {
+                            "modifier_id": option["id"],
+                            "quantity": 1,
+                            "price_delta": "0.01",
+                        }
+                    ],
+                }
+            ],
+        ),
+    )
+    assert selected.status_code == 201, selected.text
+    line = selected.json()["items"][0]
+    assert Decimal(line["unit_price"]) == Decimal("360.00") + Decimal(option["price_delta"])
+    assert line["modifiers"] == [option["name"]]
 
 
 async def test_repeating_the_same_idempotency_key_creates_one_order(

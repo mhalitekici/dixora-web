@@ -1763,7 +1763,7 @@ export function CashierWorkspace() {
                         <div className="text-right">
                           <p className="text-sm font-semibold tabular-nums">
                             {item.is_complimentary
-                              ? "İKRAM"
+                              ? currency.format(0)
                               : currency.format(Number(item.line_total))}
                           </p>
                           <p className="text-[0.62rem] text-muted-foreground">

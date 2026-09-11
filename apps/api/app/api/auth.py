@@ -27,6 +27,7 @@ from app.models import (
     TrustedDevice,
     User,
 )
+from app.rbac import effective_permission_codes
 from app.schemas import (
     AccessibleBranchesOut,
     AuthResponse,
@@ -109,7 +110,7 @@ async def user_payload(
         email=user.email,
         display_name=user.display_name,
         role=user.role.code,
-        permissions=sorted(permission.code for permission in user.role.permissions),
+        permissions=sorted(effective_permission_codes(user.role)),
         is_super_admin=user.is_super_admin,
         tenant=(
             TenantSessionSummary(

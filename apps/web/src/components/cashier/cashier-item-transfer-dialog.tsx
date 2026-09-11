@@ -56,6 +56,26 @@ const transferStatusLabel = (state: string) =>
   state === "AVAILABLE" ? "Boş" : "Dolu";
 const newTransferKey = () => `cashier-item-transfer:${crypto.randomUUID()}`;
 
+export function validTransferQuantity(
+  value: string,
+  maximum: number,
+): number | null {
+  if (!/^\d+$/.test(value)) return null;
+  const quantity = Number(value);
+  return Number.isSafeInteger(quantity) && quantity >= 1 && quantity <= maximum
+    ? quantity
+    : null;
+}
+
+export function stepTransferQuantity(
+  value: string,
+  direction: 1 | -1,
+  maximum: number,
+): string {
+  const current = validTransferQuantity(value, maximum) ?? 1;
+  return String(Math.min(maximum, Math.max(1, current + direction)));
+}
+
 export function CashierItemTransferDialog({
   open,
   sourceTable,
@@ -90,17 +110,22 @@ export function CashierItemTransferDialog({
   const transferableItems = useMemo(
     () =>
       items.filter(
-        (item) => item.status !== "CANCELLED" && item.status !== "VOIDED",
+        (item) =>
+          item.status !== "CANCELLED" &&
+          item.status !== "VOIDED" &&
+          Math.floor(Number(item.quantity)) >= 1,
       ),
     [items],
   );
   const selectedLines = useMemo(
     () =>
       transferableItems.flatMap((item) => {
-        const quantity = Number(quantities[item.id] ?? 0);
-        return quantity > 0
-          ? [{ item, quantity: Math.min(quantity, Number(item.quantity)) }]
-          : [];
+        const maximum = Math.floor(Number(item.quantity));
+        const quantity = validTransferQuantity(
+          quantities[item.id] ?? "",
+          maximum,
+        );
+        return quantity === null ? [] : [{ item, quantity }];
       }),
     [quantities, transferableItems],
   );
@@ -116,7 +141,7 @@ export function CashierItemTransferDialog({
   function toggleItem(item: TransferItem, checked: boolean) {
     setQuantities((current) => {
       const next = { ...current };
-      if (checked) next[item.id] = String(Number(item.quantity));
+      if (checked) next[item.id] = String(Math.floor(Number(item.quantity)));
       else delete next[item.id];
       return next;
     });
@@ -192,7 +217,11 @@ export function CashierItemTransferDialog({
               {transferableItems.length ? (
                 transferableItems.map((item) => {
                   const selected = quantities[item.id] !== undefined;
-                  const max = Number(item.quantity);
+                  const max = Math.floor(Number(item.quantity));
+                  const quantityValue = quantities[item.id] ?? "";
+                  const quantityIsInvalid =
+                    selected &&
+                    validTransferQuantity(quantityValue, max) === null;
                   return (
                     <div
                       key={item.id}
@@ -219,22 +248,44 @@ export function CashierItemTransferDialog({
                       </div>
                       <Input
                         type="number"
-                        inputMode="decimal"
-                        min="0.01"
+                        inputMode="numeric"
+                        min="1"
                         max={max}
-                        step="0.01"
-                        value={quantities[item.id] ?? ""}
+                        step="1"
+                        value={quantityValue}
                         disabled={!selected}
                         onChange={(event) => {
-                          const value = Math.min(
-                            Math.max(Number(event.target.value), 0),
+                          const value = event.target.value;
+                          setQuantities((current) => ({
+                            ...current,
+                            [item.id]: value,
+                          }));
+                          setError(
+                            validTransferQuantity(value, max) === null
+                              ? `Taşıma adedi 1 ile ${max} arasında tam sayı olmalı.`
+                              : null,
+                          );
+                        }}
+                        onKeyDown={(event) => {
+                          if (
+                            event.key !== "ArrowUp" &&
+                            event.key !== "ArrowDown"
+                          ) {
+                            return;
+                          }
+                          event.preventDefault();
+                          const next = stepTransferQuantity(
+                            quantityValue,
+                            event.key === "ArrowUp" ? 1 : -1,
                             max,
                           );
                           setQuantities((current) => ({
                             ...current,
-                            [item.id]: String(value),
+                            [item.id]: next,
                           }));
+                          setError(null);
                         }}
+                        aria-invalid={quantityIsInvalid}
                         aria-label={`${item.product_name_snapshot} taşınacak adet`}
                         className="h-10 text-center tabular-nums"
                       />

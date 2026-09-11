@@ -14,6 +14,7 @@ from sqlalchemy.orm import selectinload
 from app.config import Settings
 from app.errors import DomainError
 from app.models import AuthSession, Branch, Role, Tenant, User, UserBranchMembership
+from app.rbac import effective_permission_codes
 from app.security import as_utc, decode_token, utcnow
 from app.services.subscriptions import enforce_trial_expiry, tenant_access_blocked
 
@@ -159,7 +160,7 @@ async def get_current_identity(
         if user.branch_id is not None and claim_branch_id not in {None, user.branch_id}:
             raise DomainError("branch_forbidden", "Branch access is not allowed", status_code=403)
 
-    permissions = frozenset(permission.code for permission in user.role.permissions)
+    permissions = effective_permission_codes(user.role)
     accessible_branch_ids, has_all_branch_access = await resolve_accessible_branches(db, user)
     return Identity(
         user_id=user.id,

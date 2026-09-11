@@ -282,6 +282,71 @@ describe("CashierWorkspace", () => {
     expect(screen.getByRole("button", { name: "Sil" })).toBeEnabled();
   });
 
+  it("marks an item complimentary and immediately renders its zero price", async () => {
+    let isComplimentary = false;
+    const currentOrder = () => ({
+      ...orderWithDetails,
+      subtotal: isComplimentary ? "0.00" : orderWithDetails.subtotal,
+      total: isComplimentary ? "0.00" : orderWithDetails.total,
+      version: isComplimentary ? 2 : 1,
+      items: [
+        {
+          ...orderWithDetails.items[0],
+          line_total: isComplimentary ? "0.00" : "260.00",
+          is_complimentary: isComplimentary,
+          complimentary_reason: isComplimentary ? "Müşteri memnuniyeti" : null,
+        },
+      ],
+    });
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (
+        url.includes("/orders/order-1/items/item-1") &&
+        init?.method === "PATCH"
+      ) {
+        const body = JSON.parse(String(init.body)) as { action: string };
+        expect(body.action).toBe("SET_COMPLIMENTARY");
+        isComplimentary = true;
+        return Promise.resolve(jsonResponse(currentOrder()));
+      }
+      if (url.includes("/orders?limit=200")) {
+        return Promise.resolve(jsonResponse([currentOrder()]));
+      }
+      return routeFetchWithOrder(input);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    render(<CashierWorkspace />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={queryClient}>
+          {children}
+        </QueryClientProvider>
+      ),
+    });
+
+    await user.click(await screen.findByRole("button", { name: /B1/ }));
+    await user.click(await screen.findByRole("button", { name: "İkram" }));
+    await user.type(
+      screen.getByLabelText("İkram nedeni"),
+      "Müşteri memnuniyeti",
+    );
+    await user.click(
+      screen.getByRole("button", { name: /İkram olarak kaydet/ }),
+    );
+
+    expect((await screen.findAllByText("₺0,00")).length).toBeGreaterThan(0);
+    expect(screen.getByText("İkram nedeni: Müşteri memnuniyeti")).toBeVisible();
+    expect(screen.getByRole("button", { name: "İkramı kaldır" })).toBeEnabled();
+  });
+
   it("finds a table by the guest name staff attached to it", async () => {
     vi.stubGlobal("fetch", vi.fn(routeFetchWithOrder));
 

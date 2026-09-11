@@ -1158,7 +1158,7 @@ class ItemCheckSplitRequest(BaseModel):
 
 class OrderItemTransferLine(BaseModel):
     item_id: UUID
-    quantity: Decimal = Field(gt=0, max_digits=10, decimal_places=2)
+    quantity: int = Field(gt=0)
 
 
 class OrderItemTransferRequest(BaseModel):

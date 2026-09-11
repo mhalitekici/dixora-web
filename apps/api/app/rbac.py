@@ -140,6 +140,7 @@ ROLE_PERMISSIONS: dict[str, set[str]] = {
         "orders.read",
         "orders.create",
         "orders.manage",
+        "orders.comp",
         "payments.manage",
         "cashier.shift.manage",
         "discounts.request",
@@ -181,6 +182,14 @@ ASSIGNABLE_ROLE_PRESETS: dict[str, str] = {
     "CASHIER": "Kasiyer",
     "WAITER": "Garson",
 }
+
+
+def effective_permission_codes(role: Role) -> frozenset[str]:
+    """Resolve locked system presets from code while preserving custom roles."""
+
+    if role.is_system and role.code in ROLE_PERMISSIONS:
+        return frozenset(ROLE_PERMISSIONS[role.code])
+    return frozenset(permission.code for permission in role.permissions)
 
 
 async def ensure_permission_catalog(db: AsyncSession) -> dict[str, Permission]:

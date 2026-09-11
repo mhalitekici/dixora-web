@@ -107,6 +107,8 @@ async def test_role_presets_and_employee_scope_are_server_enforced(api: ApiConte
     assert "loyalty.manage" in role_by_code["BUSINESS_ADMIN"]["permissions"]
     assert "loyalty.manage" not in role_by_code["BUSINESS_MANAGER"]["permissions"]
     assert {"loyalty.read", "loyalty.redeem"}.issubset(role_by_code["WAITER"]["permissions"])
+    assert "orders.comp" in role_by_code["CASHIER"]["permissions"]
+    assert "orders.comp" not in role_by_code["WAITER"]["permissions"]
 
     admin_with_branch = await api.client.post(
         "/api/v1/users",

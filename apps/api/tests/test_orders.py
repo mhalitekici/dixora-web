@@ -4,12 +4,14 @@ from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import func, select
+from sqlalchemy.orm import selectinload
 
 from app.models import (
     AuditLog,
     PreparationStation,
     PrinterDevice,
     PrintJob,
+    Role,
     StockBalance,
     StockMovement,
 )
@@ -411,6 +413,27 @@ async def test_cashier_item_quantity_and_complimentary_flow_is_versioned_and_aud
     assert Decimal(comp_order["service_charge_amount"]) == Decimal("0.00")
     assert Decimal(comp_order["total"]) == Decimal("0.00")
 
+    async with api.database.session_factory() as db:
+        comp_print_jobs = (
+            (await db.execute(select(PrintJob).where(PrintJob.order_id == UUID(order["id"]))))
+            .scalars()
+            .all()
+        )
+    assert (
+        sum(
+            job.kind.value == "ORIGINAL" and job.preparation_station_id is not None
+            for job in comp_print_jobs
+        )
+        == 1
+    )
+    comp_corrections = [
+        job
+        for job in comp_print_jobs
+        if job.idempotency_key.startswith("item-adjustment:cashier-item-comp-0001")
+    ]
+    assert len(comp_corrections) == 1
+    assert comp_corrections[0].kind.value == "COPY"
+
     cashier_printer = await api.client.post(
         "/api/v1/printing/devices",
         headers=headers,
@@ -455,6 +478,27 @@ async def test_cashier_item_quantity_and_complimentary_flow_is_versioned_and_aud
     assert restored_order["items"][0]["is_complimentary"] is False
     assert Decimal(restored_order["subtotal"]) == Decimal("1080.00")
     assert Decimal(restored_order["total"]) == Decimal("1188.00")
+
+    async with api.database.session_factory() as db:
+        restored_print_jobs = (
+            (await db.execute(select(PrintJob).where(PrintJob.order_id == UUID(order["id"]))))
+            .scalars()
+            .all()
+        )
+    assert (
+        sum(
+            job.kind.value == "ORIGINAL" and job.preparation_station_id is not None
+            for job in restored_print_jobs
+        )
+        == 1
+    )
+    remove_corrections = [
+        job
+        for job in restored_print_jobs
+        if job.idempotency_key.startswith("item-adjustment:cashier-item-uncomp-0001")
+    ]
+    assert len(remove_corrections) == 1
+    assert remove_corrections[0].kind.value == "COPY"
 
     decreased = await api.client.patch(
         f"/api/v1/orders/{order['id']}/items/{item['id']}",
@@ -550,21 +594,62 @@ async def test_remove_unprinted_item_and_require_cancellation_after_preparation(
     assert requires_cancel.status_code == 409
     assert requires_cancel.json()["error"]["code"] == "item_cancellation_required"
 
-    cashier_headers = auth_headers(
-        await login(
-            api,
-            username="cashier@dixora.test",
-            password="DixoraLab!2026",
-        )
+    # Simulate a tenant created before `orders.comp` was added to the locked
+    # cashier preset. Runtime authorization must use the canonical system role
+    # without requiring a data migration or an admin to open the roles screen.
+    async with api.database.session_factory() as db:
+        cashier_role = (
+            await db.execute(
+                select(Role)
+                .where(
+                    Role.tenant_id == UUID(accepted["tenant_id"]),
+                    Role.code == "CASHIER",
+                )
+                .options(selectinload(Role.permissions))
+            )
+        ).scalar_one()
+        cashier_role.permissions = [
+            permission
+            for permission in cashier_role.permissions
+            if permission.code != "orders.comp"
+        ]
+        await db.commit()
+
+    cashier_login = await login(
+        api,
+        username="cashier@dixora.test",
+        password="DixoraLab!2026",
     )
-    forbidden = await api.client.patch(
+    assert "orders.comp" in cashier_login["user"]["permissions"]
+    cashier_headers = auth_headers(cashier_login)
+    cashier_comp = await api.client.patch(
         f"/api/v1/orders/{accepted['id']}/items/{accepted['items'][0]['id']}",
         headers=cashier_headers,
         json={
             "action": "SET_COMPLIMENTARY",
             "expected_version": accepted["version"],
-            "idempotency_key": "cashier-comp-forbidden-0001",
-            "reason": "Yetkisiz ikram",
+            "idempotency_key": "cashier-comp-allowed-0001",
+            "reason": "Kasiyer müşteri memnuniyeti",
+        },
+    )
+    assert cashier_comp.status_code == 200, cashier_comp.text
+    assert cashier_comp.json()["items"][0]["is_complimentary"] is True
+
+    waiter_headers = auth_headers(
+        await login(
+            api,
+            username="waiter@dixora.test",
+            password="DixoraLab!2026",
+        )
+    )
+    forbidden = await api.client.patch(
+        f"/api/v1/orders/{accepted['id']}/items/{accepted['items'][0]['id']}",
+        headers=waiter_headers,
+        json={
+            "action": "REMOVE_COMPLIMENTARY",
+            "expected_version": cashier_comp.json()["version"],
+            "idempotency_key": "waiter-comp-forbidden-0001",
+            "reason": "Yetkisiz ikram kaldırma",
         },
     )
     assert forbidden.status_code == 403
@@ -756,7 +841,7 @@ async def test_item_transfer_moves_partial_quantity_to_destination_table(
         headers,
         table_id=source_table["id"],
         product_id=resources["burger"]["id"],
-        quantity="2",
+        quantity="3",
         key="item-transfer-source-0001",
     )
 
@@ -765,7 +850,7 @@ async def test_item_transfer_moves_partial_quantity_to_destination_table(
         headers=headers,
         json={
             "destination_table_id": destination_table["id"],
-            "items": [{"item_id": order["items"][0]["id"], "quantity": "1"}],
+            "items": [{"item_id": order["items"][0]["id"], "quantity": "2"}],
             "idempotency_key": "item-transfer-key-0001",
             "reason": "Guest moved one item",
         },
@@ -774,7 +859,7 @@ async def test_item_transfer_moves_partial_quantity_to_destination_table(
     body = transfer.json()
     assert body["source_order"]["id"] == order["id"]
     assert Decimal(body["source_order"]["subtotal"]) == Decimal("360.00")
-    assert Decimal(body["destination_order"]["subtotal"]) == Decimal("360.00")
+    assert Decimal(body["destination_order"]["subtotal"]) == Decimal("720.00")
     assert body["destination_order"]["table_id"] == destination_table["id"]
 
     replay = await api.client.post(
@@ -782,13 +867,69 @@ async def test_item_transfer_moves_partial_quantity_to_destination_table(
         headers=headers,
         json={
             "destination_table_id": destination_table["id"],
-            "items": [{"item_id": order["items"][0]["id"], "quantity": "1"}],
+            "items": [{"item_id": order["items"][0]["id"], "quantity": "2"}],
             "idempotency_key": "item-transfer-key-0001",
             "reason": "Guest moved one item",
         },
     )
     assert replay.status_code == 200
     assert replay.json()["destination_order"]["id"] == body["destination_order"]["id"]
+
+
+async def test_item_transfer_quantity_must_be_a_positive_integer_within_source(
+    api: ApiContext,
+) -> None:
+    headers = auth_headers(await login(api))
+    resources = await seeded_resources(api, headers)
+    source_table, destination_table = resources["tables"][7:9]
+    order = await _create_burger_order(
+        api,
+        headers,
+        table_id=source_table["id"],
+        product_id=resources["burger"]["id"],
+        quantity="2",
+        key="integer-transfer-source-0001",
+    )
+    item_id = order["items"][0]["id"]
+
+    for index, quantity in enumerate(("0", "-1", "1.5"), start=1):
+        invalid = await api.client.post(
+            f"/api/v1/orders/{order['id']}/items/transfer",
+            headers=headers,
+            json={
+                "destination_table_id": destination_table["id"],
+                "items": [{"item_id": item_id, "quantity": quantity}],
+                "idempotency_key": f"integer-transfer-invalid-{index:04d}",
+                "reason": "Geçersiz adet testi",
+            },
+        )
+        assert invalid.status_code == 422, invalid.text
+
+    exceeds = await api.client.post(
+        f"/api/v1/orders/{order['id']}/items/transfer",
+        headers=headers,
+        json={
+            "destination_table_id": destination_table["id"],
+            "items": [{"item_id": item_id, "quantity": "3"}],
+            "idempotency_key": "integer-transfer-exceeds-0001",
+            "reason": "Fazla adet testi",
+        },
+    )
+    assert exceeds.status_code == 409, exceeds.text
+    assert exceeds.json()["error"]["code"] == "invalid_transfer_quantity"
+
+    maximum = await api.client.post(
+        f"/api/v1/orders/{order['id']}/items/transfer",
+        headers=headers,
+        json={
+            "destination_table_id": destination_table["id"],
+            "items": [{"item_id": item_id, "quantity": "2"}],
+            "idempotency_key": "integer-transfer-maximum-0001",
+            "reason": "Tamamını taşı",
+        },
+    )
+    assert maximum.status_code == 200, maximum.text
+    assert Decimal(maximum.json()["destination_order"]["items"][0]["quantity"]) == Decimal("2")
 
 
 async def test_item_transfer_into_occupied_table_preserves_snapshots_and_uses_copy_print(

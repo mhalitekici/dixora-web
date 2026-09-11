@@ -5,7 +5,13 @@ import { Loader2, Minus, Plus, Search } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
 
+import {
+  CashierModifierDialog,
+  type CashierProductDetail,
+} from "@/components/cashier/cashier-modifier-dialog";
 import { deliveryKeys } from "@/components/delivery/delivery-api";
+import type { ModifierOptionLike } from "@/components/qr/modifier-selection";
+import { decimalToMinor, formatMinorMoney } from "@/components/qr/qr-utils";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -28,7 +34,14 @@ type Product = {
   is_available: boolean;
 };
 
-type Line = { product: Product; quantity: number };
+type ProductDetail = Product & CashierProductDetail;
+
+type Line = {
+  id: string;
+  product: Product;
+  quantity: number;
+  modifiers: ModifierOptionLike[];
+};
 
 const CHANNELS = [
   ["PHONE", "Telefon"],
@@ -43,11 +56,20 @@ const PAYMENTS = [
   ["MEAL_CARD", "Yemek kartı"],
 ] as const;
 
-const money = new Intl.NumberFormat("tr-TR", {
-  style: "currency",
-  currency: "TRY",
-  minimumFractionDigits: 2,
-});
+function lineId(
+  productId: string,
+  modifiers: readonly ModifierOptionLike[],
+): string {
+  const modifierIds = modifiers.map((modifier) => modifier.id).sort();
+  return [productId, ...modifierIds].join(":");
+}
+
+function lineUnitTotal(line: Line): bigint {
+  return line.modifiers.reduce(
+    (sum, modifier) => sum + decimalToMinor(modifier.price_delta),
+    decimalToMinor(String(line.product.selling_price)),
+  );
+}
 
 /**
  * Phone-order entry, optimised for a cashier with a handset to their ear.
@@ -69,11 +91,13 @@ export function NewDeliveryOrderDialog({
   const [addressLine, setAddressLine] = useState("");
   const [district, setDistrict] = useState("");
   const [note, setNote] = useState("");
-  const [payment, setPayment] = useState<(typeof PAYMENTS)[number][0]>(
-    "CASH_ON_DELIVERY",
-  );
+  const [payment, setPayment] =
+    useState<(typeof PAYMENTS)[number][0]>("CASH_ON_DELIVERY");
   const [search, setSearch] = useState("");
   const [lines, setLines] = useState<Line[]>([]);
+  const [modifierProduct, setModifierProduct] = useState<ProductDetail | null>(
+    null,
+  );
 
   const productsQuery = useQuery({
     queryKey: ["delivery", "products"],
@@ -85,39 +109,40 @@ export function NewDeliveryOrderDialog({
   });
 
   const products = useMemo(() => {
-    const all = (productsQuery.data?.items ?? []).filter((item) => item.is_available);
+    const all = (productsQuery.data?.items ?? []).filter(
+      (item) => item.is_available,
+    );
     const needle = search.toLocaleLowerCase("tr-TR");
     return needle
-      ? all.filter((item) => item.name.toLocaleLowerCase("tr-TR").includes(needle))
+      ? all.filter((item) =>
+          item.name.toLocaleLowerCase("tr-TR").includes(needle),
+        )
       : all;
   }, [productsQuery.data, search]);
 
   const total = lines.reduce(
-    (sum, line) => sum + Number(line.product.selling_price) * line.quantity,
-    0,
+    (sum, line) => sum + lineUnitTotal(line) * BigInt(line.quantity),
+    BigInt(0),
   );
 
-  function addProduct(product: Product) {
+  function addProduct(product: Product, modifiers: ModifierOptionLike[] = []) {
+    const id = lineId(product.id, modifiers);
     setLines((current) => {
-      const existing = current.find((line) => line.product.id === product.id);
+      const existing = current.find((line) => line.id === id);
       if (existing) {
         return current.map((line) =>
-          line.product.id === product.id
-            ? { ...line, quantity: line.quantity + 1 }
-            : line,
+          line.id === id ? { ...line, quantity: line.quantity + 1 } : line,
         );
       }
-      return [...current, { product, quantity: 1 }];
+      return [...current, { id, product, quantity: 1, modifiers }];
     });
   }
 
-  function changeQuantity(productId: string, delta: number) {
+  function changeQuantity(id: string, delta: number) {
     setLines((current) =>
       current
         .map((line) =>
-          line.product.id === productId
-            ? { ...line, quantity: line.quantity + delta }
-            : line,
+          line.id === id ? { ...line, quantity: line.quantity + delta } : line,
         )
         .filter((line) => line.quantity > 0),
     );
@@ -133,7 +158,26 @@ export function NewDeliveryOrderDialog({
     setPayment("CASH_ON_DELIVERY");
     setSearch("");
     setLines([]);
+    setModifierProduct(null);
   }
+
+  const productDetailMutation = useMutation({
+    mutationFn: (product: Product) =>
+      api.get<ProductDetail>(`catalog/products/${product.id}`),
+    onSuccess: (product) => {
+      if (product.modifier_groups.length > 0) {
+        setModifierProduct(product);
+      } else {
+        addProduct(product);
+      }
+    },
+    onError: (error) =>
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Ürün seçenekleri yüklenemedi.",
+      ),
+  });
 
   const createMutation = useMutation({
     mutationFn: () =>
@@ -142,6 +186,14 @@ export function NewDeliveryOrderDialog({
         items: lines.map((line) => ({
           product_id: line.product.id,
           quantity: String(line.quantity),
+          ...(line.modifiers.length > 0
+            ? {
+                modifiers: line.modifiers.map((modifier) => ({
+                  modifier_id: modifier.id,
+                  quantity: 1,
+                })),
+              }
+            : {}),
         })),
         // Generated per submission so a double-click cannot create two orders.
         idempotency_key: `manual-${crypto.randomUUID()}`,
@@ -182,7 +234,8 @@ export function NewDeliveryOrderDialog({
         <DialogHeader>
           <DialogTitle>Yeni paket siparişi</DialogTitle>
           <DialogDescription>
-            Telefonla gelen siparişi buradan girin; sipariş doğrudan mutfağa düşer.
+            Telefonla gelen siparişi buradan girin; sipariş doğrudan mutfağa
+            düşer.
           </DialogDescription>
         </DialogHeader>
 
@@ -307,12 +360,16 @@ export function NewDeliveryOrderDialog({
                   <button
                     key={product.id}
                     type="button"
-                    onClick={() => addProduct(product)}
+                    disabled={productDetailMutation.isPending}
+                    onClick={() => productDetailMutation.mutate(product)}
                     className="flex w-full items-center justify-between rounded-lg px-2.5 py-2 text-left text-sm hover:bg-muted"
                   >
                     <span className="min-w-0 truncate">{product.name}</span>
                     <span className="shrink-0 tabular-nums text-muted-foreground">
-                      {money.format(Number(product.selling_price))}
+                      {formatMinorMoney(
+                        decimalToMinor(String(product.selling_price)),
+                        "TRY",
+                      )}
                     </span>
                   </button>
                 ))}
@@ -333,19 +390,26 @@ export function NewDeliveryOrderDialog({
                 <ul className="divide-y">
                   {lines.map((line) => (
                     <li
-                      key={line.product.id}
+                      key={line.id}
                       className="flex items-center gap-2 px-2.5 py-2 text-sm"
                     >
-                      <span className="min-w-0 flex-1 truncate">
-                        {line.product.name}
-                      </span>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate">{line.product.name}</p>
+                        {line.modifiers.length > 0 ? (
+                          <p className="truncate text-xs text-muted-foreground">
+                            {line.modifiers
+                              .map((modifier) => modifier.name)
+                              .join(", ")}
+                          </p>
+                        ) : null}
+                      </div>
                       <div className="flex items-center gap-1">
                         <Button
                           type="button"
                           variant="ghost"
                           size="icon-sm"
                           aria-label={`${line.product.name} adet azalt`}
-                          onClick={() => changeQuantity(line.product.id, -1)}
+                          onClick={() => changeQuantity(line.id, -1)}
                         >
                           <Minus className="size-3.5" />
                         </Button>
@@ -357,14 +421,15 @@ export function NewDeliveryOrderDialog({
                           variant="ghost"
                           size="icon-sm"
                           aria-label={`${line.product.name} adet artır`}
-                          onClick={() => changeQuantity(line.product.id, 1)}
+                          onClick={() => changeQuantity(line.id, 1)}
                         >
                           <Plus className="size-3.5" />
                         </Button>
                       </div>
                       <span className="w-20 shrink-0 text-right tabular-nums">
-                        {money.format(
-                          Number(line.product.selling_price) * line.quantity,
+                        {formatMinorMoney(
+                          lineUnitTotal(line) * BigInt(line.quantity),
+                          "TRY",
                         )}
                       </span>
                     </li>
@@ -376,7 +441,7 @@ export function NewDeliveryOrderDialog({
                   Toplam
                 </span>
                 <span className="text-lg font-bold tabular-nums">
-                  {money.format(total)}
+                  {formatMinorMoney(total, "TRY")}
                 </span>
               </div>
             </div>
@@ -391,11 +456,28 @@ export function NewDeliveryOrderDialog({
             disabled={!canSubmit || createMutation.isPending}
             onClick={() => createMutation.mutate()}
           >
-            {createMutation.isPending ? <Loader2 className="animate-spin" /> : null}
+            {createMutation.isPending ? (
+              <Loader2 className="animate-spin" />
+            ) : null}
             Siparişi oluştur
           </Button>
         </DialogFooter>
       </DialogContent>
+      <CashierModifierDialog
+        key={modifierProduct?.id ?? "no-modifier-product"}
+        product={modifierProduct}
+        pending={false}
+        onClose={() => setModifierProduct(null)}
+        onConfirm={(modifierIds) => {
+          if (!modifierProduct) return;
+          const selectedIds = new Set(modifierIds);
+          const modifiers = modifierProduct.modifier_groups.flatMap((group) =>
+            group.modifiers.filter((modifier) => selectedIds.has(modifier.id)),
+          );
+          addProduct(modifierProduct, modifiers);
+          setModifierProduct(null);
+        }}
+      />
     </Dialog>
   );
 }
