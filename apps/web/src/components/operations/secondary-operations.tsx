@@ -246,6 +246,7 @@ export function ClosedOrdersPage() {
       if (!needle) return true;
       return [
         order.id,
+        receiptsByOrder.get(order.id)?.daily_number,
         order.table_name,
         order.customer_name,
         order.source,
@@ -256,7 +257,7 @@ export function ClosedOrdersPage() {
           String(value).toLocaleLowerCase("tr-TR").includes(needle),
         );
     });
-  }, [orders, search, methodFilter]);
+  }, [orders, search, methodFilter, receiptsByOrder]);
   const paidTotal = orders
     .filter((order) => order.status === "PAID")
     .reduce((total, order) => total + Number(order.total), 0);
@@ -364,7 +365,8 @@ export function ClosedOrdersPage() {
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
-              placeholder="Masa, sipariş, kanal veya oda ara"
+              aria-label="Fiş no, masa veya sipariş ara"
+              placeholder="Fiş no, masa, sipariş, kanal veya oda ara"
               className="pl-9"
             />
           </div>

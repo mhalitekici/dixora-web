@@ -210,6 +210,7 @@
 .dixora-receipt {
   width: 80mm;
   max-width: 100%;
+  box-sizing: border-box;
   margin: 0 auto;
   padding: 4mm;
   background: #fff;
@@ -259,6 +260,8 @@
 .dixora-receipt .receipt-row dt,
 .dixora-receipt .receipt-row dd {
   margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .dixora-receipt .receipt-row dd {
@@ -287,15 +290,25 @@
 }
 
 .dixora-receipt .receipt-line {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 2.5rem 5rem;
+  gap: 4px;
+  align-items: start;
+}
+
+.dixora-receipt .receipt-line-head {
+  border-bottom: 1px solid #000;
+  padding-bottom: 2px;
+  font-size: 9px;
+  font-weight: 800;
+  text-transform: uppercase;
 }
 
 .dixora-receipt .receipt-line-name {
   flex: 1;
   font-weight: 650;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .dixora-receipt .receipt-comp {
@@ -304,7 +317,21 @@
 }
 
 .dixora-receipt .receipt-line-total {
+  white-space: normal;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+.dixora-receipt .receipt-line-quantity {
   white-space: nowrap;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.dixora-receipt .receipt-line-unit {
+  overflow-wrap: anywhere;
+  text-align: right;
   font-variant-numeric: tabular-nums;
 }
 
@@ -320,6 +347,14 @@
 
 /* Only the receipt reaches the paper; everything else is hidden. */
 @media print {
+  html,
+  body {
+    width: 80mm !important;
+    min-width: 0 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
   body:has(.dixora-receipt[data-print-target="true"]) * {
     visibility: hidden;
   }
@@ -333,15 +368,18 @@
   }
 
   .dixora-receipt[data-print-target="true"] {
-    position: fixed;
-    inset: 0 auto auto 0;
-    margin: 0;
-    padding: 3mm;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 80mm;
+    max-width: none;
+    margin: 0 !important;
+    padding: 2mm 3mm 3mm 2mm;
     box-shadow: none;
   }
 
   @page {
-    size: 80mm auto;
+    size: auto;
     margin: 0;
   }
 }

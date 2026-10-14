@@ -27,6 +27,7 @@ import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { StatusBadge } from "@/components/shared/status-badge";
+import { originalBillPrintKey } from "@/components/printing/bill-print-key";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -154,6 +155,10 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
   const [cartOpen, setCartOpen] = useState(false);
   const [cancellationItem, setCancellationItem] = useState<OrderItem | null>(null);
   const [cancellationReason, setCancellationReason] = useState("");
+  const [noteTarget, setNoteTarget] = useState<
+    { kind: "pending"; item: PendingItem } | { kind: "sent"; item: OrderItem } | null
+  >(null);
+  const [itemNote, setItemNote] = useState("");
   const submissionKey = useRef<string | null>(null);
   const detailRequest = useRef(0);
 
@@ -289,7 +294,7 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
             order_id: order.id,
           },
           kind: "ORIGINAL",
-          idempotency_key: `bill-original:${order.id}`,
+          idempotency_key: originalBillPrintKey(order),
         }),
       });
     },
@@ -323,6 +328,33 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "İptal talebi oluşturulamadı."),
+  });
+
+  const noteMutation = useMutation({
+    mutationFn: async () => {
+      if (!order || noteTarget?.kind !== "sent") throw new Error("Sipariş kalemi bulunamadı.");
+      return api<Order>(`/orders/${order.id}/items/${noteTarget.item.id}/note`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          expected_version: order.version,
+          idempotency_key: crypto.randomUUID(),
+          note: itemNote.trim() || null,
+        }),
+      });
+    },
+    onSuccess: async (updatedOrder) => {
+      queryClient.setQueryData(["waiter", "table", tableId, "active-order"], updatedOrder);
+      setNoteTarget(null);
+      toast.success("Ürün açıklaması kaydedildi.");
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["waiter", "table", tableId] }),
+        queryClient.invalidateQueries({ queryKey: ["cashier", "orders"] }),
+      ]);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Ürün açıklaması kaydedilemedi.");
+      void orderQuery.refetch();
+    },
   });
 
   async function openProduct(product: Product) {
@@ -481,6 +513,20 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                           {!cancelled ? (
                             <button
                               type="button"
+                              disabled={["PAID", "CANCELLED", "VOIDED"].includes(order.status)}
+                              onClick={() => {
+                                setNoteTarget({ kind: "sent", item });
+                                setItemNote(item.note ?? "");
+                              }}
+                              className="inline-flex items-center gap-1 text-[0.62rem] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
+                            >
+                              <MessageSquareText className="size-3" />
+                              {item.note ? "Açıklamayı düzenle" : "Açıklama ekle"}
+                            </button>
+                          ) : null}
+                          {!cancelled ? (
+                            <button
+                              type="button"
                               onClick={() => {
                                 setCancellationItem(item);
                                 setCancellationReason("");
@@ -559,6 +605,17 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                         {item.note ? (
                           <p className="mt-1 text-[0.62rem] text-amber-700 dark:text-amber-300">{item.note}</p>
                         ) : null}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setNoteTarget({ kind: "pending", item });
+                            setItemNote(item.note);
+                          }}
+                          className="mt-1 inline-flex items-center gap-1 text-[0.62rem] font-medium text-muted-foreground hover:text-foreground"
+                        >
+                          <MessageSquareText className="size-3" />
+                          {item.note ? "Açıklamayı düzenle" : "Açıklama ekle"}
+                        </button>
                       </div>
                       <div className="text-right">
                         <p className="text-xs font-semibold">
@@ -893,6 +950,7 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                 <Textarea
                   id="product-note"
                   rows={3}
+                  maxLength={500}
                   value={productNote}
                   onChange={(event) => setProductNote(event.target.value)}
                   placeholder="Örn. Sos ayrı, soğansız…"
@@ -945,6 +1003,62 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                     productQuantity,
                 )}
               </span>
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(noteTarget)}
+        onOpenChange={(open) => {
+          if (!open && !noteMutation.isPending) setNoteTarget(null);
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Ürün açıklaması</DialogTitle>
+            <DialogDescription>
+              {noteTarget?.kind === "pending"
+                ? noteTarget.item.product.name
+                : noteTarget?.kind === "sent" ? noteTarget.item.product_name_snapshot : ""}
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            id="waiter-item-note-form"
+            className="space-y-2"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!noteTarget) return;
+              if (noteTarget.kind === "sent") {
+                noteMutation.mutate();
+                return;
+              }
+              const lineId = noteTarget.item.lineId;
+              setPending((items) => items.map((item) =>
+                item.lineId === lineId ? { ...item, note: itemNote.trim() } : item,
+              ));
+              submissionKey.current = null;
+              setNoteTarget(null);
+            }}
+          >
+            <Label htmlFor="waiter-item-note">Açıklama</Label>
+            <Textarea
+              id="waiter-item-note"
+              value={itemNote}
+              onChange={(event) => setItemNote(event.target.value)}
+              maxLength={500}
+              placeholder="Örn. Soğansız, sos ayrı…"
+              disabled={noteMutation.isPending}
+              rows={3}
+            />
+          </form>
+          <DialogFooter>
+            <Button variant="outline" disabled={noteMutation.isPending} onClick={() => setNoteTarget(null)}>
+              Vazgeç
+            </Button>
+            <Button type="submit" form="waiter-item-note-form" disabled={noteMutation.isPending}>
+              {noteMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
+              Açıklamayı kaydet
             </Button>
           </DialogFooter>
         </DialogContent>

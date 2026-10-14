@@ -43,6 +43,67 @@ const billDocument: ReceiptDocument = {
 };
 
 describe("ThermalReceipt", () => {
+  it.each(["ORIGINAL", "REPRINT"] as const)(
+    "combines repeated purchases on a %s receipt with their stored amounts",
+    (kind) => {
+      const lines = [
+        {
+          name: "Baklava",
+          productId: "baklava",
+          quantity: "1",
+          unitPrice: "0.10",
+          lineTotal: "0.10",
+        },
+        {
+          name: "Baklava",
+          productId: "baklava",
+          quantity: "1.00",
+          unitPrice: "0.1",
+          lineTotal: "0.10",
+        },
+      ];
+      render(<ThermalReceipt document={{ ...billDocument, kind, lines }} />);
+      const row = screen.getByText("Baklava").closest("li") as HTMLElement;
+      expect(within(row).getByText("2")).toBeVisible();
+      expect(within(row).getByText("0,20 TL")).toBeVisible();
+      expect(lines.map((line) => line.quantity)).toEqual(["1", "1.00"]);
+      const total = screen
+        .getByText("GENEL TOPLAM")
+        .closest(".receipt-row") as HTMLElement;
+      expect(within(total).getByText("360,00 TL")).toBeVisible();
+    },
+  );
+
+  it("keeps different products, prices, options, notes and complimentary lines separate", () => {
+    const line = {
+      name: "Baklava",
+      productId: "baklava",
+      quantity: "1",
+      unitPrice: "100.00",
+      lineTotal: "100.00",
+    };
+    render(
+      <ThermalReceipt
+        document={{
+          ...billDocument,
+          lines: [
+            line,
+            { ...line, productId: "other-baklava" },
+            { ...line, taxRate: "20.00" },
+            { ...line, discount: "10.00" },
+            { ...line, unitPrice: "120.00", lineTotal: "120.00" },
+            { ...line, modifiers: ["Dondurmalı"] },
+            { ...line, note: "Az şerbetli" },
+            { ...line, complimentary: true, lineTotal: "0.00" },
+          ],
+        }}
+      />,
+    );
+    expect(screen.getAllByText("Baklava")).toHaveLength(8);
+    expect(screen.getByText("İKRAM")).toBeVisible();
+    expect(screen.getByText("Açıklama: Az şerbetli")).toBeVisible();
+  });
+
   it("carries the business branding and contact block", () => {
     render(<ThermalReceipt document={billDocument} />);
     // Branding is printed exactly as the owner entered it.
@@ -55,21 +116,25 @@ describe("ThermalReceipt", () => {
 
   it("renders snapshot line items with quantities, modifiers and notes", () => {
     render(<ThermalReceipt document={billDocument} />);
-    expect(screen.getByText("2 x Latte")).toBeVisible();
-    expect(screen.getByText("1 x Cheesecake")).toBeVisible();
+    expect(screen.getByText("Latte")).toBeVisible();
+    expect(screen.getByText("Cheesecake")).toBeVisible();
+    expect(screen.getByText("Adet")).toBeVisible();
+    expect(screen.queryByText("Birim")).not.toBeInTheDocument();
+    expect(screen.queryByText("120,00 TL")).not.toBeInTheDocument();
+    expect(screen.getByText("240,00 TL")).toBeVisible();
+    expect(screen.getByText("Toplam")).toBeVisible();
     expect(screen.getByText("+ Ekstra sos")).toBeVisible();
-    expect(screen.getByText("Not: Az şekerli")).toBeVisible();
+    expect(screen.getByText("Açıklama: Az şekerli")).toBeVisible();
     expect(screen.getByText("İKRAM")).toBeVisible();
-    // Unit price is only shown where quantity > 1 (it is redundant otherwise).
-    expect(screen.getByText(/Birim/)).toBeVisible();
   });
 
   it("shows the money block with discount and grand total", () => {
     render(<ThermalReceipt document={billDocument} />);
     expect(screen.getByText("Ara toplam")).toBeVisible();
     expect(screen.getByText("İndirim")).toBeVisible();
-    expect(screen.getByText("Kuver %10")).toBeVisible();
-    const total = screen.getByText("TOPLAM").closest(".receipt-row");
+    expect(screen.getByText("Servis ücreti")).toBeVisible();
+    expect(screen.queryByText(/Kuver/)).toBeNull();
+    const total = screen.getByText("GENEL TOPLAM").closest(".receipt-row");
     expect(total).not.toBeNull();
     expect(within(total as HTMLElement).getByText("360,00 TL")).toBeVisible();
   });
@@ -153,6 +218,19 @@ describe("ThermalReceipt", () => {
   it("never renders empty when an order has no lines", () => {
     render(<ThermalReceipt document={{ ...billDocument, lines: [] }} />);
     expect(screen.getByText("Kayıtlı ürün yok")).toBeVisible();
-    expect(screen.getByText("TOPLAM")).toBeVisible();
+    expect(screen.getByText("GENEL TOPLAM")).toBeVisible();
+  });
+
+  it("keeps service and cover charges as separate totals", () => {
+    render(
+      <ThermalReceipt
+        document={{
+          ...billDocument,
+          totals: { ...billDocument.totals, coverCharge: "12.00" },
+        }}
+      />,
+    );
+    expect(screen.getByText("Servis ücreti")).toBeVisible();
+    expect(screen.getByText("Kuver ücreti")).toBeVisible();
   });
 });

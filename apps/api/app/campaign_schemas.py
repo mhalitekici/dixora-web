@@ -16,6 +16,7 @@ class CampaignUpsert(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     description: str | None = Field(default=None, max_length=400)
     is_active: bool = True
+    notify_loyalty_members: bool = True
     branch_ids: list[UUID] = Field(min_length=1)
 
     buy_product_id: UUID | None = None
@@ -49,6 +50,10 @@ class CampaignOut(BaseModel):
     name: str
     description: str | None
     is_active: bool
+    notify_loyalty_members: bool
+    activation_version: int
+    email_notification_status: Literal["NOT_REQUESTED", "PENDING", "SENT", "FAILED"]
+    email_notification_recipients: int
     branch_ids: list[UUID]
     buy_product_id: UUID | None
     buy_category_id: UUID | None

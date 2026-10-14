@@ -49,6 +49,12 @@ class Campaign(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(120), nullable=False)
     description: Mapped[str | None] = mapped_column(String(400), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    notify_loyalty_members: Mapped[bool] = mapped_column(
+        Boolean, default=True, nullable=False
+    )
+    # Changes only when an inactive campaign becomes active. Ordinary edits use
+    # `version` and must never send the announcement again.
+    activation_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     # --- Condition: what the customer has to buy -------------------------
     # Exactly one of product/category is set; enforced in the service layer so

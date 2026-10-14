@@ -179,3 +179,60 @@ def registration_code_email(
         body=body,
         footer="Bu isteği siz yapmadıysanız bu e-postayı yok sayabilirsiniz.",
     )
+
+
+def campaign_announcement_email(
+    *,
+    greeting_name: str,
+    business_name: str,
+    campaign_name: str,
+    offer: str,
+    details: str | None = None,
+) -> str:
+    name = escape(greeting_name or "Değerli üyemiz")
+    business = escape(business_name)
+    campaign = escape(campaign_name)
+    offer_text = escape(offer)
+    detail_html = _paragraph(escape(details)) if details else ""
+    body = (
+        _paragraph(f"Merhaba <strong>{name}</strong>,")
+        + _paragraph(f"<strong>{business}</strong>’de yeni bir kampanya başladı.")
+        + _paragraph(f'<strong style="color:{BRAND};">{offer_text}</strong>')
+        + detail_html
+        + _paragraph("Sizi tekrar aramızda görmekten mutluluk duyarız.")
+        + _paragraph(f"<strong>{business}</strong>")
+    )
+    return _shell(
+        title=campaign,
+        body=body,
+        footer="Bu iletiyi kampanya e-postalarına izin verdiğiniz için aldınız.",
+    )
+
+
+def loyalty_reward_available_email(
+    *,
+    greeting_name: str,
+    business_name: str,
+    reward_description: str,
+    code: str,
+) -> str:
+    name = escape(greeting_name or "Değerli üyemiz")
+    business = escape(business_name)
+    reward = escape(reward_description)
+    body = (
+        _paragraph(f"Merhaba <strong>{name}</strong>,")
+        + _paragraph("Tebrikler!")
+        + _paragraph(f"<strong>{business}</strong> sadakat programında ödül kazandınız.")
+        + _paragraph(f"Ödülünüz:<br><strong>{reward}</strong>")
+        + _paragraph(
+            "Ödülünüzü kullanmak için işletmede bu doğrulama kodunu kasiyere gösterin:"
+        )
+        + _code_block(escape(code), "Ödül doğrulama kodu")
+        + _paragraph("Bu kod yalnızca bu ödül için ve bir kez kullanılabilir.")
+        + _paragraph(f"<strong>{business}</strong>")
+    )
+    return _shell(
+        title="Sadakat ödülünüz hazır",
+        body=body,
+        footer="Bu e-posta kazandığınız ödülle ilgili işlemsel bir bildirimdir.",
+    )

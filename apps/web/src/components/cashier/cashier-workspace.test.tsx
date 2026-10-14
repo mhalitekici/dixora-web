@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -53,6 +53,48 @@ const tableWithOrder = {
   state: "PREPARING",
   version: 1,
 };
+
+const availableTable = {
+  id: "table-2",
+  area_id: "area-1",
+  name: "B2",
+  guest_label: null,
+  capacity: 2,
+  state: "AVAILABLE",
+  version: 1,
+};
+
+const billRequestedTable = {
+  id: "table-3",
+  area_id: "area-1",
+  name: "B3",
+  guest_label: null,
+  capacity: 4,
+  state: "BILL_REQUESTED",
+  version: 1,
+};
+
+const cashierCategories = [
+  { id: "category-hot", name: "Sıcak İçecekler", is_active: true },
+  { id: "category-food", name: "Yemekler", is_active: true },
+];
+
+const cashierProducts = [
+  {
+    id: "product-latte",
+    name: "Cafe Latte",
+    category_id: "category-hot",
+    selling_price: "95.00",
+    is_available: true,
+  },
+  {
+    id: "product-burger",
+    name: "Cheeseburger",
+    category_id: "category-food",
+    selling_price: "220.00",
+    is_available: true,
+  },
+];
 
 const orderWithDetails = {
   id: "order-1",
@@ -117,7 +159,9 @@ function routeFetchWithOrder(input: RequestInfo | URL) {
     return Promise.resolve(jsonResponse([{ id: "area-1", name: "Salon" }]));
   }
   if (url.includes("/catalog/products"))
-    return Promise.resolve(jsonResponse([]));
+    return Promise.resolve(jsonResponse(cashierProducts));
+  if (url.includes("/catalog/categories"))
+    return Promise.resolve(jsonResponse(cashierCategories));
   if (url.includes("/shifts/current")) {
     return Promise.resolve(
       jsonResponse({ id: "shift-1", status: "OPEN", opening_cash: "1500.00" }),
@@ -129,7 +173,9 @@ function routeFetchWithOrder(input: RequestInfo | URL) {
     return Promise.resolve(jsonResponse([orderWithDetails]));
   if (url.includes("/qr/requests")) return Promise.resolve(jsonResponse([]));
   if (url.endsWith("/tables") || url.includes("/tables?")) {
-    return Promise.resolve(jsonResponse([tableWithOrder]));
+    return Promise.resolve(
+      jsonResponse([tableWithOrder, availableTable, billRequestedTable]),
+    );
   }
   return Promise.resolve(jsonResponse([]));
 }
@@ -161,6 +207,87 @@ function routeFetch(input: RequestInfo | URL) {
 describe("CashierWorkspace", () => {
   afterEach(() => {
     vi.unstubAllGlobals();
+  });
+
+  it("adds whole products and enables manual printing again for each new batch", async () => {
+    let currentOrder = orderWithDetails;
+    let lastAddition: Record<string, unknown> | null = null;
+    let batchCount = 0;
+    let addedCount = 0;
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url.endsWith("/catalog/products/product-latte")) return Promise.resolve(jsonResponse({ ...cashierProducts[0], modifier_groups: [] }));
+      if (url.endsWith("/orders/order-1/items") && init?.method === "POST") {
+        lastAddition = JSON.parse(String(init.body));
+        const quantity = String((lastAddition as { items: Array<{ quantity: string }> }).items[0].quantity);
+        currentOrder = { ...currentOrder, version: currentOrder.version + 1, items: [...currentOrder.items, { ...orderWithDetails.items[0], id: `added-${++addedCount}`, status: "SUBMITTED", product_name_snapshot: "Cafe Latte", quantity, unit_price: "95.00", line_total: String(95 * Number(quantity)), modifiers: [] }] };
+        return Promise.resolve(jsonResponse(currentOrder));
+      }
+      if (url.endsWith("/orders/order-1/accept") && init?.method === "POST") {
+        batchCount++;
+        currentOrder = { ...currentOrder, version: currentOrder.version + 1, items: currentOrder.items.map((item) => ({ ...item, status: "ACCEPTED" })) };
+        return Promise.resolve(jsonResponse(currentOrder));
+      }
+      if (url.endsWith("/orders?limit=200")) return Promise.resolve(jsonResponse([currentOrder]));
+      return routeFetchWithOrder(input);
+    }));
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    render(<CashierWorkspace />, { wrapper: ({ children }: { children: ReactNode }) => <QueryClientProvider client={queryClient}>{children}</QueryClientProvider> });
+    await user.click(await screen.findByRole("button", { name: /B1/ }));
+    expect(screen.getByRole("button", { name: /Siparişi yazdır/ })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Ürün ekle" }));
+    expect(screen.queryByRole("button", { name: "Yarım porsiyon" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /Cafe Latte/ }));
+    await waitFor(() => expect(lastAddition).toMatchObject({ items: [{ quantity: "1" }], auto_accept: false }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Siparişi yazdır/ })).toBeEnabled());
+    expect(batchCount).toBe(0);
+    await user.click(screen.getByRole("button", { name: /Siparişi yazdır/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Siparişi yazdır/ })).toBeDisabled());
+    expect(batchCount).toBe(1);
+    await user.click(screen.getByRole("button", { name: "Ürün ekle" }));
+    await user.click(screen.getByRole("button", { name: /Cafe Latte/ }));
+    await waitFor(() => expect(screen.getByRole("button", { name: /Siparişi yazdır/ })).toBeEnabled());
+    expect(batchCount).toBe(1);
+  });
+
+  it("opens on the table grid and returns there from a selected table", async () => {
+    vi.stubGlobal("fetch", vi.fn(routeFetchWithOrder));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    render(<CashierWorkspace />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={queryClient}>
+          {children}
+        </QueryClientProvider>
+      ),
+    });
+
+    expect(
+      await screen.findByRole("heading", { name: "Masalar" }),
+    ).toBeVisible();
+    expect(screen.queryByText("Hamburger")).toBeNull();
+    expect(screen.getByRole("button", { name: /B1/ })).toHaveClass("bg-red-50");
+    expect(screen.getByRole("button", { name: /B2/ })).toHaveClass(
+      "bg-emerald-50",
+    );
+    expect(screen.getByRole("button", { name: /B3/ })).toHaveClass(
+      "bg-amber-100",
+    );
+    await user.click(screen.getByRole("button", { name: /B1/ }));
+    expect(await screen.findByText("Hamburger")).toBeVisible();
+    expect(screen.queryByRole("button", { name: /B2/ })).toBeNull();
+    expect(screen.getByTitle("Sağ tık: misafir adı ekle")).toHaveTextContent(
+      "B1",
+    );
+    await user.click(screen.getByRole("button", { name: "Masalar" }));
+    expect(screen.queryByText("Hamburger")).toBeNull();
+    expect(screen.getByRole("button", { name: /B2/ })).toBeVisible();
+    expect(screen.getByRole("heading", { name: "Masalar" })).toHaveFocus();
   });
 
   it("shows live Hesap/QR/Onay counters sourced from the backend", async () => {
@@ -223,6 +350,96 @@ describe("CashierWorkspace", () => {
     ).toBeInTheDocument();
     expect(screen.queryByText("Hesabı böl")).not.toBeInTheDocument();
     expect(screen.queryByText("Parçalı ödeme")).not.toBeInTheDocument();
+  });
+
+  it("lets the cashier update a product note and shows the saved text", async () => {
+    let currentOrder = orderWithDetails;
+    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (
+        url.includes("/orders/order-1/items/item-1") &&
+        init?.method === "PATCH"
+      ) {
+        const body = JSON.parse(String(init.body)) as {
+          action: string;
+          note: string;
+        };
+        expect(body.action).toBe("UPDATE_NOTE");
+        expect(body.note).toBe("Sos ayrı, ekmek iyi kızarsın");
+        currentOrder = {
+          ...orderWithDetails,
+          version: 2,
+          items: [
+            {
+              ...orderWithDetails.items[0],
+              note: body.note,
+            },
+          ],
+        };
+        return Promise.resolve(jsonResponse(currentOrder));
+      }
+      if (url.includes("/orders?limit=200")) {
+        return Promise.resolve(jsonResponse([currentOrder]));
+      }
+      return routeFetchWithOrder(input);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const queryClient = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+    });
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    render(<CashierWorkspace />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={queryClient}>
+          {children}
+        </QueryClientProvider>
+      ),
+    });
+
+    await user.click(await screen.findByRole("button", { name: /B1/ }));
+    await user.click(
+      screen.getByRole("button", { name: "Açıklamayı düzenle" }),
+    );
+    const note = screen.getByLabelText("Açıklama");
+    expect(note).toHaveValue("Soğansız olsun, ekstra kızarmış");
+    await user.clear(note);
+    await user.type(note, "Sos ayrı, ekmek iyi kızarsın");
+    await user.click(screen.getByRole("button", { name: "Açıklamayı kaydet" }));
+
+    expect(
+      await screen.findByText("Sos ayrı, ekmek iyi kızarsın"),
+    ).toBeVisible();
+  });
+
+  it("filters cashier products by category before adding an item", async () => {
+    vi.stubGlobal("fetch", vi.fn(routeFetchWithOrder));
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const { default: userEvent } = await import("@testing-library/user-event");
+    const user = userEvent.setup();
+    render(<CashierWorkspace />, {
+      wrapper: ({ children }: { children: ReactNode }) => (
+        <QueryClientProvider client={queryClient}>
+          {children}
+        </QueryClientProvider>
+      ),
+    });
+
+    await user.click(await screen.findByRole("button", { name: /B1/ }));
+    await user.click(screen.getByRole("button", { name: /Ürün ekle/ }));
+    expect(
+      await screen.findByRole("button", { name: /Cafe Latte/ }),
+    ).toBeVisible();
+    expect(screen.getByRole("button", { name: /Cheeseburger/ })).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Sıcak İçecekler" }));
+    expect(screen.getByRole("button", { name: /Cafe Latte/ })).toBeVisible();
+    expect(screen.queryByRole("button", { name: /Cheeseburger/ })).toBeNull();
   });
 
   it("exposes one-touch quantity controls and updates the row from the API result", async () => {

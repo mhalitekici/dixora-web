@@ -24,6 +24,7 @@ from app.dependencies import (
 from app.errors import DomainError
 from app.models import (
     Branch,
+    DeliveryOrder,
     DiningTable,
     KitchenTicket,
     Order,
@@ -39,7 +40,12 @@ from app.models import (
     Tenant,
     User,
 )
-from app.models.enums import OrderItemStatus, OrderStatus, PaymentStatus, PrintJobStatus
+from app.models.enums import (
+    OrderSource,
+    OrderStatus,
+    PaymentStatus,
+    PrintJobStatus,
+)
 from app.schemas import (
     BridgeHeartbeat,
     BridgeHeartbeatOut,
@@ -64,11 +70,13 @@ from app.schemas import (
 )
 from app.security import as_utc
 from app.services.audit import add_audit_log
+from app.services.cashier_shifts import current_operator_shift, receipt_cashier_names
 from app.services.orders import (
     load_order,
     mark_order_bill_requested,
     order_bill_reference,
 )
+from app.services.receipt_lines import aggregate_order_receipt_lines
 from app.services.receipts import allocate_order_receipt
 
 router = APIRouter(prefix="/printing", tags=["printing"])
@@ -443,6 +451,11 @@ async def retry_manual_print_job(
             status_code=409,
         )
     job.status = PrintJobStatus.PENDING
+    previous_attempt_count = job.attempt_count
+    # Only an exhausted job needs a fresh retry cycle. Keeping the counter for
+    # earlier uncertain failures preserves the existing attempt history.
+    if job.attempt_count >= 5:
+        job.attempt_count = 0
     job.manual_retry_required = False
     job.claimed_by_bridge_id = None
     job.claimed_at = None
@@ -458,8 +471,8 @@ async def retry_manual_print_job(
         resource_type="print_job",
         resource_id=job.id,
         branch_id=job.branch_id,
-        previous_value={"attempt_count": job.attempt_count, "status": "FAILED"},
-        new_value={"status": "PENDING"},
+        previous_value={"attempt_count": previous_attempt_count, "status": "FAILED"},
+        new_value={"attempt_count": job.attempt_count, "status": "PENDING"},
     )
     await db.commit()
     return PrintJobOut.model_validate(job)
@@ -589,11 +602,11 @@ async def _resolve_print_defaults(
     station_id = payload.preparation_station_id
     printer_device_id = payload.printer_device_id
     payload_type = str(payload.payload.get("type") or "").upper()
-    if payload_type == "BILL":
+    if payload_type in {"BILL", "COURIER"}:
         if station_id is not None:
             raise DomainError(
                 "cashier_printer_station_not_allowed",
-                "A bill cannot be routed to a preparation station",
+                "Cashier and courier receipts cannot be routed to a preparation station",
                 status_code=422,
             )
         if printer_device_id is not None:
@@ -663,6 +676,25 @@ async def _build_bill_payload(
     )
     remaining = max(Decimal("0.00"), order.total - paid_total)
     issue_time = receipt.issued_at.isoformat()
+    staff_name = (await receipt_cashier_names(db, [receipt])).get(receipt.id)
+    source_labels = {
+        OrderSource.WAITER: "GARSON",
+        OrderSource.CASHIER: "KASA",
+        OrderSource.QR: "QR MENÜ",
+        OrderSource.TAKEAWAY: "PAKET SİPARİŞ",
+        OrderSource.DELIVERY: "PAKET SİPARİŞ",
+        OrderSource.KIOSK: "KİOSK",
+        OrderSource.API: "HARİCİ SİPARİŞ",
+    }
+    package_order = order.source in {OrderSource.TAKEAWAY, OrderSource.DELIVERY}
+    order_label = (
+        f"Paket - {order.customer_name}"
+        if package_order and order.customer_name
+        else "Paket sipariş"
+        if package_order
+        else None
+    )
+    lines = aggregate_order_receipt_lines(order.items)
     return {
         "type": "BILL",
         "stage": "CLOSING" if order.status == OrderStatus.PAID else "PRE_PAYMENT",
@@ -670,6 +702,7 @@ async def _build_bill_payload(
         "copies": 1,
         "is_reprint": kind == "REPRINT",
         "document": {
+            "document_type": "BILL",
             "title": "HESAP ÖZETİ",
             "business_name": tenant.name,
             "branch_name": branch.name,
@@ -678,40 +711,23 @@ async def _build_bill_payload(
             "receipt_number": receipt.daily_number,
             "business_date": receipt.business_date.isoformat(),
             "table_name": order.table_name,
-            "waiter_name": identity.display_name,
+            "waiter_name": staff_name,
+            "staff_label": "Kasiyer",
+            "source_label": source_labels[order.source],
+            "order_label": order_label,
             "submitted_at": issue_time,
             "currency": order.currency,
-            "lines": [
-                {
-                    "name": item.product_name_snapshot,
-                    "quantity": str(item.quantity),
-                    "unit_price": str(item.unit_price),
-                    "line_total": str(item.line_total),
-                    "modifiers": [
-                        (
-                            f"{modifier.quantity}x {modifier.name_snapshot}"
-                            if modifier.quantity > 1
-                            else modifier.name_snapshot
-                        )
-                        for modifier in item.modifiers
-                    ],
-                    "note": item.note,
-                    "complimentary": item.is_complimentary,
-                }
-                for item in order.items
-                if item.status not in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}
-            ],
-            "footer": [
-                f"FİŞ NO: {receipt.daily_number}",
-                *(["TEKRAR BASKI"] if kind == "REPRINT" else []),
-                f"Ara toplam: {order.subtotal}",
-                f"İndirim: {order.discount_total}",
-                f"Vergi: {order.tax_total}",
-                f"Servis: {order.service_charge_amount}",
-                f"Toplam: {order.total}",
-                f"Ödenen: {paid_total}",
-                f"Kalan: {remaining}",
-            ],
+            "lines": lines,
+            "totals": {
+                "subtotal": str(order.subtotal),
+                "discount": str(order.discount_total),
+                "tax": str(order.tax_total),
+                "service_charge": str(order.service_charge_amount),
+                "total": str(order.total),
+                "paid": str(paid_total),
+                "remaining": str(remaining),
+            },
+            "footer": ["Bizi tercih ettiğiniz için teşekkür ederiz."],
         },
         "receipt": {
             "kind": kind,
@@ -727,29 +743,27 @@ async def _build_bill_payload(
                 "dailyReceiptNumber": receipt.daily_number,
                 "businessDate": receipt.business_date.isoformat(),
                 "tableName": order.table_name,
+                "orderLabel": order_label,
+                "sourceLabel": source_labels[order.source],
                 "guestName": order.customer_name,
-                "staffName": identity.display_name,
+                "staffName": staff_name,
+                "staffLabel": "Kasiyer",
                 "issuedAt": issue_time,
             },
             "lines": [
                 {
-                    "name": item.product_name_snapshot,
-                    "quantity": str(item.quantity),
-                    "unitPrice": str(item.unit_price),
-                    "lineTotal": str(item.line_total),
-                    "modifiers": [
-                        (
-                            f"{modifier.quantity}x {modifier.name_snapshot}"
-                            if modifier.quantity > 1
-                            else modifier.name_snapshot
-                        )
-                        for modifier in item.modifiers
-                    ],
-                    "note": item.note,
-                    "complimentary": item.is_complimentary,
+                    "productId": line["product_id"],
+                    "name": line["name"],
+                    "quantity": line["quantity"],
+                    "unitPrice": line["unit_price"],
+                    "lineTotal": line["line_total"],
+                    "taxRate": line["tax_rate"],
+                    "discount": line["discount"],
+                    "modifiers": line["modifiers"],
+                    "note": line["note"],
+                    "complimentary": line["complimentary"],
                 }
-                for item in order.items
-                if item.status not in {OrderItemStatus.CANCELLED, OrderItemStatus.VOIDED}
+                for line in lines
             ],
             "totals": {
                 "subtotal": str(order.subtotal),
@@ -771,7 +785,87 @@ async def _build_bill_payload(
                 for payment in order.payments
                 if payment.status == PaymentStatus.COMPLETED
             ],
-            "footerNote": "Garson hesabınızı masanıza getirir.",
+            "footerNote": "Bizi tercih ettiğiniz için teşekkür ederiz.",
+        },
+    }
+
+
+async def _build_courier_payload(
+    db: DbSession,
+    *,
+    identity: Identity,
+    order_id: UUID,
+    kind: str,
+) -> dict[str, object]:
+    order = await load_order(db, require_tenant(identity), order_id, lock=True)
+    if order.branch_id != identity.branch_id:
+        raise DomainError("order_not_found", "Order not found", status_code=404)
+    delivery = (
+        await db.execute(
+            select(DeliveryOrder).where(
+                DeliveryOrder.tenant_id == order.tenant_id,
+                DeliveryOrder.branch_id == order.branch_id,
+                DeliveryOrder.order_id == order.id,
+            )
+        )
+    ).scalar_one_or_none()
+    if delivery is None:
+        raise DomainError(
+            "delivery_order_not_found",
+            "Courier receipt requires a package order",
+            status_code=404,
+        )
+
+    branch = await _scoped_branch(db, tenant_id=order.tenant_id, branch_id=order.branch_id)
+    tenant = await db.get(Tenant, order.tenant_id)
+    assert tenant is not None
+    payment_labels = {
+        "ONLINE": "Online ödendi",
+        "CASH_ON_DELIVERY": "Kapıda nakit",
+        "CARD_ON_DELIVERY": "Kapıda kart",
+        "MEAL_CARD": "Yemek kartı",
+        "OTHER": "Diğer",
+    }
+    channel_labels = {
+        "PHONE": "TELEFON SİPARİŞİ",
+        "TAKEAWAY": "GEL-AL",
+        "OWN_DELIVERY": "PAKET SİPARİŞ",
+        "MARKETPLACE": "PLATFORM SİPARİŞİ",
+    }
+    address = ", ".join(
+        part for part in [delivery.address_line, delivery.neighbourhood, delivery.district] if part
+    )
+    footer: list[str] = []
+    if delivery.address_note:
+        footer.append(f"Adres notu: {delivery.address_note}")
+    if delivery.customer_note:
+        footer.append(f"Sipariş notu: {delivery.customer_note}")
+    if delivery.courier_name:
+        footer.append(f"Kurye: {delivery.courier_name}")
+
+    return {
+        "type": "COURIER",
+        "content_type": "application/vnd.dixora.receipt+json",
+        "copies": 1,
+        "is_reprint": kind == "REPRINT",
+        "document": {
+            "document_type": "COURIER",
+            "title": "KURYE FİŞİ",
+            "business_name": tenant.name,
+            "branch_name": branch.name,
+            "station_name": "KASA",
+            "order_number": delivery.external_display_id or order_bill_reference(order.id),
+            "source_label": channel_labels[delivery.channel.value],
+            "order_label": delivery.provider.value if delivery.provider else "Paket sipariş",
+            "customer_name": delivery.customer_name,
+            "customer_phone": delivery.customer_phone,
+            "delivery_address": address or None,
+            "payment_label": payment_labels[delivery.payment_method.value],
+            "submitted_at": delivery.created_at.isoformat(),
+            "currency": order.currency,
+            "lines": aggregate_order_receipt_lines(order.items),
+            "totals": {"total": str(order.total)},
+            "footer": footer,
         },
     }
 
@@ -802,14 +896,16 @@ async def create_print_job(
     )
     job_payload = payload.payload
     receipt: Receipt | None = None
-    if payload.order_id is not None and str(payload.payload.get("type") or "").upper() == "BILL":
+    payload_type = str(payload.payload.get("type") or "").upper()
+    if payload.order_id is not None and payload_type == "BILL":
         branch = await _scoped_branch(db, tenant_id=tenant_id, branch_id=branch_id)
+        shift = await current_operator_shift(db, identity)
         receipt, _ = await allocate_order_receipt(
             db,
             tenant_id=tenant_id,
             branch=branch,
             order_id=payload.order_id,
-            actor_user_id=identity.user_id,
+            actor_user_id=shift.user_id if shift else identity.user_id,
         )
         if payload.kind.value == "REPRINT":
             receipt.reprint_count += 1
@@ -819,6 +915,13 @@ async def create_print_job(
             order_id=payload.order_id,
             kind=payload.kind.value,
             receipt=receipt,
+        )
+    elif payload.order_id is not None and payload_type == "COURIER":
+        job_payload = await _build_courier_payload(
+            db,
+            identity=identity,
+            order_id=payload.order_id,
+            kind=payload.kind.value,
         )
     preparation_station_id, printer_device_id = await _resolve_print_defaults(
         db,
@@ -875,6 +978,7 @@ async def list_receipts(
         )
     ).all()
     receipt_ids = [receipt.id for receipt, _, _, _ in rows]
+    cashier_names = await receipt_cashier_names(db, [receipt for receipt, _, _, _ in rows])
     printed_receipt_ids = set(
         (
             await db.execute(
@@ -892,7 +996,7 @@ async def list_receipts(
             table_name=table_name,
             total=order.total,
             currency=order.currency,
-            cashier_name=cashier_name,
+            cashier_name=cashier_names.get(receipt.id, cashier_name),
             order_status=order.status,
             print_status=(
                 "REPRINTED"
@@ -1452,6 +1556,38 @@ async def claim_print_job(
             status_code=422,
         )
     now = datetime.now(UTC)
+    # A fifth lease expiry used to leave the row in CLAIMED/SENT forever:
+    # `attempt_count < 5` correctly excluded it from another automatic claim,
+    # but nothing moved it into an operator-actionable terminal state.
+    exhausted_jobs = (
+        (
+            await db.execute(
+                select(PrintJob)
+                .where(
+                    PrintJob.tenant_id == bridge.tenant_id,
+                    PrintJob.branch_id == bridge.branch_id,
+                    PrintJob.status.in_([PrintJobStatus.CLAIMED, PrintJobStatus.SENT]),
+                    PrintJob.lease_expires_at.is_not(None),
+                    PrintJob.lease_expires_at < now,
+                    PrintJob.attempt_count >= 5,
+                    PrintJob.manual_retry_required.is_(False),
+                )
+                .with_for_update(skip_locked=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for exhausted_job in exhausted_jobs:
+        exhausted_job.status = PrintJobStatus.FAILED
+        exhausted_job.manual_retry_required = True
+        exhausted_job.lease_expires_at = None
+        exhausted_job.last_error = (
+            "Maximum automatic print attempts reached; operator retry required"
+        )
+    if exhausted_jobs:
+        await db.commit()
+
     # Eligible to claim: the ordinary PENDING/FAILED pool, plus any job whose
     # lease has lapsed — a bridge that claimed it and then crashed or lost its
     # connection before acknowledging never gets to hold a job forever.

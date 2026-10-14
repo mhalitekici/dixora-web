@@ -27,6 +27,10 @@ from app.services.campaigns import (
     campaign_summary,
     validate_definition,
 )
+from app.services.email_notifications import (
+    campaign_notification_status,
+    queue_campaign_announcements,
+)
 from app.services.orders import load_order
 
 router = APIRouter(prefix="/campaigns", tags=["campaigns"])
@@ -36,11 +40,18 @@ CampaignApplier = Annotated[Identity, Depends(require_permissions("loyalty.redee
 
 
 async def _output(db: DbSession, *, tenant_id: UUID, campaign: Campaign) -> CampaignOut:
+    email_status, email_recipients = await campaign_notification_status(
+        db, campaign=campaign
+    )
     return CampaignOut(
         id=campaign.id,
         name=campaign.name,
         description=campaign.description,
         is_active=campaign.is_active,
+        notify_loyalty_members=campaign.notify_loyalty_members,
+        activation_version=campaign.activation_version,
+        email_notification_status=email_status,
+        email_notification_recipients=email_recipients,
         branch_ids=[link.branch_id for link in campaign.campaign_branches],
         buy_product_id=campaign.buy_product_id,
         buy_category_id=campaign.buy_category_id,
@@ -116,6 +127,7 @@ def _assign(campaign: Campaign, payload: CampaignUpsert) -> None:
     campaign.name = payload.name
     campaign.description = payload.description
     campaign.is_active = payload.is_active
+    campaign.notify_loyalty_members = payload.notify_loyalty_members
     campaign.buy_product_id = payload.buy_product_id
     campaign.buy_category_id = payload.buy_category_id
     campaign.buy_quantity = payload.buy_quantity
@@ -170,6 +182,8 @@ async def create_campaign(
     _assign(campaign, payload)
     db.add(campaign)
     await db.flush()
+    if campaign.is_active:
+        campaign.activation_version = 1
     for branch_id in set(payload.branch_ids):
         db.add(
             CampaignBranch(
@@ -177,6 +191,7 @@ async def create_campaign(
             )
         )
     await db.flush()
+    await queue_campaign_announcements(db, campaign=campaign)
     add_audit_log(
         db,
         identity=identity,
@@ -226,7 +241,10 @@ async def update_campaign(
     )
     await _validate_references(db, tenant_id=tenant_id, payload=payload)
 
+    was_active = campaign.is_active
     _assign(campaign, payload)
+    if not was_active and campaign.is_active:
+        campaign.activation_version += 1
     campaign.version += 1
 
     existing = {link.branch_id for link in campaign.campaign_branches}
@@ -241,6 +259,8 @@ async def update_campaign(
             )
         )
     await db.flush()
+    if not was_active and campaign.is_active:
+        await queue_campaign_announcements(db, campaign=campaign)
     add_audit_log(
         db,
         identity=identity,

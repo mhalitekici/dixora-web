@@ -1,6 +1,6 @@
 "use client";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   ChevronLeft,
   ChevronRight,
@@ -82,21 +82,26 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
   const [status, setStatus] = useState<OrderStatus | "ALL">("ALL");
   const [source, setSource] = useState<OrderSource | "ALL">("ALL");
   const [search, setSearch] = useState("");
+  const [receiptNumber, setReceiptNumber] = useState("");
+  const [receiptDate, setReceiptDate] = useState("");
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(
     initialOrderId ?? null,
   );
 
   const ordersQuery = useQuery({
-    queryKey: adminKeys.orders(status, page * PAGE_SIZE, PAGE_SIZE),
+    queryKey: adminKeys.orders(status, page * PAGE_SIZE, PAGE_SIZE, receiptNumber, receiptDate),
     queryFn: ({ signal }) =>
       adminApi.orders(
         {
           status: status === "ALL" ? undefined : status,
           limit: PAGE_SIZE,
           offset: page * PAGE_SIZE,
+          receiptNumber: receiptNumber ? Number(receiptNumber) : undefined,
+          receiptDate: receiptDate || undefined,
         },
         signal,
       ),
+    placeholderData: keepPreviousData,
   });
   const selectedQuery = useQuery({
     queryKey: adminKeys.order(selectedOrderId ?? ""),
@@ -186,6 +191,30 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
       </div>
 
       <div className="mb-4 flex flex-col gap-3 rounded-2xl border bg-card p-3 lg:flex-row lg:items-center">
+        <div className="flex flex-wrap gap-2">
+          <Input
+            type="search"
+            inputMode="numeric"
+            aria-label="Fiş no ara"
+            value={receiptNumber}
+            onChange={(event) => {
+              setReceiptNumber(event.target.value.replace(/\D/g, "").replace(/^0+/, ""));
+              setPage(0);
+            }}
+            placeholder="Fiş no ara…"
+            className="h-10 w-36 rounded-xl"
+          />
+          <Input
+            type="date"
+            aria-label="Fiş tarihi"
+            value={receiptDate}
+            onChange={(event) => {
+              setReceiptDate(event.target.value);
+              setPage(0);
+            }}
+            className="h-10 w-40 rounded-xl"
+          />
+        </div>
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
           <Input
@@ -235,6 +264,9 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
           </Select>
         </div>
       </div>
+      <p className="mb-3 text-xs text-muted-foreground">
+        Fiş numarası her gün yeniden başlar. Belirli bir güne ait fişi bulmak için fiş tarihini seçebilirsiniz.
+      </p>
 
       <AdapterNotice className="mb-4" title="Filtre kapsamı">
         Durum ve sayfalama backend’de uygulanır. Mevcut sipariş API’si kaynak ve metin araması
@@ -269,6 +301,9 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
                         onClick={() => setSelectedOrderId(order.id)}
                       >
                         <span className="block font-semibold">#{shortId(order.id)}</span>
+                        {order.receipt_number != null ? (
+                          <span className="block text-xs font-medium">Fiş no: {order.receipt_number}</span>
+                        ) : null}
                         <span className="block text-xs text-muted-foreground">
                           {order.customer_name || "Misafir"}
                         </span>

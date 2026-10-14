@@ -1,6 +1,7 @@
 import { api } from "@/lib/api";
 
-export type DeliveryChannel = "PHONE" | "TAKEAWAY" | "OWN_DELIVERY" | "MARKETPLACE";
+export type DeliveryChannel =
+  "PHONE" | "TAKEAWAY" | "OWN_DELIVERY" | "MARKETPLACE";
 
 export type DeliveryStatus =
   | "NEW"
@@ -64,6 +65,11 @@ export type DeliveryCounts = {
   cancelled: number;
 };
 
+type DeliveryPrintJob = {
+  kind: "ORIGINAL" | "COPY" | "REPRINT";
+  payload: { type?: string };
+};
+
 export const deliveryKeys = {
   root: ["delivery"] as const,
   list: (channel: string) => ["delivery", "list", channel] as const,
@@ -86,6 +92,26 @@ export const deliveryApi = {
     api.post<DeliveryOrder>(`delivery/${id}/reject`, { reason }),
   setStatus: (id: string, status: DeliveryStatus, reason?: string) =>
     api.post<DeliveryOrder>(`delivery/${id}/status`, { status, reason }),
+  printCourierReceipt: async (orderId: string) => {
+    const jobs = await api.get<DeliveryPrintJob[]>("printing/jobs", {
+      search: { order_id: orderId },
+    });
+    const kind = jobs.some(
+      (job) => String(job.payload?.type ?? "").toUpperCase() === "COURIER",
+    )
+      ? "REPRINT"
+      : "ORIGINAL";
+    await api.post("printing/jobs", {
+      order_id: orderId,
+      payload: { type: "COURIER", order_id: orderId },
+      kind,
+      idempotency_key:
+        kind === "ORIGINAL"
+          ? `courier-original:${orderId}`
+          : `courier-reprint:${orderId}:${crypto.randomUUID()}`,
+    });
+    return kind;
+  },
 };
 
 export const CHANNEL_LABELS: Record<DeliveryChannel, string> = {

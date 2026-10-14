@@ -6,7 +6,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.config import Settings
@@ -34,6 +34,7 @@ from app.schemas import (
 )
 from app.services.audit import add_audit_log
 from app.services.cashier_reconciliation import business_window, day_totals, money, shift_totals
+from app.services.cashier_shifts import current_operator_shift
 from app.services.staff_pin import verify_staff_pin
 
 router = APIRouter(prefix="/shifts", tags=["cashier-shifts"])
@@ -71,29 +72,6 @@ def _out(shift: CashierShift, names: dict[UUID, str] | None = None) -> ShiftOut:
             else None,
         }
     )
-
-
-async def current_operator_shift(
-    db: DbSession, identity: Identity, *, lock: bool = False
-) -> CashierShift | None:
-    query = (
-        select(CashierShift)
-        .where(
-            CashierShift.tenant_id == require_tenant(identity),
-            CashierShift.branch_id == require_branch(identity),
-            or_(
-                CashierShift.opened_by_user_id == identity.user_id,
-                CashierShift.user_id == identity.user_id,
-            ),
-            CashierShift.status == "OPEN",
-        )
-        .order_by(
-            (CashierShift.user_id == identity.user_id).desc(),
-            CashierShift.opened_at.desc(),
-        )
-        .limit(1)
-    )
-    return (await db.execute(query.with_for_update() if lock else query)).scalar_one_or_none()
 
 
 async def _verify(

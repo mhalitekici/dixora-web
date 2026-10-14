@@ -26,13 +26,16 @@ export const runProcess: ExecFn = (command, args, options = {}) =>
       { timeout: options.timeoutMs ?? 15_000, windowsHide: true },
       (error, stdout, stderr) => {
         if (error) {
-          reject(
-            new Error(
-              `${command} ${args.join(" ")} failed: ${error.message}${
-                stderr ? ` (${stderr.trim()})` : ""
-              }`,
-            ),
-          );
+          // Put the OS error first: bridge messages are limited to 500 characters.
+          // Repeating the command and its temp paths used to hide stderr entirely.
+          const detail =
+            stderr.trim() ||
+            (error.killed
+              ? `Process timed out after ${options.timeoutMs ?? 15_000} ms`
+              : typeof error.code === "number"
+                ? `Process exited with code ${error.code}`
+                : error.message);
+          reject(new Error(`${command} failed: ${detail}`, { cause: error }));
           return;
         }
         resolve({ stdout, stderr });

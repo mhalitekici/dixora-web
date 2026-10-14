@@ -33,7 +33,7 @@ import {
   X,
 } from "lucide-react";
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -43,6 +43,7 @@ import {
 } from "@/components/qr/qr-hooks";
 import type { QrRequestDto } from "@/components/qr/types";
 import { EmptyState } from "@/components/shared/empty-state";
+import { originalBillPrintKey } from "@/components/printing/bill-print-key";
 import { StatusBadge } from "@/components/shared/status-badge";
 import {
   dwellMinutes,
@@ -92,6 +93,7 @@ import {
 import { useAlertChime } from "./use-alert-chime";
 
 type Area = { id: string; name: string };
+type Category = { id: string; name: string; is_active: boolean };
 type DiningTable = {
   id: string;
   area_id: string;
@@ -317,42 +319,41 @@ const tableState: Record<string, TableStateMeta> = {
   },
   OCCUPIED: {
     label: "Dolu",
-    tone: "info",
-    card: "border-blue-300/70 bg-blue-50 hover:border-blue-400 dark:border-blue-500/25 dark:bg-blue-500/10",
-    badge: "bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-300",
-    dot: "bg-blue-500",
+    tone: "danger",
+    card: "border-red-300/80 bg-red-50 hover:border-red-400 dark:border-red-500/30 dark:bg-red-500/10",
+    badge: "bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-300",
+    dot: "bg-red-500",
   },
   ORDER_PENDING: {
     label: "Dolu",
-    tone: "info",
-    card: "border-blue-300/70 bg-blue-50 hover:border-blue-400 dark:border-blue-500/25 dark:bg-blue-500/10",
-    badge: "bg-blue-100 text-blue-800 dark:bg-blue-500/20 dark:text-blue-300",
-    dot: "bg-blue-500",
+    tone: "danger",
+    card: "border-red-300/80 bg-red-50 hover:border-red-400 dark:border-red-500/30 dark:bg-red-500/10",
+    badge: "bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-300",
+    dot: "bg-red-500",
   },
   PREPARING: {
     label: "Hazırlanıyor",
-    tone: "warning",
-    card: "border-amber-300/70 bg-amber-50 hover:border-amber-400 dark:border-amber-500/25 dark:bg-amber-500/10",
-    badge:
-      "bg-amber-100 text-amber-900 dark:bg-amber-500/20 dark:text-amber-200",
-    dot: "bg-amber-500",
+    tone: "danger",
+    card: "border-red-300/80 bg-red-50 hover:border-red-400 dark:border-red-500/30 dark:bg-red-500/10",
+    badge: "bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-300",
+    dot: "bg-red-500",
   },
   READY: {
     label: "Hazır",
-    tone: "success",
-    card: "border-teal-400 bg-teal-50 hover:border-teal-500 dark:border-teal-500/35 dark:bg-teal-500/12",
-    badge: "bg-teal-100 text-teal-900 dark:bg-teal-500/25 dark:text-teal-200",
-    dot: "bg-teal-500",
+    tone: "danger",
+    card: "border-red-300/80 bg-red-50 hover:border-red-400 dark:border-red-500/30 dark:bg-red-500/10",
+    badge: "bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-300",
+    dot: "bg-red-500",
     // Food is sitting on the pass; this is the one that needs a person.
     pulse: true,
   },
   BILL_REQUESTED: {
     label: "Hesap İstendi",
-    tone: "purple",
-    card: "border-violet-400 bg-violet-100 hover:border-violet-500 dark:border-violet-500/40 dark:bg-violet-500/15",
+    tone: "warning",
+    card: "border-amber-400 bg-amber-100 hover:border-amber-500 dark:border-amber-500/40 dark:bg-amber-500/15",
     badge:
-      "bg-violet-200 text-violet-900 dark:bg-violet-500/25 dark:text-violet-200",
-    dot: "bg-violet-500",
+      "bg-amber-200 text-amber-900 dark:bg-amber-500/25 dark:text-amber-200",
+    dot: "bg-amber-500",
     pulse: true,
   },
   PAYMENT_PENDING: {
@@ -449,6 +450,8 @@ export function CashierWorkspace() {
   const [selectedArea, setSelectedArea] = useState("all");
   const [selectedTableId, setSelectedTableId] = useState("");
   const [tableSearch, setTableSearch] = useState("");
+  const tablesHeadingRef = useRef<HTMLHeadingElement>(null);
+  const restoreTablesFocusRef = useRef(false);
   // Drives the dwell timers. Ticking locally keeps them moving without
   // refetching every table once a minute.
   const [now, setNow] = useState(() => Date.now());
@@ -456,6 +459,12 @@ export function CashierWorkspace() {
     const timer = window.setInterval(() => setNow(Date.now()), 30_000);
     return () => window.clearInterval(timer);
   }, []);
+  useEffect(() => {
+    if (!selectedTableId && restoreTablesFocusRef.current) {
+      restoreTablesFocusRef.current = false;
+      tablesHeadingRef.current?.focus();
+    }
+  }, [selectedTableId]);
   const [dialog, setDialog] = useState<
     | "products"
     | "payment"
@@ -465,12 +474,14 @@ export function CashierWorkspace() {
     | "merge"
     | "cancel-item"
     | "complimentary"
+    | "item-note"
     | "close-table"
     | "qr-queue"
     | "approvals-queue"
     | null
   >(null);
   const [productSearch, setProductSearch] = useState("");
+  const [productCategory, setProductCategory] = useState("all");
   const [modifierProduct, setModifierProduct] =
     useState<CashierProductDetail | null>(null);
   const [loadingProductId, setLoadingProductId] = useState<string | null>(null);
@@ -492,6 +503,8 @@ export function CashierWorkspace() {
     null,
   );
   const [complimentaryReason, setComplimentaryReason] = useState("");
+  const [noteItem, setNoteItem] = useState<OrderItem | null>(null);
+  const [itemNote, setItemNote] = useState("");
 
   const areasQuery = useQuery({
     queryKey: ["cashier", "areas"],
@@ -513,6 +526,13 @@ export function CashierWorkspace() {
       unwrap<Product>(await api<unknown>("/catalog/products?limit=200")).filter(
         (item) => item.is_available,
       ),
+  });
+  const categoriesQuery = useQuery({
+    queryKey: ["cashier", "categories"],
+    queryFn: async () =>
+      unwrap<Category>(
+        await api<unknown>("/catalog/categories?limit=250"),
+      ).filter((item) => item.is_active),
   });
   const shiftQuery = useQuery({
     queryKey: ["shifts", "current"],
@@ -543,8 +563,8 @@ export function CashierWorkspace() {
   const tables = useMemo(() => tablesQuery.data ?? [], [tablesQuery.data]);
   const orders = ordersQuery.data ?? [];
   const products = productsQuery.data ?? [];
-  const selectedTable =
-    tables.find((table) => table.id === selectedTableId) ?? tables[0];
+  const categories = categoriesQuery.data ?? [];
+  const selectedTable = tables.find((table) => table.id === selectedTableId);
   const selectedOrder = selectCurrentTableOrder(orders, selectedTable);
   const canMarkComplimentary = hasPermission(
     currentUser.data,
@@ -661,10 +681,12 @@ export function CashierWorkspace() {
         }),
     [selectedArea, tableSearch, tables, qrPendingTableIds, statusFilter],
   );
-  const filteredProducts = products.filter((product) =>
-    product.name
-      .toLocaleLowerCase("tr-TR")
-      .includes(productSearch.toLocaleLowerCase("tr-TR")),
+  const filteredProducts = products.filter(
+    (product) =>
+      (productCategory === "all" || product.category_id === productCategory) &&
+      product.name
+        .toLocaleLowerCase("tr-TR")
+        .includes(productSearch.toLocaleLowerCase("tr-TR")),
   );
   const mergeCandidates = buildMergeCandidates(
     orders,
@@ -672,6 +694,15 @@ export function CashierWorkspace() {
     selectedOrder?.id,
     selectedTable?.id,
   );
+  // Once a table is open it is the only table context shown in the detail
+  // rail. Switching tables is deliberately done from the full table grid so
+  // a cashier cannot accidentally jump into a neighbouring account.
+  const displayedTables = selectedTable ? [selectedTable] : filteredTables;
+
+  function showAllTables() {
+    restoreTablesFocusRef.current = true;
+    setSelectedTableId("");
+  }
 
   function refreshOperations() {
     void Promise.all([
@@ -737,10 +768,16 @@ export function CashierWorkspace() {
         }),
       });
     },
-    onSuccess: (_, { product }) => {
+    onSuccess: (updatedOrder, { product }) => {
       toast.success(`${product.name} siparişe eklendi`);
       setModifierProduct(null);
       setDialog(null);
+      queryClient.setQueryData<Order[]>(["cashier", "orders"], (current) => {
+        const existing = (current ?? []).some((order) => order.id === updatedOrder.id);
+        return existing
+          ? (current ?? []).map((order) => order.id === updatedOrder.id ? updatedOrder : order)
+          : [...(current ?? []), updatedOrder];
+      });
       refreshOperations();
     },
     onError: (error) =>
@@ -937,11 +974,17 @@ export function CashierWorkspace() {
       item,
       action,
       reason: actionReason,
+      note,
     }: {
       item: OrderItem;
       action:
-        "INCREASE" | "DECREASE" | "SET_COMPLIMENTARY" | "REMOVE_COMPLIMENTARY";
+        | "INCREASE"
+        | "DECREASE"
+        | "SET_COMPLIMENTARY"
+        | "REMOVE_COMPLIMENTARY"
+        | "UPDATE_NOTE";
       reason?: string;
+      note?: string;
     }) => {
       if (!selectedOrder) throw new Error("Canlı sipariş verisi bulunamadı.");
       return api<Order>(`/orders/${selectedOrder.id}/items/${item.id}`, {
@@ -951,6 +994,7 @@ export function CashierWorkspace() {
           expected_version: selectedOrder.version,
           idempotency_key: `cashier-item:${crypto.randomUUID()}`,
           reason: actionReason ?? null,
+          note: note ?? null,
         }),
       });
     },
@@ -965,6 +1009,15 @@ export function CashierWorkspace() {
         setDialog(null);
       } else if (variables.action === "REMOVE_COMPLIMENTARY") {
         toast.success("İkram kaldırıldı.");
+      } else if (variables.action === "UPDATE_NOTE") {
+        toast.success(
+          variables.note?.trim()
+            ? "Ürün açıklaması kaydedildi."
+            : "Ürün açıklaması kaldırıldı.",
+        );
+        setNoteItem(null);
+        setItemNote("");
+        setDialog(null);
       }
     },
     onError: (error) => {
@@ -1094,6 +1147,8 @@ export function CashierWorkspace() {
     try {
       await approveQrRequest.mutateAsync(request.id);
       toast.success("QR siparişi onaylandı ve siparişe aktarıldı");
+      setSelectedTableId(request.table_id);
+      setDialog(null);
       refreshOperations();
     } catch (error) {
       toast.error("QR siparişi onaylanamadı", {
@@ -1181,7 +1236,7 @@ export function CashierWorkspace() {
           kind,
           idempotency_key:
             kind === "ORIGINAL"
-              ? `bill-original:${selectedOrder.id}`
+              ? originalBillPrintKey(selectedOrder)
               : `bill-reprint:${selectedOrder.id}:${crypto.randomUUID()}`,
         }),
       });
@@ -1453,12 +1508,35 @@ export function CashierWorkspace() {
           </div>
         </div>
       ) : null}
-      <div className="grid flex-1 xl:grid-cols-[280px_minmax(0,1fr)_350px]">
-        <aside className="border-r bg-muted/30 xl:min-h-[calc(100dvh-4rem)]">
+      <div
+        className={cn(
+          "grid flex-1",
+          selectedTable &&
+            "md:grid-cols-[220px_minmax(0,1fr)] xl:grid-cols-[280px_minmax(0,1fr)_350px]",
+        )}
+      >
+        <aside
+          className={cn(
+            "bg-muted/30",
+            selectedTable
+              ? "border-b md:border-b-0 md:border-r xl:min-h-[calc(100dvh-4rem)]"
+              : "mx-auto w-full max-w-[1480px]",
+          )}
+          aria-label="Masa seçimi"
+        >
           <div className="border-b p-3">
             <div className="mb-3 flex items-center justify-between">
               <div>
-                <h1 className="text-sm font-semibold">Masalar</h1>
+                <h1
+                  ref={tablesHeadingRef}
+                  tabIndex={-1}
+                  className={cn(
+                    "font-semibold outline-none",
+                    selectedTable ? "text-sm" : "text-xl sm:text-2xl",
+                  )}
+                >
+                  Masalar
+                </h1>
                 <p className="text-[0.65rem] text-muted-foreground">
                   {tables.length} masa · {orders.length} açık hesap
                 </p>
@@ -1467,77 +1545,99 @@ export function CashierWorkspace() {
                 Canlı
               </StatusBadge>
             </div>
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                type="search"
-                aria-label="Masa ara"
-                name="cashier-table-search"
-                value={tableSearch}
-                onChange={(event) => setTableSearch(event.target.value)}
-                placeholder="Masa ara…"
-                className="h-10 rounded-xl pl-9"
-              />
-            </div>
+            {!selectedTable ? (
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  type="search"
+                  aria-label="Masa ara"
+                  name="cashier-table-search"
+                  value={tableSearch}
+                  onChange={(event) => setTableSearch(event.target.value)}
+                  placeholder="Masa ara…"
+                  className="h-10 rounded-xl pl-9"
+                />
+              </div>
+            ) : null}
           </div>
-          <div className="scrollbar-subtle flex gap-1 overflow-x-auto border-b p-2 xl:flex-wrap">
-            <button
-              type="button"
+          {!selectedTable ? (
+            <>
+              <div className="scrollbar-subtle flex gap-1 overflow-x-auto border-b p-2 xl:flex-wrap">
+                <button
+                  type="button"
+                  className={cn(
+                    "h-8 shrink-0 rounded-lg px-2.5 text-[0.68rem] font-semibold",
+                    selectedArea === "all"
+                      ? "bg-primary text-primary-foreground"
+                      : "bg-muted text-muted-foreground",
+                  )}
+                  onClick={() => setSelectedArea("all")}
+                  aria-pressed={selectedArea === "all"}
+                >
+                  Tümü
+                </button>
+                {areas.map((area) => (
+                  <button
+                    key={area.id}
+                    type="button"
+                    className={cn(
+                      "h-8 shrink-0 rounded-lg px-2.5 text-[0.68rem] font-semibold",
+                      selectedArea === area.id
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground",
+                    )}
+                    onClick={() => setSelectedArea(area.id)}
+                    aria-pressed={selectedArea === area.id}
+                  >
+                    {area.name}
+                  </button>
+                ))}
+              </div>
+              <div className="flex flex-wrap gap-1.5 border-b px-2 py-2">
+                {(
+                  [
+                    ["all", "Tümü", statusCounts.all, "bg-foreground"],
+                    ["free", "Boş", statusCounts.free, "bg-emerald-500"],
+                    ["busy", "Dolu", statusCounts.busy, "bg-red-500"],
+                    ["bill", "Hesap", statusCounts.bill, "bg-amber-500"],
+                  ] as const
+                ).map(([value, label, count, dot]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    onClick={() => setStatusFilter(value)}
+                    aria-pressed={statusFilter === value}
+                    className={cn(
+                      "flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-[0.66rem] font-semibold transition-colors",
+                      statusFilter === value
+                        ? "border-primary bg-primary/10 text-foreground"
+                        : "border-transparent bg-muted/70 text-muted-foreground hover:bg-muted",
+                    )}
+                  >
+                    <span className={cn("size-1.5 rounded-full", dot)} />
+                    {label}
+                    <span className="tabular-nums opacity-70">{count}</span>
+                  </button>
+                ))}
+              </div>
+            </>
+          ) : null}
+          <ScrollArea
+            className={cn(
+              selectedTable
+                ? "h-56 sm:h-72 xl:h-[calc(100dvh-15.4rem)]"
+                : "h-[calc(100dvh-19rem)] min-h-72",
+            )}
+          >
+            <div
               className={cn(
-                "h-8 shrink-0 rounded-lg px-2.5 text-[0.68rem] font-semibold",
-                selectedArea === "all"
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground",
+                "grid gap-3 p-3 sm:p-4",
+                selectedTable
+                  ? "grid-cols-2 md:grid-cols-1"
+                  : "grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4",
               )}
-              onClick={() => setSelectedArea("all")}
             >
-              Tümü
-            </button>
-            {areas.map((area) => (
-              <button
-                key={area.id}
-                type="button"
-                className={cn(
-                  "h-8 shrink-0 rounded-lg px-2.5 text-[0.68rem] font-semibold",
-                  selectedArea === area.id
-                    ? "bg-primary text-primary-foreground"
-                    : "bg-muted text-muted-foreground",
-                )}
-                onClick={() => setSelectedArea(area.id)}
-              >
-                {area.name}
-              </button>
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-1.5 border-b px-2 py-2">
-            {(
-              [
-                ["all", "Tümü", statusCounts.all, "bg-foreground"],
-                ["free", "Boş", statusCounts.free, "bg-emerald-500"],
-                ["busy", "Dolu", statusCounts.busy, "bg-blue-500"],
-                ["bill", "Hesap", statusCounts.bill, "bg-violet-500"],
-              ] as const
-            ).map(([value, label, count, dot]) => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setStatusFilter(value)}
-                className={cn(
-                  "flex h-7 shrink-0 items-center gap-1.5 rounded-lg border px-2 text-[0.66rem] font-semibold transition-colors",
-                  statusFilter === value
-                    ? "border-primary bg-primary/10 text-foreground"
-                    : "border-transparent bg-muted/70 text-muted-foreground hover:bg-muted",
-                )}
-              >
-                <span className={cn("size-1.5 rounded-full", dot)} />
-                {label}
-                <span className="tabular-nums opacity-70">{count}</span>
-              </button>
-            ))}
-          </div>
-          <ScrollArea className="h-[320px] xl:h-[calc(100dvh-15.4rem)]">
-            <div className="grid grid-cols-2 gap-2.5 p-3 xl:grid-cols-1">
-              {filteredTables.map((table) => {
+              {displayedTables.map((table) => {
                 const meta = tableState[table.state] ?? tableState.AVAILABLE;
                 const order = selectCurrentTableOrder(orders, table);
                 const hasQrRequest = qrPendingTableIds.has(table.id);
@@ -1552,7 +1652,8 @@ export function CashierWorkspace() {
                     {...labelProps(table)}
                     title="Sağ tık: misafir adı ekle"
                     className={cn(
-                      "relative flex min-h-16 items-center gap-2.5 overflow-hidden rounded-2xl border-2 p-2.5 text-left shadow-sm transition-all hover:shadow-md active:scale-[0.99]",
+                      "focus-operational relative flex items-center gap-2.5 overflow-hidden rounded-2xl border-2 text-left shadow-sm transition-[color,background-color,border-color,box-shadow,transform] hover:shadow-md active:scale-[0.99] motion-reduce:active:scale-100",
+                      selectedTable ? "min-h-16 p-2.5" : "min-h-28 p-4",
                       meta.card,
                       selectedTableId === table.id &&
                         "border-primary shadow-md ring-2 ring-primary/25",
@@ -1585,7 +1686,7 @@ export function CashierWorkspace() {
                           {meta.pulse ? (
                             <span
                               className={cn(
-                                "absolute inline-flex size-full animate-ping rounded-full opacity-60",
+                                "absolute inline-flex size-full animate-ping rounded-full opacity-60 motion-reduce:animate-none",
                                 meta.dot,
                               )}
                             />
@@ -1622,12 +1723,39 @@ export function CashierWorkspace() {
                   </button>
                 );
               })}
+              {displayedTables.length === 0 ? (
+                <div
+                  role="status"
+                  className="col-span-full flex min-h-48 flex-col items-center justify-center rounded-2xl border border-dashed bg-card/70 px-6 text-center"
+                >
+                  <Grid2X2 className="size-7 text-muted-foreground" />
+                  <p className="mt-3 text-sm font-semibold">Masa bulunamadı</p>
+                  <p className="mt-1 text-xs text-muted-foreground">
+                    Arama veya filtreleri değiştirerek yeniden deneyin.
+                  </p>
+                </div>
+              ) : null}
             </div>
           </ScrollArea>
         </aside>
 
-        <section className="min-w-0 border-r bg-muted/15">
+        <section
+          className={cn(
+            "min-w-0 border-r bg-muted/15",
+            !selectedTable && "hidden",
+          )}
+        >
           <header className="flex min-h-16 items-center gap-3 border-b bg-card px-4">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="shrink-0"
+              onClick={showAllTables}
+            >
+              <Grid2X2 className="size-4" />
+              Masalar
+            </Button>
             <span className="flex size-10 items-center justify-center rounded-xl bg-brand-soft text-lg font-bold text-brand">
               {selectedTable?.name ?? "—"}
             </span>
@@ -1831,6 +1959,24 @@ export function CashierWorkspace() {
                             size="sm"
                             className="h-10 rounded-lg"
                             disabled={
+                              itemActionMutation.isPending ||
+                              removeItemMutation.isPending
+                            }
+                            onClick={() => {
+                              setNoteItem(item);
+                              setItemNote(item.note ?? "");
+                              setDialog("item-note");
+                            }}
+                          >
+                            <MessageSquare />
+                            {item.note ? "Açıklamayı düzenle" : "Açıklama ekle"}
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="sm"
+                            className="h-10 rounded-lg"
+                            disabled={
                               !canMarkComplimentary ||
                               itemActionMutation.isPending ||
                               removeItemMutation.isPending
@@ -1943,7 +2089,7 @@ export function CashierWorkspace() {
                 <Send />
               )}
               {preparationMutation.isPending
-                ? "Yazdırılıyor..."
+                ? "Yazdırılıyor…"
                 : "Siparişi yazdır"}
               {pendingPreparationItems.length ? (
                 <span className="ml-auto rounded-full bg-primary-foreground/15 px-2 py-0.5 text-[0.65rem] tabular-nums">
@@ -2040,7 +2186,12 @@ export function CashierWorkspace() {
           </footer>
         </section>
 
-        <aside className="bg-card">
+        <aside
+          className={cn(
+            "bg-card md:col-span-2 xl:col-span-1",
+            !selectedTable && "hidden",
+          )}
+        >
           <div className="border-b p-4">
             <h2 className="text-sm font-semibold">Hesap ve ödeme</h2>
             <p className="mt-0.5 text-[0.65rem] text-muted-foreground">
@@ -2307,6 +2458,38 @@ export function CashierWorkspace() {
               className="h-11 rounded-xl pl-9"
             />
           </div>
+          <div
+            className="scrollbar-subtle flex gap-1.5 overflow-x-auto pb-1"
+            aria-label="Ürün kategorileri"
+          >
+            <button
+              type="button"
+              onClick={() => setProductCategory("all")}
+              className={cn(
+                "h-9 shrink-0 rounded-lg border px-3 text-xs font-semibold",
+                productCategory === "all"
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "bg-card text-muted-foreground hover:bg-muted",
+              )}
+            >
+              Tüm ürünler
+            </button>
+            {categories.map((category) => (
+              <button
+                key={category.id}
+                type="button"
+                onClick={() => setProductCategory(category.id)}
+                className={cn(
+                  "h-9 shrink-0 rounded-lg border px-3 text-xs font-semibold",
+                  productCategory === category.id
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "bg-card text-muted-foreground hover:bg-muted",
+                )}
+              >
+                {category.name}
+              </button>
+            ))}
+          </div>
           <div className="grid max-h-[55dvh] grid-cols-2 gap-2 overflow-y-auto sm:grid-cols-3">
             {filteredProducts.map((product) => (
               <button
@@ -2348,6 +2531,11 @@ export function CashierWorkspace() {
                 </span>
               </button>
             ))}
+            {filteredProducts.length === 0 ? (
+              <p className="col-span-full py-8 text-center text-sm text-muted-foreground">
+                Bu kategoride ürün bulunamadı.
+              </p>
+            ) : null}
           </div>
         </DialogContent>
       </Dialog>
@@ -2741,6 +2929,97 @@ export function CashierWorkspace() {
                   <Merge />
                 )}
                 Hesapları birleştir
+              </Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog
+        open={dialog === "item-note"}
+        onOpenChange={(open) => {
+          if (!open && !itemActionMutation.isPending) {
+            setNoteItem(null);
+            setItemNote("");
+            setDialog(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Ürün açıklaması</DialogTitle>
+            <DialogDescription>
+              Hazırlık ekibinin ürün için görmesi gereken kısa açıklamayı yazın.
+              Ürün daha önce gönderildiyse düzeltme fişi basılır.
+            </DialogDescription>
+          </DialogHeader>
+          <form
+            id="item-note-form"
+            className="space-y-4"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!noteItem) return;
+              itemActionMutation.mutate({
+                item: noteItem,
+                action: "UPDATE_NOTE",
+                note: itemNote.trim(),
+              });
+            }}
+          >
+            <div className="rounded-xl border bg-muted/35 p-3">
+              <p className="text-sm font-semibold">
+                {noteItem?.product_name_snapshot}
+              </p>
+              <p className="mt-0.5 text-xs text-muted-foreground">
+                {Number(noteItem?.quantity ?? 0)} adet
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="cashier-item-note">Açıklama</Label>
+              <Textarea
+                id="cashier-item-note"
+                name="cashier-item-note"
+                autoComplete="off"
+                value={itemNote}
+                onChange={(event) => setItemNote(event.target.value)}
+                placeholder="Örn. soğansız, az pişmiş, sos ayrı…"
+                maxLength={500}
+                rows={4}
+                className="mt-1.5 resize-none"
+                autoFocus
+              />
+              <p
+                className="mt-1 text-right text-xs tabular-nums text-muted-foreground"
+                aria-live="polite"
+              >
+                {itemNote.length}/500
+              </p>
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={itemActionMutation.isPending}
+                onClick={() => setDialog(null)}
+              >
+                Vazgeç
+              </Button>
+              <Button
+                type="submit"
+                form="item-note-form"
+                disabled={
+                  !noteItem ||
+                  itemActionMutation.isPending ||
+                  itemNote.trim() === (noteItem.note ?? "").trim() ||
+                  (!noteItem.note && itemNote.trim().length === 0)
+                }
+              >
+                {itemActionMutation.isPending ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <MessageSquare />
+                )}
+                {itemNote.trim() ? "Açıklamayı kaydet" : "Açıklamayı kaldır"}
               </Button>
             </DialogFooter>
           </form>

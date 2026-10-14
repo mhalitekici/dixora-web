@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -67,12 +67,28 @@ const counts = {
 
 function renderInbox(orders: unknown[] = [order]) {
   const accept = vi.fn(() => Promise.resolve(jsonResponse(order)));
+  const printBodies: Array<Record<string, unknown>> = [];
+  let courierPrinted = false;
   vi.stubGlobal(
     "fetch",
     vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url.includes("delivery/counts")) return Promise.resolve(jsonResponse(counts));
       if (init?.method === "POST" && url.includes("/accept")) return accept();
+      if (url.includes("printing/jobs") && init?.method === "POST") {
+        printBodies.push(JSON.parse(String(init.body)) as Record<string, unknown>);
+        courierPrinted = true;
+        return Promise.resolve(jsonResponse({ id: "print-job-1" }));
+      }
+      if (url.includes("printing/jobs")) {
+        return Promise.resolve(
+          jsonResponse(
+            courierPrinted
+              ? [{ kind: "ORIGINAL", payload: { type: "COURIER" } }]
+              : [],
+          ),
+        );
+      }
       if (url.includes("delivery")) {
         return Promise.resolve(jsonResponse({ items: orders, total: orders.length }));
       }
@@ -86,7 +102,7 @@ function renderInbox(orders: unknown[] = [order]) {
     <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
   );
   render(<DeliveryInbox />, { wrapper });
-  return { accept };
+  return { accept, printBodies };
 }
 
 describe("delivery timers", () => {
@@ -117,6 +133,7 @@ describe("DeliveryInbox", () => {
     // Accept/Reject are never hidden behind a menu.
     expect(screen.getByRole("button", { name: /Kabul Et/ })).toBeVisible();
     expect(screen.getByRole("button", { name: /Reddet/ })).toBeVisible();
+    expect(screen.getByRole("button", { name: /Kurye fişi/ })).toBeVisible();
   });
 
   it("asks for a preparation time before accepting", async () => {
@@ -150,5 +167,23 @@ describe("DeliveryInbox", () => {
   it("offers a useful empty state rather than a blank screen", async () => {
     renderInbox([]);
     expect(await screen.findByText("Henüz paket sipariş yok")).toBeVisible();
+  });
+
+  it("prints the courier slip first as original and then as a reprint", async () => {
+    const user = userEvent.setup();
+    const { printBodies } = renderInbox();
+    const button = await screen.findByRole("button", { name: /Kurye fişi/ });
+
+    await user.click(button);
+    await waitFor(() => expect(printBodies).toHaveLength(1));
+    expect(printBodies[0]).toMatchObject({
+      order_id: order.order_id,
+      payload: { type: "COURIER", order_id: order.order_id },
+      kind: "ORIGINAL",
+    });
+
+    await user.click(button);
+    await waitFor(() => expect(printBodies).toHaveLength(2));
+    expect(printBodies[1]).toMatchObject({ kind: "REPRINT" });
   });
 });

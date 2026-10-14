@@ -27,6 +27,8 @@ export interface BridgeConfig {
   pollIntervalMs: number;
   printerIds: readonly string[];
   requestTimeoutMs: number;
+  /** Printable monospace columns after the OS driver's physical margins. */
+  receiptColumns: number;
   version: string;
   /** Which OS printing mechanism to use. "auto" picks from `process.platform`. */
   transport: PrinterTransportSetting;
@@ -159,6 +161,15 @@ export function loadBridgeConfig(
       "PRINT_BRIDGE_REQUEST_TIMEOUT_MS",
       5_000,
       { min: 250, max: 60_000 },
+    ),
+    receiptColumns: readInteger(
+      environment,
+      "PRINT_BRIDGE_RECEIPT_COLUMNS",
+      42,
+      {
+        min: 32,
+        max: 64,
+      },
     ),
     version: readEnvironmentValue(environment, "PRINT_BRIDGE_VERSION", "0.1.0"),
     transport: readTransportSetting(environment),

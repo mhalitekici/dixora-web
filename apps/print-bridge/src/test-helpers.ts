@@ -1,7 +1,9 @@
 import type { BridgeConfig } from "./config.js";
 
 /** A complete, valid `BridgeConfig` for tests to spread and override. */
-export function testConfig(overrides: Partial<BridgeConfig> = {}): BridgeConfig {
+export function testConfig(
+  overrides: Partial<BridgeConfig> = {},
+): BridgeConfig {
   return {
     apiKey: "test",
     apiUrl: "http://api.test",
@@ -15,6 +17,7 @@ export function testConfig(overrides: Partial<BridgeConfig> = {}): BridgeConfig 
     pollIntervalMs: 2_000,
     printerIds: ["kitchen"],
     requestTimeoutMs: 5_000,
+    receiptColumns: 42,
     version: "test",
     transport: "mock",
     printerNameMap: {},

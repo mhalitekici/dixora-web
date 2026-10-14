@@ -275,7 +275,79 @@ function normalizeDocument(
     "business_name",
   );
   const waiterName = readOptionalString(document, "waiterName", "waiter_name");
+  const staffLabel = readOptionalString(document, "staffLabel", "staff_label");
+  const sourceLabel = readOptionalString(
+    document,
+    "sourceLabel",
+    "source_label",
+  );
+  const orderLabel = readOptionalString(document, "orderLabel", "order_label");
+  const documentType = readOptionalString(
+    document,
+    "documentType",
+    "document_type",
+  );
+  if (
+    documentType !== undefined &&
+    !["PREPARATION", "BILL", "COURIER", "TEST"].includes(documentType)
+  ) {
+    throw new Error(`Print job at index ${jobIndex} has invalid document type`);
+  }
+  const customerName = readOptionalString(
+    document,
+    "customerName",
+    "customer_name",
+  );
+  const customerPhone = readOptionalString(
+    document,
+    "customerPhone",
+    "customer_phone",
+  );
+  const deliveryAddress = readOptionalString(
+    document,
+    "deliveryAddress",
+    "delivery_address",
+  );
+  const paymentLabel = readOptionalString(
+    document,
+    "paymentLabel",
+    "payment_label",
+  );
   const currency = readOptionalString(document, "currency");
+  const rawTotals = document.totals;
+  const subtotal = isRecord(rawTotals)
+    ? readOptionalString(rawTotals, "subtotal")
+    : undefined;
+  const discount = isRecord(rawTotals)
+    ? readOptionalString(rawTotals, "discount")
+    : undefined;
+  const tax = isRecord(rawTotals)
+    ? readOptionalString(rawTotals, "tax")
+    : undefined;
+  const serviceCharge = isRecord(rawTotals)
+    ? readOptionalString(rawTotals, "serviceCharge", "service_charge")
+    : undefined;
+  const coverCharge = isRecord(rawTotals)
+    ? readOptionalString(rawTotals, "coverCharge", "cover_charge")
+    : undefined;
+  const paid = isRecord(rawTotals)
+    ? readOptionalString(rawTotals, "paid")
+    : undefined;
+  const remaining = isRecord(rawTotals)
+    ? readOptionalString(rawTotals, "remaining")
+    : undefined;
+  const totals = isRecord(rawTotals)
+    ? {
+        ...(subtotal !== undefined ? { subtotal } : {}),
+        ...(discount !== undefined ? { discount } : {}),
+        ...(tax !== undefined ? { tax } : {}),
+        ...(serviceCharge !== undefined ? { serviceCharge } : {}),
+        ...(coverCharge !== undefined ? { coverCharge } : {}),
+        total: requireString(rawTotals, "total"),
+        ...(paid !== undefined ? { paid } : {}),
+        ...(remaining !== undefined ? { remaining } : {}),
+      }
+    : undefined;
   const receiptNumberValue = document.receiptNumber ?? document.receipt_number;
   const businessDateValue = document.businessDate ?? document.business_date;
   const footer =
@@ -285,6 +357,12 @@ function normalizeDocument(
       : undefined;
 
   return {
+    ...(documentType !== undefined
+      ? {
+          documentType: documentType as
+            "PREPARATION" | "BILL" | "COURIER" | "TEST",
+        }
+      : {}),
     title: requireString(document, "title"),
     ...(businessName !== undefined ? { businessName } : {}),
     branchName: requireString(document, "branchName", "branch_name"),
@@ -298,6 +376,13 @@ function normalizeDocument(
       : {}),
     ...(tableName !== undefined ? { tableName } : {}),
     ...(waiterName !== undefined ? { waiterName } : {}),
+    ...(staffLabel !== undefined ? { staffLabel } : {}),
+    ...(sourceLabel !== undefined ? { sourceLabel } : {}),
+    ...(orderLabel !== undefined ? { orderLabel } : {}),
+    ...(customerName !== undefined ? { customerName } : {}),
+    ...(customerPhone !== undefined ? { customerPhone } : {}),
+    ...(deliveryAddress !== undefined ? { deliveryAddress } : {}),
+    ...(paymentLabel !== undefined ? { paymentLabel } : {}),
     submittedAt: requireString(document, "submittedAt", "submitted_at"),
     ...(currency !== undefined ? { currency } : {}),
     lines: lines.map((line, lineIndex) => {
@@ -343,6 +428,7 @@ function normalizeDocument(
         ...(adjustmentLabel !== undefined ? { adjustmentLabel } : {}),
       };
     }),
+    ...(totals !== undefined ? { totals } : {}),
     ...(footer !== undefined ? { footer } : {}),
   };
 }

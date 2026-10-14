@@ -107,7 +107,19 @@ export interface ReceiptLine {
   adjustmentLabel?: string;
 }
 
+export interface ReceiptTotals {
+  subtotal?: DecimalString;
+  discount?: DecimalString;
+  tax?: DecimalString;
+  serviceCharge?: DecimalString;
+  coverCharge?: DecimalString;
+  total: DecimalString;
+  paid?: DecimalString;
+  remaining?: DecimalString;
+}
+
 export interface ReceiptDocument {
+  documentType?: "PREPARATION" | "BILL" | "COURIER" | "TEST";
   title: string;
   businessName?: string;
   branchName: string;
@@ -117,9 +129,17 @@ export interface ReceiptDocument {
   businessDate?: string;
   tableName?: string;
   waiterName?: string;
+  staffLabel?: string;
+  sourceLabel?: string;
+  orderLabel?: string;
+  customerName?: string;
+  customerPhone?: string;
+  deliveryAddress?: string;
+  paymentLabel?: string;
   submittedAt: IsoDateTime;
   currency?: string;
   lines: readonly ReceiptLine[];
+  totals?: ReceiptTotals;
   footer?: readonly string[];
 }
 

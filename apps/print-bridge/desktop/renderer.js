@@ -128,7 +128,7 @@ elements.form.addEventListener("submit", async (event) => {
   event.preventDefault();
   elements.setupError.classList.add("hidden");
   elements.enrollButton.disabled = true;
-  elements.enrollButton.textContent = "Bağlanıyor...";
+  elements.enrollButton.textContent = "Bağlanıyor…";
   const result = await bridge.enroll({
     apiUrl: elements.apiUrlInput.value,
     code: elements.connectionCode.value,

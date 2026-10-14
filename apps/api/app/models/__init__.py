@@ -59,6 +59,7 @@ from app.models.loyalty import (
     LoyaltyVerificationChallenge,
     LoyaltyVerificationRateLimit,
 )
+from app.models.notifications import EmailNotification
 from app.models.operations import Area, DiningTable, TableSession
 from app.models.orders import (
     ApprovalRequest,
@@ -135,6 +136,7 @@ __all__ = [
     "LoyaltyRule",
     "LoyaltyVerificationChallenge",
     "LoyaltyVerificationRateLimit",
+    "EmailNotification",
     "MarketplaceIntegration",
     "MarketplaceProductMapping",
     "Modifier",

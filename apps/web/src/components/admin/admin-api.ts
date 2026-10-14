@@ -38,8 +38,8 @@ export const adminKeys = {
   root: ["admin-operations"] as const,
   dashboard: () => [...adminKeys.root, "dashboard"] as const,
   tables: () => [...adminKeys.root, "tables"] as const,
-  orders: (status: string, offset: number, limit: number) =>
-    [...adminKeys.root, "orders", status, offset, limit] as const,
+  orders: (status: string, offset: number, limit: number, receiptNumber = "", receiptDate = "") =>
+    [...adminKeys.root, "orders", status, offset, limit, receiptNumber, receiptDate] as const,
   order: (id: string) => [...adminKeys.root, "order", id] as const,
   qrRequests: (status: string) =>
     [...adminKeys.root, "qr-requests", status] as const,
@@ -83,7 +83,7 @@ export const adminApi = {
   tables: (signal?: AbortSignal) =>
     api.get<DiningTable[]>("tables", { signal }),
   orders: (
-    input: { status?: OrderStatus; offset?: number; limit?: number } = {},
+    input: { status?: OrderStatus; offset?: number; limit?: number; receiptNumber?: number; receiptDate?: string } = {},
     signal?: AbortSignal,
   ) =>
     api.get<PageResult<Order>>("orders", {
@@ -91,6 +91,8 @@ export const adminApi = {
         status: input.status,
         offset: input.offset ?? 0,
         limit: input.limit ?? 50,
+        receipt_number: input.receiptNumber,
+        receipt_date: input.receiptDate,
       },
       signal,
     }),

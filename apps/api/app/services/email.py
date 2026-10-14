@@ -58,10 +58,9 @@ class DevelopmentEmailSender:
 
     async def send(self, message: OutgoingEmail) -> None:
         logger.info(
-            "email.development_send to=%s subject=%s body=%s",
+            "email.development_send to=%s subject=%s",
             message.to,
             message.subject,
-            message.text_body,
         )
 
 

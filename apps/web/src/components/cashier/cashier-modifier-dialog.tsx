@@ -81,8 +81,7 @@ export function CashierModifierDialog({
         <DialogHeader>
           <DialogTitle>{product?.name ?? "Ürün seçenekleri"}</DialogTitle>
           <DialogDescription>
-            Hazırlama seçeneklerini belirleyin. Toplam backend tarafından
-            yeniden doğrulanır.
+            Hazırlama seçeneklerini belirleyin.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-5">

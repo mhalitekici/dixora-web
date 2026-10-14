@@ -113,6 +113,7 @@ async def start_email_enrollment(
     first_name: str,
     last_name: str,
     birth_date: date | None,
+    marketing_email_consent: bool,
     started_by_user_id: UUID | None,
 ) -> StartedEnrollment:
     """Email a verification code to the customer standing at the till."""
@@ -156,6 +157,7 @@ async def start_email_enrollment(
         first_name=first_name.strip(),
         last_name=last_name.strip(),
         birth_date=birth_date,
+        marketing_email_consent=marketing_email_consent,
         code_hash=hash_code(code),
         expires_at=expires_at,
     )
@@ -270,6 +272,7 @@ async def confirm_email_enrollment(
             last_name=verification.last_name,
             birth_date=verification.birth_date,
             is_active=True,
+            marketing_email_consent=verification.marketing_email_consent,
         )
         db.add(customer)
         await db.flush()
@@ -278,6 +281,7 @@ async def confirm_email_enrollment(
         customer.last_name = verification.last_name
         customer.birth_date = verification.birth_date
         customer.is_active = True
+        customer.marketing_email_consent = verification.marketing_email_consent
 
     return customer, verification
 

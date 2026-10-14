@@ -35,7 +35,9 @@ function job(overrides: Partial<PrintJobClaim> = {}): PrintJobClaim {
   };
 }
 
-function fakeExec(calls: Array<{ command: string; args: readonly string[] }>): ExecFn {
+function fakeExec(
+  calls: Array<{ command: string; args: readonly string[] }>,
+): ExecFn {
   return async (command, args) => {
     calls.push({ command, args });
     return { stdout: "", stderr: "" };
@@ -54,12 +56,20 @@ test("prints through lp with the requested copy count in one call", async () => 
   assert.equal(calls.length, 1);
   assert.equal(calls[0]!.command, "lp");
   assert.deepEqual(calls[0]!.args.slice(0, 4), ["-d", "BAR", "-n", "3"]);
+  assert.ok(calls[0]!.args.includes("position=top-left"));
+  assert.ok(calls[0]!.args.includes("fit-to-page=false"));
+  assert.ok(calls[0]!.args.includes("scaling=100"));
+  assert.ok(calls[0]!.args.includes("page-left=0"));
+  assert.ok(calls[0]!.args.includes("page-right=0"));
 });
 
 test("maps a Dixora printer code to a differently named local printer", async () => {
   const calls: Array<{ command: string; args: readonly string[] }> = [];
   const transport = new MacPrinterTransport(
-    testConfig({ printerIds: ["BAR"], printerNameMap: { BAR: "Bar_Epson_TM88" } }),
+    testConfig({
+      printerIds: ["BAR"],
+      printerNameMap: { BAR: "Bar_Epson_TM88" },
+    }),
     fakeExec(calls),
   );
 

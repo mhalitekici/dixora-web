@@ -52,6 +52,10 @@ from app.models.enums import (
 )
 from app.security import as_utc, utcnow
 from app.services.audit import add_audit_log
+from app.services.email_notifications import (
+    queue_reward_notification,
+    reward_verification_code,
+)
 
 PHONE_DIGITS = re.compile(r"\D+")
 VERIFICATION_TTL_SECONDS = 5 * 60
@@ -781,6 +785,7 @@ async def _sync_rewards_after_progress(
         )
         db.add(reward)
         await db.flush()
+        await queue_reward_notification(db, reward=reward)
 
 
 async def _new_reward_code(db: AsyncSession, tenant_id: UUID) -> str:
@@ -1114,6 +1119,8 @@ async def redeem_reward(
     order: Order,
     order_item_id: UUID,
     idempotency_key: str,
+    verification_code: str,
+    settings: Settings,
     identity: Identity,
 ) -> LoyaltyRedemption:
     if order.tenant_id != tenant_id:
@@ -1209,6 +1216,44 @@ async def redeem_reward(
         raise DomainError("reward_unavailable", "Ödül kullanılamıyor.", status_code=409)
     if reward.expires_at is not None and as_utc(reward.expires_at) <= utcnow():
         raise DomainError("reward_expired", "Ödülün süresi dolmuş.", status_code=409)
+    now = utcnow()
+    if (
+        reward.verification_locked_until is not None
+        and as_utc(reward.verification_locked_until) > now
+    ):
+        raise DomainError(
+            "reward_verification_locked",
+            "Çok fazla hatalı deneme yaptınız. Lütfen yeniden deneyin.",
+            status_code=429,
+            details={
+                "retry_after_seconds": max(
+                    1,
+                    int((as_utc(reward.verification_locked_until) - now).total_seconds()),
+                )
+            },
+        )
+    if reward.verification_locked_until is not None:
+        reward.verification_failed_attempts = 0
+        reward.verification_locked_until = None
+    expected_code = reward_verification_code(
+        settings, tenant_id=tenant_id, reward_id=reward.id
+    )
+    if not secrets.compare_digest(expected_code, verification_code.strip()):
+        reward.verification_failed_attempts += 1
+        if reward.verification_failed_attempts >= 5:
+            reward.verification_locked_until = now + timedelta(minutes=15)
+            raise DomainError(
+                "reward_verification_locked",
+                "Çok fazla hatalı deneme yaptınız. Lütfen yeniden deneyin.",
+                status_code=429,
+                details={"retry_after_seconds": 15 * 60},
+            )
+        raise DomainError(
+            "reward_verification_invalid",
+            "Kod doğru değil.",
+            status_code=400,
+            details={"remaining_attempts": 5 - reward.verification_failed_attempts},
+        )
     if order.status not in {
         OrderStatus.ACCEPTED,
         OrderStatus.PREPARING,
@@ -1494,13 +1539,8 @@ async def apply_campaigns_by_member_code(
     idempotency_key: str,
     identity: Identity,
 ) -> CampaignApplication:
-    """The whole counter flow behind one member code.
-
-    The cashier types the customer's code at payment; everything else — finding
-    the membership, choosing which earned reward fits which line, and zeroing it
-    — happens here. Previously this was three manual calls with the cashier
-    doing the matching by eye, which is not usable with a queue waiting.
-    """
+    """Attach the member; earned rewards require their separate emailed code."""
+    del idempotency_key, identity
     membership = await membership_from_code(db, tenant_id=tenant_id, code=member_code)
     if membership is None:
         raise DomainError(
@@ -1521,77 +1561,9 @@ async def apply_campaigns_by_member_code(
         )
     ).scalar_one()
 
-    rewards = (
-        await db.execute(
-            select(LoyaltyReward)
-            .where(
-                LoyaltyReward.tenant_id == tenant_id,
-                LoyaltyReward.membership_id == membership.id,
-                LoyaltyReward.status == LoyaltyRewardStatus.AVAILABLE,
-            )
-            .order_by(LoyaltyReward.ordinal)
-        )
-    ).scalars().all()
-
-    applied: list[AppliedCampaign] = []
-    used_items: set[UUID] = set()
-    for index, reward in enumerate(rewards):
-        if reward.expires_at is not None and as_utc(reward.expires_at) <= utcnow():
-            continue
-        candidates = await _eligible_items_for_reward(
-            db,
-            tenant_id=tenant_id,
-            order=order,
-            reward=reward,
-            already_used=used_items,
-        )
-        for item in candidates:
-            try:
-                redemption = await redeem_reward(
-                    db,
-                    tenant_id=tenant_id,
-                    redemption_code=reward.redemption_code,
-                    order=order,
-                    order_item_id=item.id,
-                    # Distinct per reward so replaying the cashier's action
-                    # returns the same result instead of double-discounting.
-                    idempotency_key=f"{idempotency_key}:{index}",
-                    identity=identity,
-                )
-            except DomainError:
-                # This line could not take the reward (already fully discounted,
-                # for instance). Try the next candidate rather than failing the
-                # whole request — the other rewards may still apply.
-                continue
-            name = (
-                await db.execute(
-                    select(Product.name).where(Product.id == item.product_id)
-                )
-            ).scalar_one_or_none() or "Ürün"
-            applied.append(
-                AppliedCampaign(
-                    redemption_code=reward.redemption_code,
-                    order_item_id=item.id,
-                    product_name=name,
-                    amount=redemption.amount,
-                )
-            )
-            used_items.add(item.id)
-            break
-
-    reason: str | None = None
-    if not applied:
-        if not rewards:
-            reason = "Bu üyeliğin kullanılabilir kampanyası yok."
-        else:
-            reason = (
-                "Kazanılan kampanya bu siparişteki ürünlere uygulanamadı. "
-                "Kampanya kapsamındaki ürünü sipariş ekleyin."
-            )
-
     return CampaignApplication(
         membership=membership,
         program_name=program.name,
-        applied=applied,
-        unapplied_reason=reason,
+        applied=[],
+        unapplied_reason="Bu siparişte uygulanabilir kampanya bulunamadı.",
     )

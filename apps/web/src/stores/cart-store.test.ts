@@ -5,6 +5,7 @@ import {
   useCartStore,
   type NewCartLine,
 } from "@/stores/cart-store"
+import { cartLineTotalMinor, cartTotalMinor } from "@/components/qr/qr-utils"
 
 const baseLine: NewCartLine = {
   productId: "product-1",
@@ -75,6 +76,60 @@ describe("cart store", () => {
 
     useCartStore.getState().setQuantity(secondId, 0)
     expect(useCartStore.getState().lines).toHaveLength(0)
+  })
+
+  it("counts whole products and includes modifiers in the full price", () => {
+    const lineId = useCartStore.getState().addLine({
+      ...baseLine,
+      quantity: 2,
+    })
+    let state = useCartStore.getState()
+    expect(state.lines[0].quantity).toBe(2)
+    expect(cartLineTotalMinor(state.lines[0])).toBe(BigInt(86000))
+    expect(selectCartItemCount(state)).toBe(2)
+    useCartStore.getState().setQuantity(lineId, 1)
+    state = useCartStore.getState()
+    expect(selectCartItemCount(state)).toBe(1)
+    expect(cartTotalMinor(state.lines)).toBe(BigInt(43000))
+    useCartStore.getState().setQuantity(lineId, 0)
+    expect(useCartStore.getState().lines).toHaveLength(0)
+  })
+
+  it("rehydrates full products and drops obsolete portion drafts without repricing them", async () => {
+    window.sessionStorage.setItem(
+      "dixora-cart",
+      JSON.stringify({
+        version: 1,
+        state: {
+          branchId: "branch-a",
+          tableToken: "table-a",
+          lines: [
+            { ...baseLine, lineId: "full", quantity: 2, portionSize: 1 },
+            {
+              ...baseLine,
+              lineId: "fractional",
+              quantity: 0.5,
+              portionSize: 0.5,
+            },
+            {
+              ...baseLine,
+              lineId: "two-halves",
+              quantity: 1,
+              portionSize: 0.5,
+            },
+          ],
+        },
+      }),
+    )
+    await useCartStore.persist.rehydrate()
+    const state = useCartStore.getState()
+    expect(state).toMatchObject({
+      branchId: "branch-a",
+      tableToken: "table-a",
+    })
+    expect(state.lines).toEqual([{ ...baseLine, lineId: "full", quantity: 2 }])
+    expect(cartTotalMinor(state.lines)).toBe(BigInt(86000))
+    expect(selectCartItemCount(state)).toBe(2)
   })
 
   it("retains a cart in the same context and resets it on table or branch changes", () => {

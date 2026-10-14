@@ -8,6 +8,7 @@ import {
   Loader2,
   Phone,
   Plus,
+  Printer,
   ShoppingBag,
   Store,
   X,
@@ -129,15 +130,37 @@ export function DeliveryInbox() {
       await refresh();
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Sipariş reddedilemedi."),
+      toast.error(
+        error instanceof Error ? error.message : "Sipariş reddedilemedi.",
+      ),
   });
 
   const statusMutation = useMutation({
-    mutationFn: ({ id, status }: { id: string; status: DeliveryOrder["delivery_status"] }) =>
-      deliveryApi.setStatus(id, status),
+    mutationFn: ({
+      id,
+      status,
+    }: {
+      id: string;
+      status: DeliveryOrder["delivery_status"];
+    }) => deliveryApi.setStatus(id, status),
     onSuccess: refresh,
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Durum güncellenemedi."),
+      toast.error(
+        error instanceof Error ? error.message : "Durum güncellenemedi.",
+      ),
+  });
+  const courierPrintMutation = useMutation({
+    mutationFn: (orderId: string) => deliveryApi.printCourierReceipt(orderId),
+    onSuccess: (kind) =>
+      toast.success(
+        kind === "REPRINT"
+          ? "Kurye fişi tekrar yazdırılıyor."
+          : "Kurye fişi yazdırılıyor.",
+      ),
+    onError: (error) =>
+      toast.error(
+        error instanceof Error ? error.message : "Kurye fişi yazdırılamadı.",
+      ),
   });
 
   const orders = ordersQuery.data?.items ?? [];
@@ -176,7 +199,9 @@ export function DeliveryInbox() {
               <p className="text-[0.62rem] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
                 {label}
               </p>
-              <p className={cn("text-xl font-bold tabular-nums", tone)}>{value}</p>
+              <p className={cn("text-xl font-bold tabular-nums", tone)}>
+                {value}
+              </p>
             </div>
           ))}
         </div>
@@ -224,6 +249,7 @@ export function DeliveryInbox() {
               order={order}
               now={now}
               busy={statusMutation.isPending}
+              printing={courierPrintMutation.isPending}
               onAccept={() => {
                 setPromised(20);
                 setAccepting(order);
@@ -232,7 +258,10 @@ export function DeliveryInbox() {
                 setReason("");
                 setRejecting(order);
               }}
-              onAdvance={(status) => statusMutation.mutate({ id: order.id, status })}
+              onAdvance={(status) =>
+                statusMutation.mutate({ id: order.id, status })
+              }
+              onPrint={() => courierPrintMutation.mutate(order.order_id)}
             />
           ))}
         </div>
@@ -290,7 +319,11 @@ export function DeliveryInbox() {
                 acceptMutation.mutate({ id: accepting.id, minutes: promised })
               }
             >
-              {acceptMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
+              {acceptMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Check />
+              )}
               Siparişi kabul et
             </Button>
           </DialogFooter>
@@ -347,7 +380,11 @@ export function DeliveryInbox() {
                 rejectMutation.mutate({ id: rejecting.id, why: reason.trim() })
               }
             >
-              {rejectMutation.isPending ? <Loader2 className="animate-spin" /> : <X />}
+              {rejectMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <X />
+              )}
               Reddet
             </Button>
           </DialogFooter>
@@ -361,16 +398,20 @@ function OrderCard({
   order,
   now,
   busy,
+  printing,
   onAccept,
   onReject,
   onAdvance,
+  onPrint,
 }: {
   order: DeliveryOrder;
   now: number;
   busy: boolean;
+  printing: boolean;
   onAccept: () => void;
   onReject: () => void;
   onAdvance: (status: DeliveryOrder["delivery_status"]) => void;
+  onPrint: () => void;
 }) {
   const Icon = CHANNEL_ICONS[order.channel];
   const minutes = elapsedMinutes(order.created_at, now);
@@ -402,7 +443,8 @@ function OrderCard({
               {order.provider ?? CHANNEL_LABELS[order.channel]}
             </p>
             <p className="text-[0.68rem] text-muted-foreground">
-              {order.external_display_id ?? `#${order.id.slice(0, 6).toUpperCase()}`}
+              {order.external_display_id ??
+                `#${order.id.slice(0, 6).toUpperCase()}`}
             </p>
           </div>
         </div>
@@ -429,7 +471,10 @@ function OrderCard({
 
       <ul className="mt-2 space-y-0.5 text-sm">
         {order.items.slice(0, 4).map((item, index) => (
-          <li key={`${item.name}-${index}`} className="flex justify-between gap-2">
+          <li
+            key={`${item.name}-${index}`}
+            className="flex justify-between gap-2"
+          >
             <span className="min-w-0 truncate">
               {Number(item.quantity)} × {item.name}
             </span>
@@ -466,7 +511,7 @@ function OrderCard({
         </p>
       ) : null}
 
-      <div className="mt-3 flex gap-2">
+      <div className="mt-3 flex flex-wrap gap-2">
         {order.delivery_status === "NEW" ? (
           <>
             <Button className="flex-1" onClick={onAccept}>
@@ -488,6 +533,19 @@ function OrderCard({
             {STATUS_LABELS[nextStatus]} olarak işaretle
           </Button>
         ) : null}
+        <Button
+          className="flex-1"
+          variant="outline"
+          disabled={printing}
+          onClick={onPrint}
+        >
+          {printing ? (
+            <Loader2 className="size-4 animate-spin" />
+          ) : (
+            <Printer className="size-4" />
+          )}
+          Kurye fişi
+        </Button>
       </div>
     </article>
   );

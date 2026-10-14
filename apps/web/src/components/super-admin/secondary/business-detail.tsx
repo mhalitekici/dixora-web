@@ -254,6 +254,9 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
         queryClient.invalidateQueries({
           queryKey: secondaryAdminQueryKeys.subscriptions,
         }),
+        queryClient.invalidateQueries({
+          queryKey: [...secondaryAdminQueryKeys.business(businessId), "overview"],
+        }),
       ])
       setReactivateOpen(false)
       setReactivateNote("")
@@ -798,9 +801,9 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
           <DialogHeader>
             <DialogTitle>Aboneliği manuel uzat</DialogTitle>
             <DialogDescription>
-              {business.name} için bu işlem tenantı ACTIVE durumuna taşır.
+              {business.name} işletmesinin üyeliğini aktif hale getirir.
               Abonelik bitişi gelecekteyse mevcut tarihin üstüne eklenir; geçmişteyse
-              4 Eylül 2026 tarihinden itibaren uzatılır.
+              bugünden itibaren uzatılır. Sonraki ödeme tarihi de yeni bitiş tarihine taşınır.
             </DialogDescription>
           </DialogHeader>
 

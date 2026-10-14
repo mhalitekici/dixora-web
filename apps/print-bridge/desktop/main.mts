@@ -66,21 +66,6 @@ function defaultApiUrl(): string {
   return app.isPackaged ? PRODUCTION_API_URL : DEVELOPMENT_API_URL;
 }
 
-function shouldReplaceStaleLocalhostApiUrl(apiUrl: string): boolean {
-  if (!app.isPackaged) return false;
-  try {
-    const url = new URL(apiUrl);
-    return (
-      url.protocol === "http:" &&
-      ["localhost", "127.0.0.1", "::1", "host.docker.internal"].includes(
-        url.hostname,
-      )
-    );
-  } catch {
-    return false;
-  }
-}
-
 function configureAgentEnvironment(nextSettings: DesktopSettings): void {
   const paths = dataPaths();
   process.env.NODE_ENV = "production";
@@ -110,11 +95,11 @@ async function loadSettings(): Promise<DesktopSettings | null> {
     ) {
       return null;
     }
-    const apiUrl = validateApiUrl(value.apiUrl);
     return {
-      apiUrl: shouldReplaceStaleLocalhostApiUrl(apiUrl)
-        ? defaultApiUrl()
-        : apiUrl,
+      // An operator may intentionally connect an installed build to a local
+      // Docker API. A saved URL is an explicit choice and must not silently
+      // switch back to production on the next launch.
+      apiUrl: validateApiUrl(value.apiUrl),
       computerName: normalizeComputerName(value.computerName),
     };
   } catch {

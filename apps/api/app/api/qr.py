@@ -1183,6 +1183,12 @@ async def approve_qr_request(
         qr_request.status = QrRequestStatus.EXPIRED
         await db.commit()
         raise DomainError("qr_request_expired", "QR order request has expired", status_code=409)
+    if any(Decimal(str(item.get("quantity", "1"))) % 1 for item in qr_request.items_payload):
+        raise DomainError(
+            "whole_quantity_required",
+            "Yalnız tam adet sipariş verilebilir. Misafirden yeni sipariş isteyin.",
+            status_code=422,
+        )
     order_payload = OrderCreate(
         table_id=qr_request.table_id,
         source=OrderSource.QR,

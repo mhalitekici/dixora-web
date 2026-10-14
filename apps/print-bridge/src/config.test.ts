@@ -7,6 +7,7 @@ const baseEnvironment = {
   PRINT_BRIDGE_API_KEY: "test-key",
   PRINT_BRIDGE_BRANCH_ID: "branch-1",
   PRINT_BRIDGE_PRINTER_IDS: "kitchen,bar,kitchen",
+  PRINT_BRIDGE_RECEIPT_COLUMNS: "38",
 };
 
 test("loads and normalizes bridge configuration", () => {
@@ -15,6 +16,7 @@ test("loads and normalizes bridge configuration", () => {
   assert.equal(config.apiUrl, "http://localhost:8000");
   assert.deepEqual(config.printerIds, ["KITCHEN", "BAR"]);
   assert.equal(config.mockFailureRate, 0);
+  assert.equal(config.receiptColumns, 38);
 });
 
 test("requires credentials unless explicitly running an insecure mock", () => {

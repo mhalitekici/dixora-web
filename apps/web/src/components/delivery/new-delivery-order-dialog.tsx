@@ -30,9 +30,11 @@ import { cn } from "@/lib/utils";
 type Product = {
   id: string;
   name: string;
+  category_id: string;
   selling_price: string | number;
   is_available: boolean;
 };
+type Category = { id: string; name: string; is_active: boolean };
 
 type ProductDetail = Product & CashierProductDetail;
 
@@ -94,6 +96,7 @@ export function NewDeliveryOrderDialog({
   const [payment, setPayment] =
     useState<(typeof PAYMENTS)[number][0]>("CASH_ON_DELIVERY");
   const [search, setSearch] = useState("");
+  const [category, setCategory] = useState("all");
   const [lines, setLines] = useState<Line[]>([]);
   const [modifierProduct, setModifierProduct] = useState<ProductDetail | null>(
     null,
@@ -107,18 +110,29 @@ export function NewDeliveryOrderDialog({
       }),
     enabled: open,
   });
+  const categoriesQuery = useQuery({
+    queryKey: ["delivery", "categories"],
+    queryFn: () =>
+      api.get<{ items: Category[] }>("catalog/categories", {
+        search: { limit: 250 },
+      }),
+    enabled: open,
+  });
 
   const products = useMemo(() => {
     const all = (productsQuery.data?.items ?? []).filter(
       (item) => item.is_available,
     );
     const needle = search.toLocaleLowerCase("tr-TR");
-    return needle
-      ? all.filter((item) =>
-          item.name.toLocaleLowerCase("tr-TR").includes(needle),
-        )
-      : all;
-  }, [productsQuery.data, search]);
+    return all.filter(
+      (item) =>
+        (category === "all" || item.category_id === category) &&
+        (!needle || item.name.toLocaleLowerCase("tr-TR").includes(needle)),
+    );
+  }, [category, productsQuery.data, search]);
+  const categories = (categoriesQuery.data?.items ?? []).filter(
+    (item) => item.is_active,
+  );
 
   const total = lines.reduce(
     (sum, line) => sum + lineUnitTotal(line) * BigInt(line.quantity),
@@ -157,6 +171,7 @@ export function NewDeliveryOrderDialog({
     setNote("");
     setPayment("CASH_ON_DELIVERY");
     setSearch("");
+    setCategory("all");
     setLines([]);
     setModifierProduct(null);
   }
@@ -352,6 +367,39 @@ export function NewDeliveryOrderDialog({
                 aria-label="Ürün ara"
                 className="h-10 rounded-xl pl-9"
               />
+            </div>
+
+            <div
+              className="scrollbar-subtle flex gap-1 overflow-x-auto pb-1"
+              aria-label="Paket siparişi ürün kategorileri"
+            >
+              <button
+                type="button"
+                onClick={() => setCategory("all")}
+                className={cn(
+                  "h-8 shrink-0 rounded-lg border px-2.5 text-xs font-semibold",
+                  category === "all"
+                    ? "border-primary bg-primary text-primary-foreground"
+                    : "bg-card text-muted-foreground",
+                )}
+              >
+                Tümü
+              </button>
+              {categories.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  onClick={() => setCategory(item.id)}
+                  className={cn(
+                    "h-8 shrink-0 rounded-lg border px-2.5 text-xs font-semibold",
+                    category === item.id
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "bg-card text-muted-foreground",
+                  )}
+                >
+                  {item.name}
+                </button>
+              ))}
             </div>
 
             <ScrollArea className="h-40 rounded-xl border">

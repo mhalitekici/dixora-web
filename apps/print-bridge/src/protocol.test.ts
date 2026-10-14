@@ -116,3 +116,53 @@ test("accepts a printer test job without order_id", () => {
   assert.equal(job.document.lines[0]?.complimentary, true);
   assert.equal(job.document.lines[0]?.adjustmentLabel, "İKRAM");
 });
+
+test("normalizes courier contact fields without losing Turkish address text", () => {
+  const [job] = parseClaimedJobs([
+    {
+      id: "job-courier",
+      tenant_id: "tenant-1",
+      branch_id: "branch-1",
+      preparation_station_id: null,
+      printer_device_id: "printer-cashier",
+      printer_code: "KASA",
+      order_id: "order-1",
+      kitchen_ticket_id: null,
+      payload: {
+        content_type: "application/vnd.dixora.receipt+json",
+        copies: 1,
+        document: {
+          document_type: "COURIER",
+          title: "KURYE FİŞİ",
+          branch_name: "Merkez",
+          station_name: "KASA",
+          order_number: "P100",
+          customer_name: "Ayşe Yılmaz",
+          customer_phone: "0555 111 22 33",
+          delivery_address: "Şehitler Cad. No: 4, Üsküdar",
+          payment_label: "Kapıda kart",
+          submitted_at: "2026-07-30T20:00:00Z",
+          lines: [
+            {
+              name: "Cafe Latte",
+              quantity: "2",
+              unit_price: "90.00",
+              line_total: "180.00",
+            },
+          ],
+          totals: { total: "180.00" },
+        },
+      },
+      kind: "ORIGINAL",
+      attempt_count: 1,
+      claimed_at: "2026-07-30T20:00:00Z",
+      created_at: "2026-07-30T19:59:00Z",
+    },
+  ]);
+
+  assert.equal(job?.document.documentType, "COURIER");
+  assert.equal(job?.document.customerName, "Ayşe Yılmaz");
+  assert.equal(job?.document.customerPhone, "0555 111 22 33");
+  assert.equal(job?.document.deliveryAddress, "Şehitler Cad. No: 4, Üsküdar");
+  assert.equal(job?.document.paymentLabel, "Kapıda kart");
+});

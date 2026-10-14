@@ -204,6 +204,7 @@ export function OrderActivityDetailDialog({
             name: item.name,
             quantity: item.quantity,
             unitPrice: item.unit_price,
+            discount: item.discount,
             lineTotal: item.line_total,
             complimentary: item.is_complimentary,
             modifiers: item.modifiers,

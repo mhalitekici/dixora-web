@@ -21,6 +21,7 @@ function job(overrides: Partial<PrintJobClaim> = {}): PrintJobClaim {
     attemptCount: 1,
     claimedAt: "2026-09-06T19:42:00Z",
     document: {
+      documentType: "PREPARATION",
       title: "Mutfak Fişi",
       businessName: "Dodo Cafe",
       branchName: "Aleyin Mutfağı",
@@ -42,15 +43,15 @@ function job(overrides: Partial<PrintJobClaim> = {}): PrintJobClaim {
   };
 }
 
-test("renders branch, station, order, table and waiter with the new layout", () => {
+test("renders a compact preparation heading, order, table and waiter", () => {
   const text = renderReceiptText(job());
 
-  assert.match(text, /ALEYİN MUTFAĞI/);
-  assert.match(text, /DODO CAFE/);
+  assert.doesNotMatch(text, /ALEYİN MUTFAĞI|DODO CAFE/);
   assert.match(text, /MUTFAK FİŞİ/);
   assert.match(text, /Sipariş No:\s+A1042/);
   assert.match(text, /Masa:\s+Salon 7/);
   assert.match(text, /Garson:\s+Ahmet/);
+  assert.doesNotMatch(text, /Basım:/);
   assert.match(text, /^={42}$/m);
 });
 
@@ -68,8 +69,7 @@ test("renders a bar preparation receipt with its own station identity", () => {
   );
 
   assert.match(text, /BAR FİŞİ/);
-  assert.match(text, /^\s+BAR\s*$/m);
-  assert.match(text, /2 x TÜRK KAHVESİ/);
+  assert.match(text, /Türk Kahvesi\s+2x/);
 });
 
 test("renders quantity, product name, modifiers and item note", () => {
@@ -89,10 +89,10 @@ test("renders quantity, product name, modifiers and item note", () => {
     }),
   );
 
-  assert.match(text, /1 x ADANA KEBAP/);
+  assert.match(text, /Adana Kebap\s+1x/);
   assert.match(text, /\+ Az acılı/);
   assert.match(text, /\+ Soğansız/);
-  assert.match(text, /Not: Acil/);
+  assert.match(text, /Açıklama: Acil/);
 });
 
 test("renders the order-level note carried in the footer", () => {
@@ -115,7 +115,14 @@ test("marks a reprint distinctly from an original", () => {
 
 test("prints the branch-local daily receipt number separately from the order reference", () => {
   const text = renderReceiptText(
-    job({ document: { ...job().document, receiptNumber: 42 } }),
+    job({
+      preparationStationId: null,
+      document: {
+        ...job().document,
+        documentType: "BILL",
+        receiptNumber: 42,
+      },
+    }),
   );
 
   assert.match(text, /FİŞ NO:\s+42/);
@@ -133,21 +140,26 @@ test("preserves Turkish characters without mangling", () => {
     job({
       document: {
         ...job().document,
-        branchName: "Şirin Şölen Çorbacısı İğdır",
-        lines: [{ name: "Türk Kahvesi", quantity: "1" }],
+        title: "Şirin Şölen Fişi",
+        lines: [{ name: "Türk Kahvesi İğdır", quantity: "1" }],
       },
     }),
   );
 
-  assert.match(text, /ŞİRİN ŞÖLEN ÇORBACISI İĞDIR/);
-  assert.match(text, /TÜRK KAHVESİ/);
+  assert.match(text, /ŞİRİN ŞÖLEN FİŞİ/);
+  assert.match(text, /Türk Kahvesi İğdır/);
 });
 
 test("renders a customer receipt line total using its Turkish currency format", () => {
   const text = renderReceiptText(
     job({
+      printerDeviceId: "KASA",
+      preparationStationId: null,
+      kitchenTicketId: null,
       document: {
         ...job().document,
+        documentType: "BILL",
+        stationName: "KASA",
         currency: "TRY",
         lines: [
           {
@@ -162,9 +174,176 @@ test("renders a customer receipt line total using its Turkish currency format", 
     }),
   );
 
-  assert.match(text, /2 x İSKENDER KEBAP/);
+  assert.match(text, /Ürün\s+Adet\s+Toplam/);
+  assert.doesNotMatch(text, /Birim|₺125,50/);
+  assert.match(text, /İskender/);
   assert.match(text, /₺251,00/);
   assert.match(text, /TOPLAM\s+251,00 ₺/);
+});
+
+test("never prints prices on a preparation ticket even if price fields are present", () => {
+  const text = renderReceiptText(
+    job({
+      document: {
+        ...job().document,
+        currency: "TRY",
+        lines: [
+          { name: "Uzun Türkçe Ürün", quantity: "2", lineTotal: "999.00" },
+        ],
+      },
+    }),
+  );
+  assert.match(text, /Uzun Türkçe Ürün\s+2x/);
+  assert.doesNotMatch(text, /999|₺|TL/);
+});
+
+test("uses an adjustable safe width and keeps long Turkish text within it", () => {
+  const text = renderReceiptText(
+    job({
+      document: {
+        ...job().document,
+        lines: [
+          {
+            name: "İçecekler İçin Çok Uzun Açıklamalı Türk Kahvesi",
+            quantity: "12",
+          },
+        ],
+        footer: [
+          "Sipariş notu: Çocuk için acısız ve bütün soslar ayrı kaplarda olsun",
+        ],
+      },
+    }),
+    36,
+  );
+  for (const line of text.split("\n")) assert.ok(line.length <= 36, line);
+  assert.match(text, /bütün soslar\nayrı kaplarda/);
+});
+
+test("moves long prices below the product instead of truncating narrow receipts", () => {
+  const text = renderReceiptText(
+    job({
+      preparationStationId: null,
+      document: {
+        ...job().document,
+        documentType: "BILL",
+        currency: "TRY",
+        lines: [
+          {
+            name: "Çok Uzun Türkçe Ürün Adı",
+            quantity: "12",
+            unitPrice: "1234567.89",
+            lineTotal: "14814814.68",
+          },
+        ],
+        totals: { total: "14814814.68" },
+      },
+    }),
+    32,
+  );
+
+  for (const line of text.split("\n")) assert.ok(line.length <= 32, line);
+  assert.doesNotMatch(text, /Birim|₺1\.234\.567,89/);
+  assert.match(text, /₺14\.814\.814,68/);
+});
+
+test("prints source, package identity and staff labels without inventing a table", () => {
+  const { tableName, ...packageDocument } = job().document;
+  void tableName;
+  const text = renderReceiptText(
+    job({
+      document: {
+        ...packageDocument,
+        sourceLabel: "PAKET SİPARİŞ",
+        orderLabel: "Paket - Ayşe Yılmaz",
+        waiterName: "Kasiyer Can",
+        staffLabel: "Kasiyer",
+      },
+    }),
+  );
+  assert.match(text, /Kaynak:\s+PAKET SİPARİŞ/);
+  assert.match(text, /Sipariş:\s+Paket - Ayşe Yılmaz/);
+  assert.match(text, /Kasiyer:\s+Kasiyer Can/);
+  assert.doesNotMatch(text, /Masa:/);
+});
+
+test("prints the QR menu source without inventing staff", () => {
+  const { tableName, waiterName, ...qrDocument } = job().document;
+  void tableName;
+  void waiterName;
+  const text = renderReceiptText(
+    job({ document: { ...qrDocument, sourceLabel: "QR MENÜ" } }),
+  );
+  assert.match(text, /Kaynak:\s+QR MENÜ/);
+  assert.doesNotMatch(text, /Garson:|Kasiyer:/);
+});
+
+test("renders a courier slip with real delivery contact and priced contents", () => {
+  const { tableName, waiterName, ...courierDocument } = job().document;
+  void tableName;
+  void waiterName;
+  const text = renderReceiptText(
+    job({
+      printerDeviceId: "KASA",
+      preparationStationId: null,
+      kitchenTicketId: null,
+      document: {
+        ...courierDocument,
+        documentType: "COURIER",
+        title: "Kurye Fişi",
+        sourceLabel: "PAKET SİPARİŞ",
+        orderLabel: "Paket sipariş",
+        customerName: "Ayşe Yılmaz",
+        customerPhone: "0555 111 22 33",
+        deliveryAddress: "Atatürk Cad. No: 10, Kadıköy",
+        paymentLabel: "Kapıda kart",
+        currency: "TRY",
+        lines: [
+          {
+            name: "Cafe Latte",
+            quantity: "2",
+            unitPrice: "90.00",
+            lineTotal: "180.00",
+          },
+        ],
+        totals: { total: "180.00" },
+      },
+    }),
+  );
+
+  assert.match(text, /KURYE FİŞİ/);
+  assert.match(text, /Müşteri:\s+Ayşe Yılmaz/);
+  assert.match(text, /Telefon:\s+0555 111 22 33/);
+  assert.match(text, /Adres:/);
+  assert.match(text, /Cafe Latte/);
+  assert.match(text, /₺90,00\s+₺180,00/);
+  assert.doesNotMatch(text, /Basım:/);
+});
+
+test("separates service and cover charges in bill totals", () => {
+  const text = renderReceiptText(
+    job({
+      printerDeviceId: "KASA",
+      preparationStationId: null,
+      kitchenTicketId: null,
+      document: {
+        ...job().document,
+        documentType: "BILL",
+        stationName: "KASA",
+        currency: "TRY",
+        totals: {
+          subtotal: "100.00",
+          serviceCharge: "10.00",
+          coverCharge: "5.00",
+          total: "115.00",
+          paid: "50.00",
+          remaining: "65.00",
+        },
+      },
+    }),
+  );
+  assert.match(text, /SERVİS ÜCRETİ\s+₺10,00/);
+  assert.match(text, /KUVER ÜCRETİ\s+₺5,00/);
+  assert.match(text, /GENEL TOPLAM\s+₺115,00/);
 });
 
 test("renders a cashier bill with clear columns and service charge total", () => {
@@ -175,6 +354,7 @@ test("renders a cashier bill with clear columns and service charge total", () =>
       kitchenTicketId: null,
       document: {
         ...job().document,
+        documentType: "BILL",
         title: "Müşteri Bilgi Fişi",
         stationName: "KASA",
         currency: "TRY",
@@ -192,8 +372,11 @@ test("renders a cashier bill with clear columns and service charge total", () =>
   );
 
   assert.match(text, /MÜŞTERİ BİLGİ FİŞİ/);
-  assert.match(text, /Ürün\s+Tutar/);
-  assert.match(text, /2 x Türk Kahvesi\s+₺180,00/);
+  assert.match(text, /Ürün\s+Adet\s+Toplam/);
+  assert.doesNotMatch(text, /Birim/);
+  assert.match(text, /Türk Kahvesi/);
+  assert.match(text, /Türk Kahvesi\s+2\s+₺180,00/);
+  assert.doesNotMatch(text, /₺90,00/);
   assert.match(text, /SERVİS\s+18.00/);
   assert.match(text, /TOPLAM\s+198.00/);
 });
@@ -216,7 +399,7 @@ test("wraps a line longer than the thermal column instead of truncating it", () 
   for (const line of text.split("\n")) {
     assert.ok(line.length <= 42, `line exceeded 42 columns: "${line}"`);
   }
-  assert.match(text, /KESİNLİKLE/);
+  assert.match(text, /Kesinlikle/);
 });
 
 test("omits table and waiter lines when the order has neither", () => {
@@ -237,6 +420,7 @@ test("marks complimentary bill lines as İKRAM while preserving a zero total", (
       kitchenTicketId: null,
       document: {
         ...job().document,
+        documentType: "BILL",
         title: "Hesap Özeti",
         stationName: "KASA",
         currency: "TRY",
@@ -253,6 +437,6 @@ test("marks complimentary bill lines as İKRAM while preserving a zero total", (
     }),
   );
 
-  assert.match(text, /1 x Türk Kahvesi  İKRAM\s+₺0,00/);
+  assert.match(text, /Türk Kahvesi\s+1\s+İKRAM/);
   assert.match(text, /TOPLAM\s+0.00/);
 });

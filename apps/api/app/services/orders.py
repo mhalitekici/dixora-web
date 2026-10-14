@@ -66,6 +66,7 @@ from app.schemas import (
     PaymentCreate,
 )
 from app.services.audit import add_audit_log
+from app.services.cashier_shifts import operator_cashier_name
 from app.services.inventory_units import convert_quantity
 from app.services.loyalty import accrue_paid_order, reverse_order_redemptions
 
@@ -225,12 +226,38 @@ async def _build_kitchen_ticket_payload(
     tenant = await db.get(Tenant, order.tenant_id)
     assert tenant is not None
 
-    waiter_name: str | None = None
-    lookup_user_id = actor_user_id or order.created_by_user_id
+    staff_name: str | None = None
+    lookup_user_id = (
+        order.created_by_user_id
+        if order.source in {OrderSource.WAITER, OrderSource.CASHIER}
+        else None
+    )
     if lookup_user_id is not None:
-        waiter_name = (
+        staff_name = (
             await db.execute(select(User.display_name).where(User.id == lookup_user_id))
         ).scalar_one_or_none()
+    if order.source == OrderSource.CASHIER and actor_user_id is not None:
+        staff_name = await operator_cashier_name(
+            db,
+            tenant_id=order.tenant_id,
+            branch_id=order.branch_id,
+            actor_user_id=actor_user_id,
+        )
+
+    source_labels = {
+        OrderSource.WAITER: "GARSON",
+        OrderSource.CASHIER: "KASA",
+        OrderSource.QR: "QR MENÜ",
+        OrderSource.TAKEAWAY: "PAKET SİPARİŞ",
+        OrderSource.DELIVERY: "PAKET SİPARİŞ",
+        OrderSource.KIOSK: "KİOSK",
+        OrderSource.API: "HARİCİ SİPARİŞ",
+    }
+    staff_labels = {
+        OrderSource.WAITER: "Garson",
+        OrderSource.CASHIER: "Kasiyer",
+    }
+    package_order = order.source in {OrderSource.TAKEAWAY, OrderSource.DELIVERY}
 
     order_note = (
         await db.execute(
@@ -257,13 +284,23 @@ async def _build_kitchen_ticket_payload(
 
     now = datetime.now(UTC)
     document: dict[str, object] = {
+        "document_type": "PREPARATION",
         "title": f"{station.name if station else 'GENEL'} FİŞİ".upper(),
         "business_name": tenant.name,
         "branch_name": branch.name,
         "station_name": station.name if station else "Genel",
         "order_number": order_bill_reference(order.id),
         "table_name": order.table_name,
-        "waiter_name": waiter_name,
+        "waiter_name": staff_name,
+        "staff_label": staff_labels.get(order.source),
+        "source_label": source_labels[order.source],
+        "order_label": (
+            f"Paket - {order.customer_name}"
+            if package_order and order.customer_name
+            else "Paket sipariş"
+            if package_order
+            else None
+        ),
         "submitted_at": now.isoformat(),
         "lines": [
             {
@@ -712,12 +749,21 @@ async def append_order_items(
         OrderStatus.PARTIALLY_READY,
         OrderStatus.READY,
         OrderStatus.SERVED,
+        OrderStatus.BILL_REQUESTED,
     }:
         raise DomainError(
             "order_not_editable",
             f"Items cannot be added while order is {order.status.value}",
             status_code=409,
         )
+    if any(payment.status == PaymentStatus.COMPLETED for payment in order.payments):
+        raise DomainError(
+            "order_has_payments",
+            "Items cannot be added after a payment has been recorded",
+            status_code=409,
+        )
+    if order.status == OrderStatus.BILL_REQUESTED:
+        order.status = OrderStatus.ACCEPTED
     product_ids = {item.product_id for item in items}
     products = (
         (
@@ -910,6 +956,7 @@ async def mutate_order_item(
     expected_version: int,
     idempotency_key: str,
     reason: str | None,
+    note: str | None,
     identity: Identity,
 ) -> Order:
     existing = (
@@ -948,13 +995,56 @@ async def mutate_order_item(
     print_quantity = item.quantity
     print_label: str | None = None
     audit_action: str
+    added_item: OrderItem | None = None
     if action == "INCREASE":
-        item.quantity = money(item.quantity + Decimal("1"))
+        previous_line_total = item.line_total
+        increment = Decimal("1")
+        if item.status not in {OrderItemStatus.DRAFT, OrderItemStatus.SUBMITTED}:
+            # Keep previously sent portions intact. The extra portion becomes
+            # a pending line and is printed/deducted from stock on acceptance.
+            added_item = OrderItem(
+                tenant_id=item.tenant_id,
+                branch_id=item.branch_id,
+                order_id=order.id,
+                product_id=item.product_id,
+                preparation_station_id=item.preparation_station_id,
+                product_name_snapshot=item.product_name_snapshot,
+                unit_price=item.unit_price,
+                quantity=increment,
+                tax_rate_snapshot=item.tax_rate_snapshot,
+                discount_snapshot=item.discount_snapshot,
+                line_total=Decimal("0.00")
+                if item.is_complimentary
+                else money(item.unit_price * increment),
+                is_complimentary=item.is_complimentary,
+                complimentary_by_user_id=item.complimentary_by_user_id,
+                complimentary_at=item.complimentary_at,
+                complimentary_reason=item.complimentary_reason,
+                status=OrderItemStatus.SUBMITTED,
+                submitted_at=datetime.now(UTC),
+                note=item.note,
+                modifiers=[
+                    OrderItemModifier(
+                        tenant_id=item.tenant_id,
+                        modifier_id=modifier.modifier_id,
+                        name_snapshot=modifier.name_snapshot,
+                        price_delta_snapshot=modifier.price_delta_snapshot,
+                        quantity=modifier.quantity,
+                    )
+                    for modifier in item.modifiers
+                ],
+            )
+            db.add(added_item)
+            await db.flush()
+        else:
+            item.quantity = money(item.quantity + increment)
         if not item.is_complimentary:
-            item.line_total = money(item.unit_price * item.quantity)
-            order.subtotal = money(order.subtotal + item.unit_price)
-        print_quantity = Decimal("1")
-        print_label = "ADET ARTTIRILDI"
+            if added_item is None:
+                item.line_total = money(item.unit_price * item.quantity)
+            delta = added_item.line_total if added_item else item.line_total - previous_line_total
+            order.subtotal = money(order.subtotal + delta)
+        if order.status == OrderStatus.BILL_REQUESTED:
+            order.status = OrderStatus.ACCEPTED
         audit_action = "order.item_quantity_increased"
     elif action == "DECREASE":
         if item.quantity <= Decimal("1"):
@@ -997,7 +1087,6 @@ async def mutate_order_item(
         item.complimentary_by_user_id = identity.user_id
         item.complimentary_at = datetime.now(UTC)
         item.complimentary_reason = trimmed_reason
-        print_label = "İKRAM"
         audit_action = "order.item_complimentary_set"
     elif action == "REMOVE_COMPLIMENTARY":
         if (
@@ -1019,14 +1108,23 @@ async def mutate_order_item(
         item.complimentary_by_user_id = None
         item.complimentary_at = None
         item.complimentary_reason = None
-        print_label = "İKRAM KALDIRILDI"
         audit_action = "order.item_complimentary_removed"
+    elif action == "UPDATE_NOTE":
+        next_note = (note or "").strip() or None
+        if item.note == next_note:
+            return await load_order(db, order.tenant_id, order.id)
+        item.note = next_note
+        print_label = "AÇIKLAMA GÜNCELLENDİ" if next_note else "AÇIKLAMA KALDIRILDI"
+        audit_action = "order.item_note_updated"
     else:
         raise DomainError("invalid_item_action", "Unsupported item action", status_code=422)
 
     recalculate_order_totals(order)
     order.version += 1
     after = _item_snapshot(item)
+    if added_item is not None:
+        after["quantity"] = str(item.quantity + added_item.quantity)
+        after["pending_item_id"] = str(added_item.id)
     db.add(
         OrderOperation(
             tenant_id=order.tenant_id,

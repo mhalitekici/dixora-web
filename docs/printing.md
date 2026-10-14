@@ -25,10 +25,25 @@ kuver/servis ve backend toplamlarını gösteren hesap özeti bu rotaya normal i
 akışıyla gönderilir. Kasa rotası yoksa iş kuyruğa alınmaz ve panel kullanıcıyı
 **Ayarlar > Yazıcılar** bölümüne yönlendirir.
 
-Kasiyer basılmış bir ürünün adedini veya ikram durumunu değiştirdiğinde yeni bir
-ORIGINAL sipariş fişi üretilmez. İlgili hazırlık istasyonuna idempotent bir
-`COPY` düzeltme işi düşer; üzerinde `ADET ARTTIRILDI`, `ADET AZALTILDI`, `İKRAM`
-veya `İKRAM KALDIRILDI` etiketi bulunur.
+Kasiyer yeni ürün eklediğinde veya basılmış bir ürünün adedini artırdığında ek
+miktar bekleyen yeni kalem olarak tutulur. **Siparişi yazdır** düğmesi yeniden
+aktif olur; basıldığında yalnız bu yeni kalemler istasyonlara gönderilir ve
+stokları düşülür. Fişte `ADET ARTTIRILDI` yazmaz. İkram işaretleme veya ikramı
+kaldırma yalnız hesabı günceller, hazırlık fişi oluşturmaz. Basılmış kalemlerin
+adet azaltma ve açıklama değişiklikleri ilgili istasyona `COPY` düzeltme işi
+gönderir. Garson da kendi panelinden ürün açıklaması ekleyip düzenleyebilir.
+
+Hesap ve ödeme fişlerinde aynı ürün sonradan tekrar eklendiğinde adetleri ve
+tutarları tek satırda toplanır: ayrı ayrı eklenen iki baklava `2 x Baklava`
+olarak görünür. Aynı ürünün fiyatı, seçenekleri, açıklaması veya ikram durumu
+farklıysa ayrı satırlar korunur. Bu gösterim tüm panellerin fiş önizlemesi,
+hesap baskısı, kurye fişi ve yeniden baskıları için geçerlidir.
+
+Kasiyer, garson ve QR menü yalnız tam adet sipariş kabul eder; yarım porsiyon
+seçimi yoktur. Yeni sipariş ve ürün ekleme uçları kesirli miktarları reddeder. Kasa
+fişindeki personel adı vardiyada seçilen kasiyerden gelir; yeniden baskıda ilk
+fişi düzenleyen vardiyanın adı korunur. Admin sipariş ekranında fiş numarası ve
+işletme günü ile tüm kayıtlar aranabilir.
 
 ## Güvenli teslimat
 
@@ -90,9 +105,19 @@ kullanımda uygulama HTTPS API adresi ister. Setup dosyası kod imzalı değilse
 Windows SmartScreen yayıncı uyarısı gösterebilir; canlı dağıtımda bir Windows
 code-signing sertifikasıyla imzalanmalıdır.
 
-Windows taşıması `Get-Printer` ile yüklü yazıcıları keşfeder ve `Out-Printer`
-ile Windows spooler'a UTF-8 metin işi verir. USB, ağ ve sürücüyle kurulmuş
-yazıcılar, Windows'ta görünüyorsa desteklenir.
+Windows taşıması `Get-Printer` ile yüklü yazıcıları keşfeder. Baskıda
+`PrintDocument` kullanır; sürücünün gerçek yazdırılabilir alanını ölçer,
+uygulama kenar boşluklarını sıfırlar ve metni sol yazdırılabilir kenardan
+başlatır. Her kopyaya benzersiz bir spooler belge adı verir ve işi 30 saniyeye
+kadar `Get-PrintJob` ile izler. Çevrimdışı, kağıt yok, engellenmiş veya kuyruktan
+ayrılamayan iş `PRINTED` sayılmaz; operatör kontrollü tekrar için hata olarak
+bildirilir. USB, ağ ve sürücüyle kurulmuş yazıcılar, Windows'ta görünüyorsa
+desteklenir.
+
+Windows yazıcı kuyruğunda **Use Printer Offline / Yazıcıyı çevrimdışı kullan**
+seçiliyse Bridge işi göndermeden hata verir. Bu seçenek kapalı olmalı; yalnızca
+`PrinterStatus=Normal` görünmesi çevrimdışı bayrağının kapalı olduğunu garanti
+etmez.
 
 `Microsoft Print to PDF` ve `Microsoft XPS Document Writer` arka planda çalışan
 Print Bridge için güvenilir test yazıcısı değildir. Bu sürücüler dosya adı
@@ -198,21 +223,61 @@ gözlem verisidir; merkezden şube ağına health probe yapılmaz.
 
 ## Fiş biçimi
 
-Fiziksel taşıma 80 mm termal fiş için 42 sütunluk UTF-8 düz metin üretir.
-İşletme/şube ve fiş türü çift çizgiyle ayrılır; hazırlık ürünleri büyük harfle,
-hesap satırları sağa hizalı tutarla, ikramlar `İKRAM · 0,00 TL` olarak görünür.
-Başlıkta `toLocaleUpperCase("tr")` kullanılır; böylece `İ`, `ı`, `Ş`, `Ğ`, `Ç`
-gibi Türkçe karakterler bozulmaz. Uzun ürün isimleri, notlar ve modifiyerler
-kesilmek yerine satıra sarılır.
+Fiziksel taşıma 80 mm termal fiş için UTF-8 düz metin üretir. Yazıcı
+sürücüsünün gerçek yazdırılabilir alanına göre `PRINT_BRIDGE_RECEIPT_COLUMNS`
+ayarlanır (varsayılan 42, izin verilen 32-64).
 
-Windows'ta UTF-8 içerik geçici bir dosyadan `Out-Printer`'a okunur. macOS'ta
-aynı UTF-8 dosya `lp` ile gönderilir. Sürücü veya yazıcı UTF-8 desteklemiyorsa
+- Hazırlık fişi yalnız hedef istasyonun `MUTFAK FİŞİ` / `BAR FİŞİ` başlığı,
+  sipariş-masa/personel veya kaynak bilgisi, tarih-saat ve sağda ürün adedi
+  taşır. Fiyat ve sonradan üretilmiş basım zamanı içermez; açıklama ve
+  seçenekler ürünün hemen altına yazılır.
+- Hesap özeti işletme ve şubeyle başlar. Ürün, adet ve toplam fiyat
+  ayrı sütunlardır; ikram satırının toplamında para yerine `İKRAM` görünür.
+  İndirim, vergi, servis ve kuver yalnız veri kaynağında varsa ayrı gösterilir.
+- Kurye fişi paket siparişindeki gerçek müşteri adı, telefon, adres, ödeme
+  şekli, ürün/fiyatlar ve teslimat notlarını taşır. İlk baskı `ORIGINAL`, sonraki
+  baskılar işaretli `REPRINT` işidir.
+
+Türkçe başlıklarda yerel büyük harf dönüşümü kullanılır; böylece `İ`, `ı`, `Ş`,
+`Ğ`, `Ç` gibi karakterler bozulmaz. Uzun ürün isimleri, adresler, notlar,
+modifiyerler ve tutarlar kesilmek yerine güvenli biçimde satıra sarılır. Dar
+sütun ayarında tutarlar sığmıyorsa ürünün altına etiketli satırlar olarak
+indirilir. Hesap özeti birim fiyat sütunu içermez; kurye fişi birim ve toplam
+fiyatı birlikte taşır.
+
+Windows'ta UTF-8 içerik geçici bir dosyadan okunur ve `PrintDocument` ile
+çizilir. Monospace punto, seçilen sütun sayısı sürücünün gerçek yazdırılabilir
+genişliğini dolduracak şekilde hesaplanır; kağıt boyutu Windows yazıcı
+tercihlerinde yine **80 mm** olarak seçilmelidir.
+macOS'ta aynı UTF-8 dosya `lp` ile CUPS'a gönderilir; rulo uzunluğu sürücüye göre
+değiştiği için 80 mm medya ve kenar boşlukları CUPS yazıcı varsayılanlarında
+seçilmelidir. Sürücü veya yazıcı UTF-8 desteklemiyorsa
 bu fiziksel sürücü kurulumunun sorunudur; Bridge metni kod sayfasına sessizce
 dönüştürmez.
 
-Taşıma OS spooler işinin kabulünü başarı sayar. Raw ESC/POS, programatik kesme,
+macOS taşıması CUPS'ın işi kabul etmesini, Windows taşıması ise adlandırılmış
+işin spooler kuyruğundan hatasız ayrılmasını başarı sayar. Bu kontroller kağıdın
+fiziksel olarak kesildiğini kanıtlayamaz. Raw ESC/POS, programatik kesme,
 çekmece açma ve donanım seviyesinde kağıt/bıçak durum geri bildirimi bu sürümde
 desteklenmez.
+
+### Fiziksel 80 mm kurulum kontrolü
+
+- `Windows printer is set to offline mode` hatasında yazıcı için Windows'taki
+  **Yazıcıyı çevrimdışı kullan** seçeneğini ve USB/ağ bağlantısını kontrol edin.
+  `Get-Printer` durumunun `Normal` olması `Win32_Printer.WorkOffline=true`
+  ayarını geçersiz kılmaz. Bridge hata mesajı işletim sisteminin asıl hatasıyla
+  başlar; geçici dosya yolları nedeniyle hata nedeni kesilmez.
+- Sürücüde kağıt genişliğini 80 mm, kenar boşluklarını mümkün olan en düşük
+  değer ve ölçeklemeyi %100 seçin; test çıktısının sağı kesiliyorsa sütun
+  değerini 42'den 40 veya 38'e indirin.
+- Soluk baskı için yazıcı/sürücüde **density/darkness** değerini ve baskı hızını
+  kontrol edin. Bunlar Windows spooler/CUPS işinden güvenilir biçimde
+  zorlanamaz.
+- Termal kağıdın kaplamalı yüzünü tırnakla çizerek kararan tarafın termal kafaya
+  baktığını doğrulayın. Yanlış yön ve uyumsuz/eski kağıt yazılımla düzeltilemez.
+- Windows ve macOS'ta ayrı test baskısı alıp en uzun Türkçe ürün/not satırını,
+  TL tutar hizasını ve kağıt kesimini fiziksel olarak kontrol edin.
 
 ## Geliştirme mock'u
 

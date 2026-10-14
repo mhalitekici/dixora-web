@@ -1268,19 +1268,29 @@ async def redeem(
     payload: LoyaltyRedemptionCreate,
     identity: LoyaltyRedeemer,
     db: DbSession,
+    settings: Settings = Depends(get_app_settings),
 ) -> LoyaltyRedemptionOut:
     tenant_id = require_tenant(identity)
     order = await load_order(db, tenant_id, payload.order_id, lock=True)
     _ensure_order_branch(identity, order.branch_id)
-    redemption = await redeem_reward(
-        db,
-        tenant_id=tenant_id,
-        redemption_code=redemption_code,
-        order=order,
-        order_item_id=payload.order_item_id,
-        idempotency_key=payload.idempotency_key,
-        identity=identity,
-    )
+    try:
+        redemption = await redeem_reward(
+            db,
+            tenant_id=tenant_id,
+            redemption_code=redemption_code,
+            order=order,
+            order_item_id=payload.order_item_id,
+            idempotency_key=payload.idempotency_key,
+            verification_code=payload.verification_code,
+            settings=settings,
+            identity=identity,
+        )
+    except DomainError as exc:
+        if exc.code in {"reward_verification_invalid", "reward_verification_locked"}:
+            # Persist the per-reward brute-force counter while leaving every
+            # order/discount field untouched (verification happens first).
+            await db.commit()
+        raise
     await db.commit()
     return LoyaltyRedemptionOut(
         id=redemption.id,
@@ -1365,6 +1375,7 @@ async def start_public_email_enrollment(
         first_name=payload.first_name,
         last_name=payload.last_name,
         birth_date=payload.birth_date,
+        marketing_email_consent=payload.marketing_email_consent,
         started_by_user_id=None,
     )
     add_audit_log(
@@ -1512,6 +1523,7 @@ async def start_enrollment(
         first_name=payload.first_name,
         last_name=payload.last_name,
         birth_date=payload.birth_date,
+        marketing_email_consent=payload.marketing_email_consent,
         started_by_user_id=identity.user_id,
     )
     add_audit_log(

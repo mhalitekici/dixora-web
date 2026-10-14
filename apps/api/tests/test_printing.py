@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+from decimal import Decimal
+
+import pytest
+
 from tests.conftest import ApiContext, auth_headers, login, seeded_resources
 from tests.test_orders import _create_burger_order
 
@@ -18,6 +22,75 @@ async def _create_cashier_printer(api: ApiContext, headers: dict[str, str]) -> d
     )
     assert response.status_code == 201, response.text
     return response.json()
+
+
+@pytest.mark.parametrize("source", ["CASHIER", "WAITER", "QR"])
+async def test_bill_groups_the_same_product_from_separate_order_batches(
+    api: ApiContext, source: str
+) -> None:
+    headers = auth_headers(await login(api))
+    resources = await seeded_resources(api, headers)
+    await _create_cashier_printer(api, headers)
+    created = await api.client.post(
+        "/api/v1/orders",
+        headers=headers,
+        json={
+            "table_id": resources["tables"][0]["id"],
+            "source": source,
+            "items": [{"product_id": resources["burger"]["id"], "quantity": "1"}],
+            "idempotency_key": f"grouped-bill-original-{source}",
+            "auto_accept": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    order = created.json()
+    appended = await api.client.post(
+        f"/api/v1/orders/{order['id']}/items",
+        headers=headers,
+        json={
+            "items": [{"product_id": resources["burger"]["id"], "quantity": "1"}],
+            "idempotency_key": f"grouped-bill-addition-{source}",
+            "auto_accept": True,
+        },
+    )
+    assert appended.status_code == 200, appended.text
+    assert len(appended.json()["items"]) == 2
+    expected_total = sum(Decimal(row["line_total"]) for row in appended.json()["items"])
+    for kind in ("ORIGINAL", "REPRINT"):
+        if kind == "REPRINT":
+            paid = await api.client.post(
+                f"/api/v1/orders/{order['id']}/payments",
+                headers=headers,
+                json={
+                    "method": "CASH",
+                    "amount": appended.json()["total"],
+                    "idempotency_key": f"grouped-bill-payment-{source}",
+                },
+            )
+            assert paid.status_code == 201, paid.text
+        printed = await api.client.post(
+            "/api/v1/printing/jobs",
+            headers=headers,
+            json={
+                "order_id": order["id"],
+                "payload": {"type": "BILL"},
+                "kind": kind,
+                "idempotency_key": f"grouped-bill-print-{source}-{kind}",
+            },
+        )
+        assert printed.status_code == 201, printed.text
+        payload = printed.json()["payload"]
+        assert payload["stage"] == ("CLOSING" if kind == "REPRINT" else "PRE_PAYMENT")
+        for document_key, total_key in (("document", "line_total"), ("receipt", "lineTotal")):
+            lines = payload[document_key]["lines"]
+            assert len(lines) == 1
+            assert Decimal(lines[0]["quantity"]) == 2
+            assert Decimal(lines[0][total_key]) == expected_total
+        assert Decimal(payload["document"]["totals"]["total"]) == Decimal(appended.json()["total"])
+    tickets = await api.client.get("/api/v1/kitchen/tickets", headers=headers)
+    batches = [row for row in tickets.json() if row["order_id"] == order["id"]]
+    assert len(batches) == 2
+    assert all(Decimal(row["items"][0]["quantity"]) == 1 for row in batches)
 
 
 async def test_kitchen_user_can_read_and_manage_printing(api: ApiContext) -> None:
@@ -120,7 +193,23 @@ async def test_bill_print_original_is_idempotent_and_reprint_is_distinct(
     assert first.json()["printer_device_id"] == cashier_printer["id"]
     assert first.json()["payload"]["content_type"] == "application/vnd.dixora.receipt+json"
     assert first.json()["payload"]["document"]["title"] == "HESAP ÖZETİ"
+    assert first.json()["payload"]["document"]["document_type"] == "BILL"
     assert first.json()["payload"]["document"]["receipt_number"] == 1
+    assert (
+        first.json()["payload"]["document"]["source_label"]
+        == {
+            "WAITER": "GARSON",
+            "CASHIER": "KASA",
+        }[order["source"]]
+    )
+    assert first.json()["payload"]["document"]["staff_label"] == "Kasiyer"
+    assert first.json()["payload"]["document"]["totals"]["service_charge"] == str(
+        order["service_charge_amount"]
+    )
+    assert "cover_charge" not in first.json()["payload"]["document"]["totals"]
+    assert first.json()["payload"]["document"]["footer"] == [
+        "Bizi tercih ettiğiniz için teşekkür ederiz."
+    ]
     assert first.json()["payload"]["receipt"]["meta"]["dailyReceiptNumber"] == 1
 
     order_after_first_print = await api.client.get(f"/api/v1/orders/{order['id']}", headers=headers)
@@ -186,6 +275,69 @@ async def test_bill_print_original_is_idempotent_and_reprint_is_distinct(
     )
     assert next_print.status_code == 201, next_print.text
     assert next_print.json()["payload"]["document"]["receipt_number"] == 2
+
+
+async def test_courier_receipt_contains_delivery_contact_prices_and_reprint_marker(
+    api: ApiContext,
+) -> None:
+    headers = auth_headers(await login(api))
+    resources = await seeded_resources(api, headers)
+    cashier_printer = await _create_cashier_printer(api, headers)
+    created = await api.client.post(
+        "/api/v1/delivery",
+        headers=headers,
+        json={
+            "channel": "OWN_DELIVERY",
+            "items": [{"product_id": resources["burger"]["id"], "quantity": "2"}],
+            "idempotency_key": "courier-receipt-order-0001",
+            "customer_name": "Ayşe Yılmaz",
+            "customer_phone": "0555 111 22 33",
+            "address_line": "Atatürk Cad. No: 10 D: 4",
+            "district": "Kadıköy",
+            "customer_note": "Zil çalışmıyor",
+            "payment_method": "CARD_ON_DELIVERY",
+            "payment_status": "UNPAID",
+            "auto_accept": True,
+        },
+    )
+    assert created.status_code == 201, created.text
+    delivery = created.json()
+
+    original_payload = {
+        "order_id": delivery["order_id"],
+        "payload": {"type": "COURIER", "order_id": delivery["order_id"]},
+        "kind": "ORIGINAL",
+        "idempotency_key": f"courier-original:{delivery['order_id']}",
+    }
+    original = await api.client.post(
+        "/api/v1/printing/jobs", headers=headers, json=original_payload
+    )
+    assert original.status_code == 201, original.text
+    assert original.json()["printer_device_id"] == cashier_printer["id"]
+    document = original.json()["payload"]["document"]
+    assert document["document_type"] == "COURIER"
+    assert document["title"] == "KURYE FİŞİ"
+    assert document["customer_name"] == "Ayşe Yılmaz"
+    assert document["customer_phone"] == "0555 111 22 33"
+    assert "Atatürk Cad." in document["delivery_address"]
+    assert document["payment_label"] == "Kapıda kart"
+    assert document["lines"][0]["unit_price"]
+    assert document["lines"][0]["line_total"]
+    assert document["footer"] == ["Sipariş notu: Zil çalışmıyor"]
+
+    reprint = await api.client.post(
+        "/api/v1/printing/jobs",
+        headers=headers,
+        json={
+            **original_payload,
+            "kind": "REPRINT",
+            "idempotency_key": f"courier-reprint:{delivery['order_id']}:1",
+        },
+    )
+    assert reprint.status_code == 201, reprint.text
+    assert reprint.json()["kind"] == "REPRINT"
+    assert reprint.json()["payload"]["is_reprint"] is True
+    assert reprint.json()["payload"]["document"]["title"] == "KURYE FİŞİ"
 
 
 async def test_print_jobs_order_id_filter_is_tenant_scoped(api: ApiContext) -> None:

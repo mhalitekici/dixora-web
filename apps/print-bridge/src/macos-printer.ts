@@ -7,7 +7,11 @@ import type { PrintJobClaim, PrintResult } from "@dixora/shared-types";
 
 import type { BridgeConfig } from "./config.js";
 import { log } from "./logger.js";
-import { PrinterNotConfiguredError, type PrinterDiscovery, type PrinterTransport } from "./printer-transport.js";
+import {
+  PrinterNotConfiguredError,
+  type PrinterDiscovery,
+  type PrinterTransport,
+} from "./printer-transport.js";
 import { runProcess, type ExecFn } from "./process-exec.js";
 import { renderReceiptText } from "./receipt-text.js";
 
@@ -38,7 +42,7 @@ export class MacPrinterTransport implements PrinterTransport {
       job.localPrinterName ??
       this.config.printerNameMap[printerCode] ??
       printerCode;
-    const text = renderReceiptText(job);
+    const text = renderReceiptText(job, this.config.receiptColumns);
 
     const dir = await mkdtemp(join(tmpdir(), "dixora-print-"));
     const file = join(dir, `${randomUUID()}.txt`);
@@ -46,7 +50,24 @@ export class MacPrinterTransport implements PrinterTransport {
       await writeFile(file, text, { encoding: "utf8" });
       await this.exec(
         "lp",
-        ["-d", localPrinterName, "-n", String(job.copies), "--", file],
+        [
+          "-d",
+          localPrinterName,
+          "-n",
+          String(job.copies),
+          "-o",
+          "position=top-left",
+          "-o",
+          "fit-to-page=false",
+          "-o",
+          "scaling=100",
+          "-o",
+          "page-left=0",
+          "-o",
+          "page-right=0",
+          "--",
+          file,
+        ],
         { timeoutMs: 20_000 },
       );
     } finally {
@@ -61,7 +82,12 @@ export class MacPrinterTransport implements PrinterTransport {
     });
 
     return {
-      externalReference: [this.config.bridgeId, printerCode, job.id, job.attemptCount].join(":"),
+      externalReference: [
+        this.config.bridgeId,
+        printerCode,
+        job.id,
+        job.attemptCount,
+      ].join(":"),
       printedAt: new Date().toISOString(),
       transport: "macos",
     };

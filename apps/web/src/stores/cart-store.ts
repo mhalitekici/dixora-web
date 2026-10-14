@@ -99,7 +99,32 @@ export const useCartStore = create<CartState>()(
     {
       name: "dixora-cart",
       storage: createJSONStorage(() => sessionStorage),
-      version: 1,
+      version: 2,
+      migrate: (persisted) => {
+        const state = persisted as Omit<CartState, "lines"> & {
+          lines: (CartLine & { portionSize?: number })[]
+        }
+        // Discard incompatible old drafts rather than charge a full price for them.
+        return {
+          ...state,
+          lines: (state.lines ?? [])
+            .filter(
+              (line) =>
+                Number.isInteger(line.quantity) &&
+                line.quantity > 0 &&
+                (line.portionSize === undefined || line.portionSize === 1),
+            )
+            .map((line) => ({
+              lineId: line.lineId,
+              productId: line.productId,
+              productName: line.productName,
+              quantity: normalizeQuantity(line.quantity),
+              unitPrice: line.unitPrice,
+              note: line.note,
+              modifiers: line.modifiers,
+            })),
+        }
+      },
     },
   ),
 )

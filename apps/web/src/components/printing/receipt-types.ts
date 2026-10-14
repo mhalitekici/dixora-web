@@ -18,10 +18,13 @@ export interface ReceiptBusiness {
 }
 
 export interface ReceiptLine {
+  productId?: string;
   /** Snapshot name captured when the item was ordered. */
   name: string;
   quantity: string | number;
   unitPrice?: string | number | null;
+  taxRate?: string | number | null;
+  discount?: string | number | null;
   lineTotal: string | number;
   /** Chosen modifiers, already snapshotted. */
   modifiers?: string[];
@@ -42,6 +45,7 @@ export interface ReceiptTotals {
   serviceChargeType?: string | null;
   serviceChargeValue?: string | number | null;
   serviceCharge?: string | number | null;
+  coverCharge?: string | number | null;
   total: string | number;
   paid?: string | number | null;
   remaining?: string | number | null;
@@ -53,9 +57,12 @@ export interface ReceiptMeta {
   dailyReceiptNumber?: number | null;
   businessDate?: string | null;
   tableName?: string | null;
+  orderLabel?: string | null;
+  sourceLabel?: string | null;
   roomNumber?: string | null;
   guestName?: string | null;
   staffName?: string | null;
+  staffLabel?: string | null;
   issuedAt: string;
   checkedInAt?: string | null;
   checkedOutAt?: string | null;

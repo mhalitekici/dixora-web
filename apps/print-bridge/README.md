@@ -70,9 +70,11 @@ edilmelidir.
 
 ## Yazdırma
 
-- Windows: `Get-Printer` keşfi ve `Out-Printer` spooler gönderimi
+- Windows: `Get-Printer` keşfi, yazdırılabilir alanı kullanan `PrintDocument`
+  gönderimi ve adlandırılmış spool işinin hata/zaman aşımı doğrulaması
 - macOS: `lpstat` keşfi ve `lp`/CUPS spooler gönderimi
-- 80 mm, 42 sütun, UTF-8 düz metin; Türkçe karakterler korunur
+- 80 mm, UTF-8 düz metin; kullanılabilir genişlik
+  `PRINT_BRIDGE_RECEIPT_COLUMNS` (varsayılan 42) ile ayarlanır
 - Sunucu eşlemesi olmadan cihaz claim edilemez
 - Kalıcı yerel journal, ağ acknowledgement hatasından sonra çift baskıyı
   engeller

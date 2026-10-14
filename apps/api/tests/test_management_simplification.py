@@ -36,9 +36,7 @@ async def test_super_admin_subscription_portfolio_uses_real_assignments(api: Api
         headers=auth_headers(super_admin),
     )
     assert response.status_code == 200, response.text
-    seeded = next(
-        row for row in response.json() if row["business"]["slug"] == "dixora-lab"
-    )
+    seeded = next(row for row in response.json() if row["business"]["slug"] == "dixora-lab")
     assert seeded["plan"]["code"] == "TRIAL"
     assert seeded["status"] == "TRIAL"
     assert seeded["starts_at"]
@@ -88,6 +86,14 @@ async def test_super_admin_manual_extension_adds_days_on_top_of_future_expiry(
         assert refreshed.status == TenantState.ACTIVE
         assert refreshed.starts_at == original_starts_at
         assert refreshed.ends_at == original_ends_at + timedelta(days=30)
+
+    overview = await api.client.get(
+        f"/api/v1/businesses/{business['id']}/overview", headers=headers
+    )
+    assert overview.status_code == 200
+    assert overview.json()["next_payment_at"] == (
+        original_ends_at + timedelta(days=30)
+    ).isoformat().replace("+00:00", "Z")
 
 
 async def test_role_presets_and_employee_scope_are_server_enforced(api: ApiContext) -> None:

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import type { PrintJobClaim } from "@dixora/shared-types";
@@ -6,7 +7,10 @@ import type { PrintJobClaim } from "@dixora/shared-types";
 import type { ExecFn } from "./process-exec.js";
 import { PrinterNotConfiguredError } from "./printer-transport.js";
 import { testConfig } from "./test-helpers.js";
-import { WindowsPrinterDiscovery, WindowsPrinterTransport } from "./windows-printer.js";
+import {
+  WindowsPrinterDiscovery,
+  WindowsPrinterTransport,
+} from "./windows-printer.js";
 
 function job(overrides: Partial<PrintJobClaim> = {}): PrintJobClaim {
   return {
@@ -35,14 +39,16 @@ function job(overrides: Partial<PrintJobClaim> = {}): PrintJobClaim {
   };
 }
 
-function fakeExec(calls: Array<{ command: string; args: readonly string[] }>): ExecFn {
+function fakeExec(
+  calls: Array<{ command: string; args: readonly string[] }>,
+): ExecFn {
   return async (command, args) => {
     calls.push({ command, args });
     return { stdout: "", stderr: "" };
   };
 }
 
-test("prints through Out-Printer, once per copy, by the printer's own name", async () => {
+test("prints through the margin-free 80mm drawing script once per copy", async () => {
   const calls: Array<{ command: string; args: readonly string[] }> = [];
   const transport = new WindowsPrinterTransport(
     testConfig({ printerIds: ["MUTFAK"] }),
@@ -54,8 +60,49 @@ test("prints through Out-Printer, once per copy, by the printer's own name", asy
   assert.equal(calls.length, 2);
   for (const call of calls) {
     assert.equal(call.command, "powershell.exe");
-    assert.match(call.args.join(" "), /Out-Printer -Name 'MUTFAK'/);
+    assert.ok(call.args.includes("-File"));
+    assert.equal(call.args[call.args.indexOf("-PrinterName") + 1], "MUTFAK");
+    assert.match(
+      call.args[call.args.indexOf("-JobName") + 1] ?? "",
+      /^Dixora-job-1-1-[12]$/,
+    );
+    assert.equal(call.args[call.args.indexOf("-Columns") + 1], "42");
+    assert.ok(!call.args.includes("-Command"));
   }
+});
+
+test("gives every copy a distinct spooler document name", async () => {
+  const calls: Array<{ command: string; args: readonly string[] }> = [];
+  const transport = new WindowsPrinterTransport(
+    testConfig({ printerIds: ["MUTFAK"] }),
+    fakeExec(calls),
+  );
+
+  await transport.print(job({ copies: 2, attemptCount: 3 }));
+
+  assert.deepEqual(
+    calls.map((call) => call.args[call.args.indexOf("-JobName") + 1]),
+    ["Dixora-job-1-3-1", "Dixora-job-1-3-2"],
+  );
+});
+
+test("preflights offline state and follows the named Windows spool job", async () => {
+  let scriptText = "";
+  const transport = new WindowsPrinterTransport(
+    testConfig({ printerIds: ["MUTFAK"] }),
+    async (_command, args) => {
+      const scriptPath = args[args.indexOf("-File") + 1];
+      assert.ok(scriptPath);
+      scriptText = await readFile(scriptPath, "utf8");
+      return { stdout: "", stderr: "" };
+    },
+  );
+
+  await transport.print(job());
+
+  assert.match(scriptText, /\.WorkOffline/);
+  assert.match(scriptText, /Get-PrintJob/);
+  assert.match(scriptText, /DocumentName -eq \$JobName/);
 });
 
 test("maps a Dixora printer code to a differently named local printer", async () => {
@@ -70,10 +117,13 @@ test("maps a Dixora printer code to a differently named local printer", async ()
 
   await transport.print(job());
 
-  assert.match(calls[0]!.args.join(" "), /Out-Printer -Name 'Kitchen \(EPSON TM-T88\)'/);
+  assert.equal(
+    calls[0]!.args[calls[0]!.args.indexOf("-PrinterName") + 1],
+    "Kitchen (EPSON TM-T88)",
+  );
 });
 
-test("escapes an embedded single quote in the local printer name", async () => {
+test("passes an embedded single quote without command interpolation", async () => {
   const calls: Array<{ command: string; args: readonly string[] }> = [];
   const transport = new WindowsPrinterTransport(
     testConfig({
@@ -85,7 +135,10 @@ test("escapes an embedded single quote in the local printer name", async () => {
 
   await transport.print(job());
 
-  assert.match(calls[0]!.args.join(" "), /Ali''s Kitchen Printer/);
+  assert.equal(
+    calls[0]!.args[calls[0]!.args.indexOf("-PrinterName") + 1],
+    "Ali's Kitchen Printer",
+  );
 });
 
 test("refuses to print to a printer this bridge was not configured for", async () => {

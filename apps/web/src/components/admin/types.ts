@@ -131,6 +131,8 @@ export type Order = {
   total: string;
   version: number;
   created_at: string;
+  receipt_number?: number | null;
+  receipt_business_date?: string | null;
   items: OrderItem[];
   payments: Payment[];
 };

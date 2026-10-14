@@ -244,6 +244,7 @@ class LoyaltyRedemptionCreate(BaseModel):
     order_id: UUID
     order_item_id: UUID
     idempotency_key: str = Field(min_length=8, max_length=160)
+    verification_code: str = Field(pattern=r"^\d{6}$")
 
 
 class LoyaltyRedemptionOut(BaseModel):
@@ -275,6 +276,7 @@ class LoyaltyEnrollmentStart(BaseModel):
     last_name: str = Field(min_length=1, max_length=80)
     email: str = Field(pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$", max_length=255)
     birth_date: date | None = None
+    marketing_email_consent: bool = False
 
 
 class PublicLoyaltyEmailEnrollmentStart(LoyaltyEnrollmentStart):

@@ -952,7 +952,9 @@ class OrderModifierInput(BaseModel):
 
 class OrderItemInput(BaseModel):
     product_id: UUID
-    quantity: Decimal = Field(default=Decimal("1.00"), gt=0, max_digits=10, decimal_places=2)
+    quantity: Decimal = Field(
+        default=Decimal("1.00"), gt=0, multiple_of=1, max_digits=10, decimal_places=2
+    )
     note: str | None = Field(default=None, max_length=1000)
     modifiers: list[OrderModifierInput] = []
 
@@ -1033,6 +1035,8 @@ class OrderOut(ORMModel):
     total: Decimal
     version: int
     created_at: datetime
+    receipt_number: int | None = None
+    receipt_business_date: date | None = None
     items: list[OrderItemOut] = []
     payments: list[PaymentOut] = []
 
@@ -1174,10 +1178,23 @@ class OrderItemTransferOut(BaseModel):
 
 
 class OrderItemActionRequest(BaseModel):
-    action: Literal["INCREASE", "DECREASE", "SET_COMPLIMENTARY", "REMOVE_COMPLIMENTARY"]
+    action: Literal[
+        "INCREASE",
+        "DECREASE",
+        "SET_COMPLIMENTARY",
+        "REMOVE_COMPLIMENTARY",
+        "UPDATE_NOTE",
+    ]
     expected_version: int = Field(ge=1)
     idempotency_key: str = Field(min_length=8, max_length=160)
     reason: str | None = Field(default=None, max_length=255)
+    note: str | None = Field(default=None, max_length=500)
+
+
+class OrderItemNoteRequest(BaseModel):
+    expected_version: int = Field(ge=1)
+    idempotency_key: str = Field(min_length=8, max_length=160)
+    note: str | None = Field(default=None, max_length=500)
 
 
 class OrderItemRemoveRequest(BaseModel):
@@ -1555,7 +1572,9 @@ class PublicQrOrderModifierInput(BaseModel):
 
 class PublicQrOrderItemInput(BaseModel):
     product_id: str = Field(min_length=3, max_length=64)
-    quantity: Decimal = Field(default=Decimal("1.00"), gt=0, max_digits=10, decimal_places=2)
+    quantity: Decimal = Field(
+        default=Decimal("1.00"), gt=0, multiple_of=1, max_digits=10, decimal_places=2
+    )
     note: str | None = Field(default=None, max_length=1000)
     modifiers: list[PublicQrOrderModifierInput] = []
 

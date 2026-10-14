@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from typing import Annotated
 from uuid import UUID
@@ -17,7 +17,7 @@ from app.dependencies import (
     require_tenant,
 )
 from app.errors import DomainError
-from app.models import CashierShift, Order, OrderItem, Payment, TableSession, User
+from app.models import CashierShift, Order, OrderItem, Payment, Receipt, TableSession, User
 from app.models.enums import (
     ApprovalStatus,
     ApprovalType,
@@ -37,6 +37,7 @@ from app.schemas import (
     OrderAcceptRequest,
     OrderCreate,
     OrderItemActionRequest,
+    OrderItemNoteRequest,
     OrderItemOut,
     OrderItemRemoveRequest,
     OrderItemsAppend,
@@ -126,6 +127,8 @@ async def list_orders(
     db: DbSession,
     branch_id: UUID | None = None,
     order_status: OrderStatus | None = Query(default=None, alias="status"),
+    receipt_number: int | None = Query(default=None, ge=1),
+    receipt_date: date | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
 ) -> Page[OrderOut]:
@@ -135,6 +138,13 @@ async def list_orders(
     ]
     if order_status:
         predicates.append(Order.status == order_status)
+    if receipt_number is not None or receipt_date is not None:
+        receipt_predicates = [Receipt.tenant_id == require_tenant(identity)]
+        if receipt_number is not None:
+            receipt_predicates.append(Receipt.daily_number == receipt_number)
+        if receipt_date is not None:
+            receipt_predicates.append(Receipt.business_date == receipt_date)
+        predicates.append(Order.id.in_(select(Receipt.order_id).where(*receipt_predicates)))
     total = (await db.execute(select(func.count(Order.id)).where(*predicates))).scalar_one()
     rows = (
         (
@@ -154,8 +164,33 @@ async def list_orders(
         .scalars()
         .all()
     )
+    receipts = (
+        (
+            await db.execute(
+                select(Receipt).where(
+                    Receipt.tenant_id == require_tenant(identity),
+                    Receipt.order_id.in_([item.id for item in rows]),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    receipts_by_order = {receipt.order_id: receipt for receipt in receipts}
+    items = []
+    for row in rows:
+        item = OrderOut.model_validate(row)
+        receipt = receipts_by_order.get(row.id)
+        if receipt is not None:
+            item = item.model_copy(
+                update={
+                    "receipt_number": receipt.daily_number,
+                    "receipt_business_date": receipt.business_date,
+                }
+            )
+        items.append(item)
     return Page(
-        items=[OrderOut.model_validate(item) for item in rows],
+        items=items,
         total=total,
         limit=limit,
         offset=offset,
@@ -724,6 +759,33 @@ async def update_order_item(
         expected_version=payload.expected_version,
         idempotency_key=payload.idempotency_key,
         reason=payload.reason,
+        note=payload.note,
+        identity=identity,
+    )
+    await db.commit()
+    await _broadcast(request, order)
+    return OrderOut.model_validate(order)
+
+
+@router.patch("/{order_id}/items/{item_id}/note", response_model=OrderOut)
+async def update_order_item_note(
+    order_id: UUID,
+    item_id: UUID,
+    payload: OrderItemNoteRequest,
+    request: Request,
+    identity: OrderCreator,
+    db: DbSession,
+) -> OrderOut:
+    order = await _scoped_order(identity, db, order_id, lock=True)
+    order = await mutate_order_item(
+        db,
+        order=order,
+        item_id=item_id,
+        action="UPDATE_NOTE",
+        expected_version=payload.expected_version,
+        idempotency_key=payload.idempotency_key,
+        reason=None,
+        note=payload.note,
         identity=identity,
     )
     await db.commit()

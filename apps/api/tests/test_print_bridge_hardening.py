@@ -15,6 +15,7 @@ from uuid import UUID
 from sqlalchemy import select
 
 from app.models import PrintBridgeClient, PrintJob
+from app.models.enums import PrintJobStatus
 from tests.conftest import ApiContext, auth_headers, login, seeded_resources
 from tests.test_orders import _create_burger_order
 
@@ -76,6 +77,65 @@ async def test_a_lease_expires_and_the_job_becomes_reclaimable(
     assert reclaimed.status_code == 200, reclaimed.text
     assert reclaimed.json()["id"] == job_id
     assert reclaimed.json()["attempt_count"] == 2
+
+
+async def test_exhausted_lease_requires_operator_and_retry_starts_a_new_cycle(
+    api: ApiContext,
+) -> None:
+    tokens = await login(api)
+    headers = auth_headers(tokens)
+    devices = await api.client.get("/api/v1/printing/devices", headers=headers)
+    printer = next(d for d in devices.json() if d["code"] == "MOCK-KITCHEN")
+    created = await api.client.post(
+        "/api/v1/printing/jobs",
+        headers=headers,
+        json={
+            "payload": {"lines": []},
+            "printer_device_id": printer["id"],
+            "idempotency_key": "lease-exhausted-key-0001",
+            "kind": "ORIGINAL",
+        },
+    )
+    assert created.status_code == 201, created.text
+    job_id = created.json()["id"]
+
+    async with api.database.session_factory() as db:
+        job = await db.get(PrintJob, UUID(job_id))
+        assert job is not None
+        job.status = PrintJobStatus.CLAIMED
+        job.attempt_count = 5
+        job.lease_expires_at = datetime.now(UTC) - timedelta(seconds=1)
+        await db.commit()
+
+    nothing = await api.client.post(
+        "/api/v1/printing/bridge/claim",
+        headers=DEV_BRIDGE_HEADERS,
+        params={"printer_codes": "MOCK-KITCHEN"},
+    )
+    assert nothing.status_code == 200, nothing.text
+    assert nothing.json() is None
+
+    async with api.database.session_factory() as db:
+        exhausted = await db.get(PrintJob, UUID(job_id))
+        assert exhausted is not None
+        assert exhausted.status == PrintJobStatus.FAILED
+        assert exhausted.manual_retry_required is True
+        assert exhausted.lease_expires_at is None
+
+    released = await api.client.post(
+        f"/api/v1/printing/jobs/{job_id}/retry", headers=headers
+    )
+    assert released.status_code == 200, released.text
+    assert released.json()["attempt_count"] == 0
+
+    reclaimed = await api.client.post(
+        "/api/v1/printing/bridge/claim",
+        headers=DEV_BRIDGE_HEADERS,
+        params={"printer_codes": "MOCK-KITCHEN"},
+    )
+    assert reclaimed.status_code == 200, reclaimed.text
+    assert reclaimed.json()["id"] == job_id
+    assert reclaimed.json()["attempt_count"] == 1
 
 
 async def test_printed_clears_the_lease_and_sent_extends_it(api: ApiContext) -> None:

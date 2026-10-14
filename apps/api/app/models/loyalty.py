@@ -144,6 +144,9 @@ class LoyaltyCustomer(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     last_name: Mapped[str | None] = mapped_column(String(80), nullable=True)
     birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    marketing_email_consent: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
 
     @property
     def display_name(self) -> str:
@@ -306,6 +309,10 @@ class LoyaltyReward(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     issued_at: Mapped[datetime] = mapped_column(nullable=False)
     expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
     redeemed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    verification_failed_attempts: Mapped[int] = mapped_column(
+        Integer, default=0, nullable=False
+    )
+    verification_locked_until: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class LoyaltyRedemption(UUIDPrimaryKeyMixin, TimestampMixin, Base):
@@ -432,6 +439,9 @@ class LoyaltyEmailVerification(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     first_name: Mapped[str] = mapped_column(String(80), nullable=False)
     last_name: Mapped[str] = mapped_column(String(80), nullable=False)
     birth_date: Mapped[date | None] = mapped_column(Date, nullable=True)
+    marketing_email_consent: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     code_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     expires_at: Mapped[datetime] = mapped_column(nullable=False, index=True)

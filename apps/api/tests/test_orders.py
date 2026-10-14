@@ -157,6 +157,14 @@ async def test_cashier_print_command_dispatches_only_pending_items(api: ApiConte
         )
     assert len(first_jobs) == 2
     assert {job.kind.value for job in first_jobs} == {"ORIGINAL"}
+    assert all(job.payload["document"]["source_label"] == "KASA" for job in first_jobs)
+    assert all(job.payload["document"]["staff_label"] == "Kasiyer" for job in first_jobs)
+    assert all(job.payload["document"]["document_type"] == "PREPARATION" for job in first_jobs)
+    assert all(
+        "line_total" not in line and "unit_price" not in line
+        for job in first_jobs
+        for line in job.payload["document"]["lines"]
+    )
 
     replay = await api.client.post(
         f"/api/v1/orders/{order['id']}/accept",
@@ -377,9 +385,39 @@ async def test_cashier_item_quantity_and_complimentary_flow_is_versioned_and_aud
     )
     assert increased.status_code == 200, increased.text
     increased_order = increased.json()
-    assert Decimal(increased_order["items"][0]["quantity"]) == Decimal("3.00")
+    assert Decimal(increased_order["items"][0]["quantity"]) == Decimal("2.00")
+    pending_item = next(row for row in increased_order["items"] if row["status"] == "SUBMITTED")
+    assert Decimal(pending_item["quantity"]) == Decimal("1.00")
     assert Decimal(increased_order["subtotal"]) == Decimal("1080.00")
     assert Decimal(increased_order["service_charge_amount"]) == Decimal("108.00")
+
+    noted = await api.client.patch(
+        f"/api/v1/orders/{order['id']}/items/{item['id']}",
+        headers=headers,
+        json={
+            "action": "UPDATE_NOTE",
+            "expected_version": increased_order["version"],
+            "idempotency_key": "cashier-item-note-0001",
+            "note": "Soğansız, sos ayrı",
+        },
+    )
+    assert noted.status_code == 200, noted.text
+    noted_order = noted.json()
+    assert noted_order["items"][0]["note"] == "Soğansız, sos ayrı"
+
+    async with api.database.session_factory() as db:
+        note_print_jobs = (
+            (await db.execute(select(PrintJob).where(PrintJob.order_id == UUID(order["id"]))))
+            .scalars()
+            .all()
+        )
+    note_corrections = [
+        job
+        for job in note_print_jobs
+        if job.idempotency_key.startswith("item-adjustment:cashier-item-note-0001")
+    ]
+    assert len(note_corrections) == 1
+    assert note_corrections[0].payload["document"]["lines"][0]["note"] == "Soğansız, sos ayrı"
 
     stale = await api.client.patch(
         f"/api/v1/orders/{order['id']}/items/{item['id']}",
@@ -398,7 +436,7 @@ async def test_cashier_item_quantity_and_complimentary_flow_is_versioned_and_aud
         headers=headers,
         json={
             "action": "SET_COMPLIMENTARY",
-            "expected_version": increased_order["version"],
+            "expected_version": noted_order["version"],
             "idempotency_key": "cashier-item-comp-0001",
             "reason": "Müşteri memnuniyeti",
         },
@@ -409,9 +447,9 @@ async def test_cashier_item_quantity_and_complimentary_flow_is_versioned_and_aud
     assert comp_item["is_complimentary"] is True
     assert Decimal(comp_item["unit_price"]) == Decimal("360.00")
     assert Decimal(comp_item["line_total"]) == Decimal("0.00")
-    assert Decimal(comp_order["subtotal"]) == Decimal("0.00")
-    assert Decimal(comp_order["service_charge_amount"]) == Decimal("0.00")
-    assert Decimal(comp_order["total"]) == Decimal("0.00")
+    assert Decimal(comp_order["subtotal"]) == Decimal("360.00")
+    assert Decimal(comp_order["service_charge_amount"]) == Decimal("36.00")
+    assert Decimal(comp_order["total"]) == Decimal("396.00")
 
     async with api.database.session_factory() as db:
         comp_print_jobs = (
@@ -431,8 +469,7 @@ async def test_cashier_item_quantity_and_complimentary_flow_is_versioned_and_aud
         for job in comp_print_jobs
         if job.idempotency_key.startswith("item-adjustment:cashier-item-comp-0001")
     ]
-    assert len(comp_corrections) == 1
-    assert comp_corrections[0].kind.value == "COPY"
+    assert comp_corrections == []
 
     cashier_printer = await api.client.post(
         "/api/v1/printing/devices",
@@ -497,8 +534,7 @@ async def test_cashier_item_quantity_and_complimentary_flow_is_versioned_and_aud
         for job in restored_print_jobs
         if job.idempotency_key.startswith("item-adjustment:cashier-item-uncomp-0001")
     ]
-    assert len(remove_corrections) == 1
-    assert remove_corrections[0].kind.value == "COPY"
+    assert remove_corrections == []
 
     decreased = await api.client.patch(
         f"/api/v1/orders/{order['id']}/items/{item['id']}",
@@ -510,7 +546,7 @@ async def test_cashier_item_quantity_and_complimentary_flow_is_versioned_and_aud
         },
     )
     assert decreased.status_code == 200, decreased.text
-    assert Decimal(decreased.json()["items"][0]["quantity"]) == Decimal("2.00")
+    assert Decimal(decreased.json()["items"][0]["quantity"]) == Decimal("1.00")
     assert Decimal(decreased.json()["total"]) == Decimal("792.00")
 
     async with api.database.session_factory() as db:
@@ -524,6 +560,7 @@ async def test_cashier_item_quantity_and_complimentary_flow_is_versioned_and_aud
         "order.item_quantity_decreased",
         "order.item_complimentary_set",
         "order.item_complimentary_removed",
+        "order.item_note_updated",
     } <= actions
 
 
@@ -992,9 +1029,7 @@ async def test_item_transfer_into_occupied_table_preserves_snapshots_and_uses_co
     assert transfer.status_code == 200, transfer.text
     body = transfer.json()
     assert body["destination_order"]["id"] == destination["id"]
-    moved = next(
-        item for item in body["destination_order"]["items"] if item["is_complimentary"]
-    )
+    moved = next(item for item in body["destination_order"]["items"] if item["is_complimentary"])
     assert moved["product_name_snapshot"] == source["items"][0]["product_name_snapshot"]
     assert [
         {
