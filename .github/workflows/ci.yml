@@ -35,12 +35,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Tests
-        working-directory: apps/api
-        # Tests run against in-memory SQLite and pin the mail provider off, so
-        # no services and no live credentials are needed.
-        run: python -m pytest -q
-
       - name: Lint
         working-directory: apps/api
         run: ruff check .
@@ -48,6 +42,12 @@ jobs:
       - name: Types
         working-directory: apps/api
         run: mypy app
+
+      - name: Tests
+        working-directory: apps/api
+        # Tests run against in-memory SQLite and pin the mail provider off, so
+        # no services and no live credentials are needed.
+        run: python -m pytest -q
 
   web:
     name: Web

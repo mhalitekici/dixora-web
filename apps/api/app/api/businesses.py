@@ -236,27 +236,30 @@ async def list_platform_invoices(
     if status_filter:
         query = query.where(Invoice.status == status_filter.upper())
 
-    rows = (await db.execute(query)).tuples().all()
-    return [
-        PlatformInvoiceOut(
-            id=invoice.id,
-            tenant_id=invoice.tenant_id,
-            business_name=name,
-            business_slug=slug,
-            number=invoice.number,
-            amount=invoice.amount,
-            currency=invoice.currency,
-            status=invoice.status,
-            period_start=invoice.period_start,
-            branch_count=invoice.branch_count,
-            due_at=invoice.due_at,
-            paid_at=invoice.paid_at,
-            attempt_count=invoice.attempt_count,
-            failure_reason=invoice.failure_reason,
-            has_card=card_tenant is not None,
+    rows = (await db.execute(query)).all()
+    invoices: list[PlatformInvoiceOut] = []
+    for row in rows:
+        invoice: Invoice = row[0]
+        invoices.append(
+            PlatformInvoiceOut(
+                id=invoice.id,
+                tenant_id=invoice.tenant_id,
+                business_name=row[1],
+                business_slug=row[2],
+                number=invoice.number,
+                amount=invoice.amount,
+                currency=invoice.currency,
+                status=invoice.status,
+                period_start=invoice.period_start,
+                branch_count=invoice.branch_count,
+                due_at=invoice.due_at,
+                paid_at=invoice.paid_at,
+                attempt_count=invoice.attempt_count,
+                failure_reason=invoice.failure_reason,
+                has_card=row[3] is not None,
+            )
         )
-        for invoice, name, slug, card_tenant in rows
-    ]
+    return invoices
 
 
 @router.get("/{business_id}", response_model=TenantOut)
