@@ -68,10 +68,7 @@ import {
   setBusinessLifecycle,
   supportModeCapability,
 } from "./platform-admin-api"
-import {
-  QueryErrorState,
-  SecondaryPageSkeleton,
-} from "./query-state"
+import { QueryErrorState, SecondaryPageSkeleton } from "./query-state"
 import type { PlatformBusiness, TenantState } from "./types"
 
 type LifecycleAction = "activate" | "suspend"
@@ -193,7 +190,9 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
       queryClient.removeQueries({
         queryKey: ["secondary-admin", "business-users", businessId],
       })
-      void queryClient.invalidateQueries({ queryKey: ["platform", "businesses"] })
+      void queryClient.invalidateQueries({
+        queryKey: ["platform", "businesses"],
+      })
       void queryClient.invalidateQueries({
         queryKey: secondaryAdminQueryKeys.subscriptions,
       })
@@ -255,7 +254,10 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
           queryKey: secondaryAdminQueryKeys.subscriptions,
         }),
         queryClient.invalidateQueries({
-          queryKey: [...secondaryAdminQueryKeys.business(businessId), "overview"],
+          queryKey: [
+            ...secondaryAdminQueryKeys.business(businessId),
+            "overview",
+          ],
         }),
       ])
       setReactivateOpen(false)
@@ -306,12 +308,10 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
   }
 
   const business = query.data
-  const status =
-    statePresentation[business.state] ?? statePresentation.ARCHIVED
+  const status = statePresentation[business.state] ?? statePresentation.ARCHIVED
   const isSuspended =
     business.state === "SUSPENDED" || business.is_active === false
-  const activeNow =
-    business.state === "ACTIVE" && business.is_active === true
+  const activeNow = business.state === "ACTIVE" && business.is_active === true
 
   const overview = overviewQuery.data
   const money = (value: string | number | undefined) =>
@@ -323,7 +323,11 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
           minimumFractionDigits: 2,
         }).format(Number(value))
   const day = (value: string | null | undefined) =>
-    value ? new Intl.DateTimeFormat("tr-TR", { dateStyle: "medium" }).format(new Date(value)) : "—"
+    value
+      ? new Intl.DateTimeFormat("tr-TR", { dateStyle: "medium" }).format(
+          new Date(value),
+        )
+      : "—"
 
   return (
     <>
@@ -345,15 +349,17 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
               <KeyRound />
               Destek modu
             </Button>
-            <Button variant="outline" onClick={() => setPasswordResetOpen(true)}>
+            <Button
+              variant="outline"
+              onClick={() => setPasswordResetOpen(true)}
+            >
               <UserCog />
               Şifre sıfırla
             </Button>
             {isSuspended ? (
               <Button
                 disabled={
-                  business.state === "ARCHIVED" ||
-                  lifecycleMutation.isPending
+                  business.state === "ARCHIVED" || lifecycleMutation.isPending
                 }
                 onClick={() => setPendingAction("activate")}
               >
@@ -364,8 +370,7 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
               <Button
                 variant="destructive"
                 disabled={
-                  business.state === "ARCHIVED" ||
-                  lifecycleMutation.isPending
+                  business.state === "ARCHIVED" || lifecycleMutation.isPending
                 }
                 onClick={() => setPendingAction("suspend")}
               >
@@ -389,7 +394,9 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
             <p className="text-[0.68rem] font-semibold uppercase tracking-[0.14em] text-muted-foreground">
               İletişim
             </p>
-            <p className="mt-2 text-sm font-semibold">{overview.owner_name ?? "—"}</p>
+            <p className="mt-2 text-sm font-semibold">
+              {overview.owner_name ?? "—"}
+            </p>
             {overview.owner_email ? (
               <a
                 href={`mailto:${overview.owner_email}`}
@@ -423,7 +430,8 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
               </span>
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              Toplam {overview.total_branches} şube kaydı · {overview.user_count} kullanıcı
+              Toplam {overview.total_branches} şube kaydı ·{" "}
+              {overview.user_count} kullanıcı
             </p>
           </div>
 
@@ -435,16 +443,20 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
               {money(overview.monthly_total)}
             </p>
             <p className="mt-1 text-xs text-muted-foreground">
-              {overview.plan_name ?? "Plan yok"} · {money(overview.base_monthly_price)} baz
+              {overview.plan_name ?? "Plan yok"} ·{" "}
+              {money(overview.base_monthly_price)} baz
               {overview.billable_extra_branches > 0
                 ? ` + ${overview.billable_extra_branches} ek şube × ${money(overview.additional_branch_price)}`
                 : ""}
             </p>
             <p className="mt-2 border-t pt-2 text-xs">
               <span className="text-muted-foreground">
-                {overview.trial_ends_at ? "Deneme bitişi" : "Sonraki ödeme"}:{" "}
+                {overview.trial_ends_at ? "Deneme bitişi" : "Sonraki ödeme"}
+                :{" "}
               </span>
-              <strong>{day(overview.trial_ends_at ?? overview.next_payment_at)}</strong>
+              <strong>
+                {day(overview.trial_ends_at ?? overview.next_payment_at)}
+              </strong>
             </p>
           </div>
         </div>
@@ -460,9 +472,7 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
             </StatusBadge>
           }
           detail={
-            business.is_active
-              ? "Tenant erişimi açık"
-              : "Tenant erişimi kapalı"
+            business.is_active ? "Tenant erişimi açık" : "Tenant erişimi kapalı"
           }
         />
         <DetailMetric
@@ -537,10 +547,7 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
                     : "Tenant düzeyindeki erişim kapatılmış."}
                 </p>
               </div>
-              <StatusBadge
-                tone={business.is_active ? "success" : "danger"}
-                dot
-              >
+              <StatusBadge tone={business.is_active ? "success" : "danger"} dot>
                 {business.is_active ? "Açık" : "Kapalı"}
               </StatusBadge>
             </div>
@@ -550,8 +557,7 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
             className="w-full justify-start"
             variant={isSuspended ? "default" : "destructive"}
             disabled={
-              lifecycleMutation.isPending ||
-              business.state === "ARCHIVED"
+              lifecycleMutation.isPending || business.state === "ARCHIVED"
             }
             onClick={() =>
               setPendingAction(isSuspended ? "activate" : "suspend")
@@ -578,7 +584,9 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
           </Button>
 
           <div className="rounded-xl border border-destructive/35 bg-destructive/5 p-3">
-            <p className="text-xs font-semibold text-destructive">Tehlikeli bölge</p>
+            <p className="text-xs font-semibold text-destructive">
+              Tehlikeli bölge
+            </p>
             <p className="mt-1 text-xs text-muted-foreground">
               Askıya alma geri alınabilir; kalıcı silme alınamaz. İşletme ve ona
               bağlı bütün kayıtlar veritabanından kaldırılır.
@@ -638,17 +646,15 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
           <DialogHeader>
             <DialogTitle>Denetlenebilir destek modu</DialogTitle>
             <DialogDescription>
-              {business.name} tenantına süreli ve gerekçeli erişim sözleşmesi.
+              {business.name} işletmesine süreli ve kayıtlı destek erişimi.
             </DialogDescription>
           </DialogHeader>
 
           <AdapterNotice
-            title="Güvenli endpoint bekleniyor"
-            badge={supportModeCapability.contract}
+            title="Destek erişimi henüz kullanılamıyor"
             tone="warning"
           >
-            {supportModeCapability.explanation} Güvenlik nedeniyle istemci
-            tarafında sahte tenant geçişi oluşturulmaz.
+            {supportModeCapability.explanation}
           </AdapterNotice>
 
           <div className="space-y-2">
@@ -684,7 +690,6 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
         </DialogContent>
       </Dialog>
 
-
       <Dialog
         open={passwordResetOpen}
         onOpenChange={(open) => {
@@ -709,9 +714,13 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
           <div className="space-y-2">
             <Label htmlFor="reset-user">Kullanıcı</Label>
             {usersQuery.isPending ? (
-              <p className="text-sm text-muted-foreground">Kullanıcılar yükleniyor…</p>
+              <p className="text-sm text-muted-foreground">
+                Kullanıcılar yükleniyor…
+              </p>
             ) : usersQuery.isError ? (
-              <p className="text-sm text-destructive">Kullanıcılar alınamadı.</p>
+              <p className="text-sm text-destructive">
+                Kullanıcılar alınamadı.
+              </p>
             ) : (
               <select
                 id="reset-user"
@@ -751,8 +760,8 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
               </Button>
             </div>
             <p className="text-xs text-muted-foreground">
-              Şifreyi kullanıcıya güvenli bir kanaldan iletin; bu ekrandan
-              sonra tekrar görüntülenemez.
+              Şifreyi kullanıcıya güvenli bir kanaldan iletin; bu ekrandan sonra
+              tekrar görüntülenemez.
             </p>
           </div>
 
@@ -768,7 +777,10 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
           </div>
 
           <DialogFooter>
-            <Button variant="outline" onClick={() => setPasswordResetOpen(false)}>
+            <Button
+              variant="outline"
+              onClick={() => setPasswordResetOpen(false)}
+            >
               Vazgeç
             </Button>
             <Button
@@ -802,8 +814,9 @@ export function BusinessDetail({ businessId }: { businessId: string }) {
             <DialogTitle>Aboneliği manuel uzat</DialogTitle>
             <DialogDescription>
               {business.name} işletmesinin üyeliğini aktif hale getirir.
-              Abonelik bitişi gelecekteyse mevcut tarihin üstüne eklenir; geçmişteyse
-              bugünden itibaren uzatılır. Sonraki ödeme tarihi de yeni bitiş tarihine taşınır.
+              Abonelik bitişi gelecekteyse mevcut tarihin üstüne eklenir;
+              geçmişteyse bugünden itibaren uzatılır. Sonraki ödeme tarihi de
+              yeni bitiş tarihine taşınır.
             </DialogDescription>
           </DialogHeader>
 
@@ -1117,5 +1130,7 @@ function generateTemporaryPassword(): string {
   const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789"
   const values = new Uint32Array(14)
   crypto.getRandomValues(values)
-  return Array.from(values, (value) => alphabet[value % alphabet.length]).join("")
+  return Array.from(values, (value) => alphabet[value % alphabet.length]).join(
+    "",
+  )
 }

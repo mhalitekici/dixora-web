@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 from uuid import uuid4
 
 from fastapi import FastAPI, Request, Response
@@ -16,6 +17,7 @@ from app.errors import register_error_handlers
 from app.logging import bind_request_context, configure_logging, logger
 from app.observability import configure_sentry
 from app.realtime import RealtimeBroadcaster, RealtimeHub, RedisRealtimeHub
+from app.services.email_notifications import run_email_notification_worker
 from app.services.media_storage import MediaStorage, create_media_storage
 from app.services.rate_limit import close_rate_limiter
 
@@ -47,6 +49,14 @@ def create_app(
             await app_database.create_schema()
         if isinstance(realtime, RedisRealtimeHub):
             await realtime.start()
+        notification_worker = (
+            asyncio.create_task(
+                run_email_notification_worker(app_database, app_settings),
+                name="email-notifications",
+            )
+            if app_settings.environment != "test"
+            else None
+        )
         logger.info(
             "application.started",
             environment=app_settings.environment,
@@ -54,12 +64,18 @@ def create_app(
             realtime_backend="redis" if app_settings.redis_url else "in-process",
             error_reporting="sentry" if sentry_enabled else "disabled",
         )
-        yield
-        if isinstance(realtime, RedisRealtimeHub):
-            await realtime.stop()
-        await close_rate_limiter()
-        await app_database.dispose()
-        logger.info("application.stopped")
+        try:
+            yield
+        finally:
+            if notification_worker is not None:
+                notification_worker.cancel()
+                with suppress(asyncio.CancelledError):
+                    await notification_worker
+            if isinstance(realtime, RedisRealtimeHub):
+                await realtime.stop()
+            await close_rate_limiter()
+            await app_database.dispose()
+            logger.info("application.stopped")
 
     # The schema documents every route, its payloads and its error codes — a
     # ready-made map for anyone probing the deployment. It stays on everywhere

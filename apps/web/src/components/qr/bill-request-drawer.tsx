@@ -1,18 +1,18 @@
-"use client";
+"use client"
 
-import { useMutation, useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery } from "@tanstack/react-query"
 import {
   Banknote,
   BedDouble,
   CreditCard,
   Loader2,
   UserPlus,
-} from "lucide-react";
-import { useState } from "react";
-import { toast } from "sonner";
+} from "lucide-react"
+import { useState } from "react"
+import { toast } from "sonner"
 
-import { loyaltyApi } from "@/components/loyalty/loyalty-api";
-import { Button } from "@/components/ui/button";
+import { loyaltyApi } from "@/components/loyalty/loyalty-api"
+import { Button } from "@/components/ui/button"
 import {
   Drawer,
   DrawerContent,
@@ -20,19 +20,19 @@ import {
   DrawerFooter,
   DrawerHeader,
   DrawerTitle,
-} from "@/components/ui/drawer";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { cn } from "@/lib/utils";
-import type { PublicActiveOrderDto } from "@/components/qr/types";
+} from "@/components/ui/drawer"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { cn } from "@/lib/utils"
+import type { PublicActiveOrderDto } from "@/components/qr/types"
 
-type PaymentPreference = "CASH" | "CARD" | "ROOM_CHARGE";
+type PaymentPreference = "CASH" | "CARD" | "ROOM_CHARGE"
 
 const PAYMENT_OPTIONS: Array<{
-  value: PaymentPreference;
-  label: string;
-  description: string;
-  icon: typeof Banknote;
+  value: PaymentPreference
+  label: string
+  description: string
+  icon: typeof Banknote
 }> = [
   {
     value: "CASH",
@@ -52,7 +52,7 @@ const PAYMENT_OPTIONS: Array<{
     description: "Oda hesabına eklensin",
     icon: BedDouble,
   },
-];
+]
 
 export function BillRequestDrawer({
   open,
@@ -64,94 +64,96 @@ export function BillRequestDrawer({
   submitting,
   onSubmit,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  businessSlug: string;
-  branchSlug: string;
-  total: string;
-  order: PublicActiveOrderDto | null;
-  submitting: boolean;
+  open: boolean
+  onOpenChange: (open: boolean) => void
+  businessSlug: string
+  branchSlug: string
+  total: string
+  order: PublicActiveOrderDto | null
+  submitting: boolean
   onSubmit: (input: {
-    payment_preference: PaymentPreference;
-    room_reference: string | null;
-    membership_code: string | null;
-  }) => Promise<void>;
+    payment_preference: PaymentPreference
+    room_reference: string | null
+    membership_code: string | null
+  }) => Promise<void>
 }) {
   const [paymentPreference, setPaymentPreference] =
-    useState<PaymentPreference>("CARD");
-  const [roomReference, setRoomReference] = useState("");
-  const [membershipCode, setMembershipCode] = useState("");
-  const [joinOpen, setJoinOpen] = useState(false);
-  const [firstName, setFirstName] = useState("");
-  const [lastName, setLastName] = useState("");
-  const [email, setEmail] = useState("");
-  const [verificationId, setVerificationId] = useState<string | null>(null);
-  const [verificationCode, setVerificationCode] = useState("");
-  const [developmentCode, setDevelopmentCode] = useState<string | null>(null);
-  const [membershipConsent, setMembershipConsent] = useState(false);
+    useState<PaymentPreference>("CARD")
+  const [roomReference, setRoomReference] = useState("")
+  const [membershipCode, setMembershipCode] = useState("")
+  const [joinOpen, setJoinOpen] = useState(false)
+  const [firstName, setFirstName] = useState("")
+  const [lastName, setLastName] = useState("")
+  const [email, setEmail] = useState("")
+  const [verificationId, setVerificationId] = useState<string | null>(null)
+  const [verificationCode, setVerificationCode] = useState("")
+  const [developmentCode, setDevelopmentCode] = useState<string | null>(null)
+  const [membershipConsent, setMembershipConsent] = useState(false)
+  const [marketingConsent, setMarketingConsent] = useState(false)
   const loyaltyOfferQuery = useQuery({
     queryKey: ["loyalty", "public", "offer", businessSlug, branchSlug],
     queryFn: ({ signal }) => loyaltyApi.offer(businessSlug, branchSlug, signal),
     enabled: open,
     staleTime: 60_000,
-  });
-  const loyaltyAvailable = loyaltyOfferQuery.data?.enabled === true;
+  })
+  const loyaltyAvailable = loyaltyOfferQuery.data?.enabled === true
 
   const emailEnrollmentMutation = useMutation({
     mutationFn: () => {
-      if (!membershipConsent) throw new Error("Üyelik izni gerekli.");
+      if (!membershipConsent) throw new Error("Üyelik izni gerekli.")
       return loyaltyApi.publicEmailEnrollmentStart(businessSlug, branchSlug, {
         first_name: firstName.trim(),
         last_name: lastName.trim(),
         email: email.trim(),
         birth_date: null,
         consent_accepted: true,
-      });
+        marketing_email_consent: marketingConsent,
+      })
     },
     onSuccess: (result) => {
-      setVerificationId(result.verification_id);
-      setDevelopmentCode(result.development_code);
-      toast.success("Doğrulama kodu gönderildi");
+      setVerificationId(result.verification_id)
+      setDevelopmentCode(result.development_code)
+      toast.success("Doğrulama kodu gönderildi")
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "Kod gönderilemedi.",
       ),
-  });
+  })
 
   const enrollmentMutation = useMutation({
     mutationFn: () => {
       return loyaltyApi.publicEmailEnrollmentConfirm(businessSlug, branchSlug, {
         verification_id: verificationId ?? "",
         code: verificationCode.trim(),
-      });
+      })
     },
     onSuccess: (result) => {
-      setMembershipCode(result.member_code);
-      setJoinOpen(false);
-      setVerificationCode("");
+      setMembershipCode(result.member_code)
+      setJoinOpen(false)
+      setVerificationCode("")
       toast.success("Üyelik oluşturuldu", {
         description: `Kodunuz: ${result.member_code}`,
-      });
+      })
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "Üyelik oluşturulamadı.",
       ),
-  });
+  })
 
-  const roomRequired = paymentPreference === "ROOM_CHARGE";
+  const roomRequired = paymentPreference === "ROOM_CHARGE"
   const canSubmit =
-    !submitting && (!roomRequired || roomReference.trim().length > 0);
+    !submitting && (!roomRequired || roomReference.trim().length > 0)
 
   async function submit() {
-    if (!canSubmit) return;
+    if (!canSubmit) return
     await onSubmit({
       payment_preference: paymentPreference,
       room_reference: roomRequired ? roomReference.trim() : null,
       membership_code: membershipCode.trim().toUpperCase() || null,
-    });
-    onOpenChange(false);
+    })
+    onOpenChange(false)
   }
 
   return (
@@ -238,8 +240,8 @@ export function BillRequestDrawer({
             <legend className="text-sm font-semibold">Ödeme tercihiniz</legend>
             <div className="grid gap-2 sm:grid-cols-3">
               {PAYMENT_OPTIONS.map((option) => {
-                const Icon = option.icon;
-                const selected = option.value === paymentPreference;
+                const Icon = option.icon
+                const selected = option.value === paymentPreference
                 return (
                   <button
                     key={option.value}
@@ -265,7 +267,7 @@ export function BillRequestDrawer({
                       {option.description}
                     </span>
                   </button>
-                );
+                )
               })}
             </div>
           </fieldset>
@@ -377,6 +379,18 @@ export function BillRequestDrawer({
                         Sadakat programı kapsamında e-posta adresime doğrulama
                         kodu gönderilmesini kabul ediyorum.
                       </label>
+                      <label className="flex items-start gap-2 text-xs leading-5 text-muted-foreground">
+                        <input
+                          type="checkbox"
+                          checked={marketingConsent}
+                          onChange={(event) =>
+                            setMarketingConsent(event.target.checked)
+                          }
+                          className="mt-1 size-4 accent-[var(--qr-primary)]"
+                        />
+                        Kampanya duyurularını e-posta ile almak istiyorum
+                        (isteğe bağlı).
+                      </label>
                       <Button
                         type="button"
                         variant="outline"
@@ -456,13 +470,13 @@ export function BillRequestDrawer({
         </DrawerFooter>
       </DrawerContent>
     </Drawer>
-  );
+  )
 }
 
 function totalAmount(value: string | number, currency: string) {
   return new Intl.NumberFormat("tr-TR", { style: "currency", currency }).format(
     Number(value),
-  );
+  )
 }
 
 function SummaryRow({
@@ -470,9 +484,9 @@ function SummaryRow({
   value,
   strong = false,
 }: {
-  label: string;
-  value: string;
-  strong?: boolean;
+  label: string
+  value: string
+  strong?: boolean
 }) {
   return (
     <div
@@ -484,5 +498,5 @@ function SummaryRow({
       <span>{label}</span>
       <span className="tabular-nums">{value}</span>
     </div>
-  );
+  )
 }

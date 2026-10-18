@@ -48,9 +48,13 @@ function useCatalog(open: boolean) {
     queryKey: ["campaigns", "catalog"],
     queryFn: async () => {
       const [products, categories, branches] = await Promise.all([
-        api.get<{ items: Ref[] }>("catalog/products", { search: { limit: 250 } }),
+        api.get<{ items: Ref[] }>("catalog/products", {
+          search: { limit: 250 },
+        }),
         api.get<Ref[] | { items: Ref[] }>("catalog/categories"),
-        api.get<Array<{ id: string; name: string; is_active: boolean }>>("branches"),
+        api.get<Array<{ id: string; name: string; is_active: boolean }>>(
+          "branches",
+        ),
       ])
       return {
         products: products.items,
@@ -106,8 +110,14 @@ function TargetPicker({
         ))}
       </div>
       {mode === "PRODUCT" ? (
-        <Select value={productId} onValueChange={(value) => onProductChange(value ?? "")}>
-          <SelectTrigger id={`${idPrefix}-target`} className="w-full rounded-xl">
+        <Select
+          value={productId}
+          onValueChange={(value) => onProductChange(value ?? "")}
+        >
+          <SelectTrigger
+            id={`${idPrefix}-target`}
+            className="w-full rounded-xl"
+          >
             <SelectValue placeholder="Ürün seçin" />
           </SelectTrigger>
           <SelectContent>
@@ -119,8 +129,14 @@ function TargetPicker({
           </SelectContent>
         </Select>
       ) : (
-        <Select value={categoryId} onValueChange={(value) => onCategoryChange(value ?? "")}>
-          <SelectTrigger id={`${idPrefix}-target`} className="w-full rounded-xl">
+        <Select
+          value={categoryId}
+          onValueChange={(value) => onCategoryChange(value ?? "")}
+        >
+          <SelectTrigger
+            id={`${idPrefix}-target`}
+            className="w-full rounded-xl"
+          >
             <SelectValue placeholder="Kategori seçin" />
           </SelectTrigger>
           <SelectContent>
@@ -157,13 +173,24 @@ export function CampaignFormDialog({
 
   const [name, setName] = useState(editing?.name ?? "")
   const [isActive, setIsActive] = useState(editing?.is_active ?? true)
-  const [branchIds, setBranchIds] = useState<string[]>(editing?.branch_ids ?? [])
+  const [notifyMembers, setNotifyMembers] = useState(
+    editing?.notify_loyalty_members ?? true,
+  )
+  const [branchIds, setBranchIds] = useState<string[]>(
+    editing?.branch_ids ?? [],
+  )
   const [buyMode, setBuyMode] = useState<TargetMode>(
     editing?.buy_category_id ? "CATEGORY" : "PRODUCT",
   )
-  const [buyProductId, setBuyProductId] = useState(editing?.buy_product_id ?? "")
-  const [buyCategoryId, setBuyCategoryId] = useState(editing?.buy_category_id ?? "")
-  const [buyQuantity, setBuyQuantity] = useState(String(editing?.buy_quantity ?? 1))
+  const [buyProductId, setBuyProductId] = useState(
+    editing?.buy_product_id ?? "",
+  )
+  const [buyCategoryId, setBuyCategoryId] = useState(
+    editing?.buy_category_id ?? "",
+  )
+  const [buyQuantity, setBuyQuantity] = useState(
+    String(editing?.buy_quantity ?? 1),
+  )
   const [rewardKind, setRewardKind] = useState<CampaignRewardKind>(
     editing?.reward_kind ?? "FREE_ITEM",
   )
@@ -177,14 +204,17 @@ export function CampaignFormDialog({
     editing?.reward_category_id ?? "",
   )
   const [rewardValue, setRewardValue] = useState(editing?.reward_value ?? "0")
-  const [maxUses, setMaxUses] = useState(String(editing?.max_uses_per_order ?? 1))
+  const [maxUses, setMaxUses] = useState(
+    String(editing?.max_uses_per_order ?? 1),
+  )
 
   const products = catalog.data?.products ?? []
   const categories = catalog.data?.categories ?? []
   const branches = catalog.data?.branches ?? []
 
   const buyChosen = buyMode === "PRODUCT" ? buyProductId : buyCategoryId
-  const rewardChosen = rewardMode === "PRODUCT" ? rewardProductId : rewardCategoryId
+  const rewardChosen =
+    rewardMode === "PRODUCT" ? rewardProductId : rewardCategoryId
   const needsValue = rewardKind !== "FREE_ITEM"
   const canSubmit =
     name.trim().length >= 2 &&
@@ -199,6 +229,7 @@ export function CampaignFormDialog({
         name: name.trim(),
         description: null,
         is_active: isActive,
+        notify_loyalty_members: notifyMembers,
         branch_ids: branchIds,
         buy_product_id: buyMode === "PRODUCT" ? buyProductId : null,
         buy_category_id: buyMode === "CATEGORY" ? buyCategoryId : null,
@@ -229,14 +260,18 @@ export function CampaignFormDialog({
       await queryClient.invalidateQueries({ queryKey: campaignKeys.root })
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Kampanya kaydedilemedi."),
+      toast.error(
+        error instanceof Error ? error.message : "Kampanya kaydedilemedi.",
+      ),
   })
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="sm:max-w-2xl">
+      <DialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
-          <DialogTitle>{editing ? "Kampanyayı düzenle" : "Yeni kampanya"}</DialogTitle>
+          <DialogTitle>
+            {editing ? "Kampanyayı düzenle" : "Yeni kampanya"}
+          </DialogTitle>
           <DialogDescription>
             Kampanyayı bir cümle gibi kurun: şunu alana şunu verin.
           </DialogDescription>
@@ -296,7 +331,10 @@ export function CampaignFormDialog({
                     setRewardKind((value as CampaignRewardKind) ?? "FREE_ITEM")
                   }
                 >
-                  <SelectTrigger id="campaign-reward-kind" className="w-full rounded-xl">
+                  <SelectTrigger
+                    id="campaign-reward-kind"
+                    className="w-full rounded-xl"
+                  >
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
@@ -310,7 +348,9 @@ export function CampaignFormDialog({
               </div>
               <TargetPicker
                 idPrefix="reward"
-                label={rewardKind === "FREE_ITEM" ? "İkram" : "İndirim uygulanacak"}
+                label={
+                  rewardKind === "FREE_ITEM" ? "İkram" : "İndirim uygulanacak"
+                }
                 mode={rewardMode}
                 onModeChange={setRewardMode}
                 productId={rewardProductId}
@@ -383,7 +423,9 @@ export function CampaignFormDialog({
                 </label>
               ))}
               {branches.length === 0 ? (
-                <p className="text-xs text-muted-foreground">Şube bulunamadı.</p>
+                <p className="text-xs text-muted-foreground">
+                  Şube bulunamadı.
+                </p>
               ) : null}
             </div>
           </fieldset>
@@ -399,6 +441,25 @@ export function CampaignFormDialog({
               onCheckedChange={setIsActive}
             />
           </label>
+          <div className="flex items-start justify-between gap-3 rounded-xl border p-3">
+            <div>
+              <Label htmlFor="campaign-notify">Üyelere e-posta ile duyur</Label>
+              <p
+                id="campaign-notify-help"
+                className="mt-1 text-xs leading-5 text-muted-foreground"
+              >
+                Kampanya yayınlandığında seçili şubelerdeki e-posta izni veren
+                üyelere otomatik bildirim gönderilir. Düzenlemeler tekrar
+                duyurulmaz.
+              </p>
+            </div>
+            <Switch
+              id="campaign-notify"
+              checked={notifyMembers}
+              onCheckedChange={setNotifyMembers}
+              aria-describedby="campaign-notify-help"
+            />
+          </div>
         </div>
 
         <DialogFooter>
@@ -409,7 +470,9 @@ export function CampaignFormDialog({
             disabled={!canSubmit || saveMutation.isPending}
             onClick={() => saveMutation.mutate()}
           >
-            {saveMutation.isPending ? <Loader2 className="animate-spin" /> : null}
+            {saveMutation.isPending ? (
+              <Loader2 className="animate-spin" />
+            ) : null}
             {editing ? "Kaydet" : "Kampanyayı oluştur"}
           </Button>
         </DialogFooter>

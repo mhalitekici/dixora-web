@@ -97,12 +97,27 @@ export function defaultErrorMessage(status: number): string {
 
 export function toErrorMessage(error: unknown): string {
   if (error instanceof ApiError) {
+    const commonMessages: Record<string, string> = {
+      permission_denied:
+        "Bu işlem için yetkiniz bulunmuyor. İşletme yöneticinizle görüşün.",
+      branch_forbidden:
+        "Bu şubeye erişiminiz bulunmuyor. Yetkili olduğunuz şubeyi seçin.",
+      branch_context_required: "İşleme devam etmek için bir şube seçin.",
+      session_revoked: "Oturumunuz sona erdi. Yeniden giriş yapın.",
+      token_expired: "Oturumunuz sona erdi. Yeniden giriş yapın.",
+    }
+    if (commonMessages[error.code]) return commonMessages[error.code]
     return error.message
   }
 
   if (error instanceof Error && error.name === "AbortError") {
     return "İstek zaman aşımına uğradı."
   }
+
+  if (error instanceof TypeError) {
+    return "Sunucuya ulaşılamıyor. Bağlantınızı kontrol edip yeniden deneyin."
+  }
+  if (error instanceof Error && error.message) return error.message
 
   return "Beklenmeyen bir hata oluştu."
 }

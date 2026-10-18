@@ -3,6 +3,17 @@ import { describe, expect, it } from "vitest"
 import { buildMenuUrl, resolveAppUrl } from "@/components/qr/qr-code-list"
 
 describe("resolveAppUrl", () => {
+  it("uses the reachable browser address when a local build is opened from another host", () => {
+    expect(
+      resolveAppUrl("http://localhost:3000", "https://panel.example.com"),
+    ).toBe("https://panel.example.com")
+    expect(resolveAppUrl(undefined, "http://192.168.1.20:3000")).toBe(
+      "http://192.168.1.20:3000",
+    )
+    expect(
+      resolveAppUrl("https://dixoratech.com", "http://localhost:3000"),
+    ).toBe("https://dixoratech.com")
+  })
   it("uses the configured production origin", () => {
     expect(resolveAppUrl("https://dixoratech.com")).toBe(
       "https://dixoratech.com",
@@ -35,12 +46,7 @@ describe("buildMenuUrl", () => {
   const appUrl = resolveAppUrl("https://dixoratech.com")
 
   it("prints the public origin onto a table code, not localhost", () => {
-    const url = buildMenuUrl(
-      appUrl,
-      "aleyin-mutfagi",
-      "merkez",
-      "tkn_abc123",
-    )
+    const url = buildMenuUrl(appUrl, "aleyin-mutfagi", "merkez", "tkn_abc123")
 
     expect(url).toBe(
       "https://dixoratech.com/m/aleyin-mutfagi/merkez/table/tkn_abc123",
@@ -61,8 +67,8 @@ describe("buildMenuUrl", () => {
   })
 
   it("still points at localhost when nothing is configured", () => {
-    expect(
-      buildMenuUrl(resolveAppUrl(undefined), "demo", "merkez", null),
-    ).toBe("http://localhost:3000/m/demo/merkez")
+    expect(buildMenuUrl(resolveAppUrl(undefined), "demo", "merkez", null)).toBe(
+      "http://localhost:3000/m/demo/merkez",
+    )
   })
 })

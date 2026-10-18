@@ -1,6 +1,11 @@
-"use client";
+"use client"
 
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query"
 import {
   ChevronLeft,
   ChevronRight,
@@ -13,16 +18,16 @@ import {
   Search,
   ShoppingBag,
   Users,
-} from "lucide-react";
-import { useMemo, useState } from "react";
-import { toast } from "sonner";
+} from "lucide-react"
+import { useMemo, useState } from "react"
+import { toast } from "sonner"
 
-import { EmptyState } from "@/components/shared/empty-state";
-import { PageHeader } from "@/components/shared/page-header";
-import { StatCard } from "@/components/shared/stat-card";
-import { StatusBadge } from "@/components/shared/status-badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/shared/empty-state"
+import { PageHeader } from "@/components/shared/page-header"
+import { StatCard } from "@/components/shared/stat-card"
+import { StatusBadge } from "@/components/shared/status-badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
@@ -30,15 +35,15 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -46,9 +51,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/ui/table"
 
-import { adminApi, adminKeys } from "./admin-api";
+import { adminApi, adminKeys } from "./admin-api"
 import {
   AdapterNotice,
   dateTime,
@@ -59,13 +64,15 @@ import {
   orderStatusText,
   shortId,
   toneForOrder,
-} from "./admin-utils";
-import type { Order, OrderSource, OrderStatus } from "./types";
+} from "./admin-utils"
+import type { Order, OrderSource, OrderStatus } from "./types"
 
-const PAGE_SIZE = 25;
-const statusOptions: Array<{ value: OrderStatus; label: string }> = Object.entries(
-  orderStatusText,
-).map(([value, label]) => ({ value: value as OrderStatus, label }));
+const PAGE_SIZE = 25
+const statusOptions: Array<{ value: OrderStatus; label: string }> =
+  Object.entries(orderStatusText).map(([value, label]) => ({
+    value: value as OrderStatus,
+    label,
+  }))
 const sourceLabels: Record<OrderSource, string> = {
   WAITER: "Garson",
   CASHIER: "Kasa",
@@ -74,22 +81,32 @@ const sourceLabels: Record<OrderSource, string> = {
   DELIVERY: "Teslimat",
   KIOSK: "Kiosk",
   API: "API",
-};
+}
 
-export function OrderManagement({ initialOrderId }: { initialOrderId?: string }) {
-  const queryClient = useQueryClient();
-  const [page, setPage] = useState(0);
-  const [status, setStatus] = useState<OrderStatus | "ALL">("ALL");
-  const [source, setSource] = useState<OrderSource | "ALL">("ALL");
-  const [search, setSearch] = useState("");
-  const [receiptNumber, setReceiptNumber] = useState("");
-  const [receiptDate, setReceiptDate] = useState("");
+export function OrderManagement({
+  initialOrderId,
+}: {
+  initialOrderId?: string
+}) {
+  const queryClient = useQueryClient()
+  const [page, setPage] = useState(0)
+  const [status, setStatus] = useState<OrderStatus | "ALL">("ALL")
+  const [source, setSource] = useState<OrderSource | "ALL">("ALL")
+  const [search, setSearch] = useState("")
+  const [receiptNumber, setReceiptNumber] = useState("")
+  const [receiptDate, setReceiptDate] = useState("")
   const [selectedOrderId, setSelectedOrderId] = useState<string | null>(
     initialOrderId ?? null,
-  );
+  )
 
   const ordersQuery = useQuery({
-    queryKey: adminKeys.orders(status, page * PAGE_SIZE, PAGE_SIZE, receiptNumber, receiptDate),
+    queryKey: adminKeys.orders(
+      status,
+      page * PAGE_SIZE,
+      PAGE_SIZE,
+      receiptNumber,
+      receiptDate,
+    ),
     queryFn: ({ signal }) =>
       adminApi.orders(
         {
@@ -102,53 +119,63 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
         signal,
       ),
     placeholderData: keepPreviousData,
-  });
+  })
   const selectedQuery = useQuery({
     queryKey: adminKeys.order(selectedOrderId ?? ""),
     queryFn: ({ signal }) => adminApi.order(selectedOrderId ?? "", signal),
     enabled: Boolean(selectedOrderId),
-  });
+  })
   const acceptMutation = useMutation({
     mutationFn: adminApi.acceptOrder,
     onSuccess: async (order) => {
-      queryClient.setQueryData(adminKeys.order(order.id), order);
-      await queryClient.invalidateQueries({ queryKey: [...adminKeys.root, "orders"] });
-      toast.success("Sipariş kabul edildi.");
+      queryClient.setQueryData(adminKeys.order(order.id), order)
+      await queryClient.invalidateQueries({
+        queryKey: [...adminKeys.root, "orders"],
+      })
+      toast.success("Sipariş kabul edildi.")
     },
     onError: () => toast.error("Sipariş kabul edilemedi."),
-  });
+  })
 
   const filteredOrders = useMemo(() => {
-    const normalized = search.trim().toLocaleLowerCase("tr-TR");
+    const normalized = search.trim().toLocaleLowerCase("tr-TR")
     return (ordersQuery.data?.items ?? []).filter((order) => {
-      if (source !== "ALL" && order.source !== source) return false;
-      if (!normalized) return true;
+      if (source !== "ALL" && order.source !== source) return false
+      if (!normalized) return true
       return (
         order.id.toLocaleLowerCase("tr-TR").includes(normalized) ||
         order.customer_name?.toLocaleLowerCase("tr-TR").includes(normalized) ||
         order.items.some((item) =>
-          item.product_name_snapshot.toLocaleLowerCase("tr-TR").includes(normalized),
+          item.product_name_snapshot
+            .toLocaleLowerCase("tr-TR")
+            .includes(normalized),
         )
-      );
-    });
-  }, [ordersQuery.data?.items, search, source]);
+      )
+    })
+  }, [ordersQuery.data?.items, search, source])
 
   const totals = useMemo(() => {
-    const items = ordersQuery.data?.items ?? [];
+    const items = ordersQuery.data?.items ?? []
     return {
       value: items.reduce((sum, order) => sum + Number(order.total), 0),
       itemCount: items.reduce((sum, order) => sum + order.items.length, 0),
       paid: items.filter((order) => order.status === "PAID").length,
-    };
-  }, [ordersQuery.data?.items]);
+    }
+  }, [ordersQuery.data?.items])
 
-  if (ordersQuery.isLoading) return <LoadingState label="Siparişler yükleniyor…" />;
+  if (ordersQuery.isLoading)
+    return <LoadingState label="Siparişler yükleniyor…" />
   if (ordersQuery.error) {
-    return <ErrorState error={ordersQuery.error} onRetry={() => void ordersQuery.refetch()} />;
+    return (
+      <ErrorState
+        error={ordersQuery.error}
+        onRetry={() => void ordersQuery.refetch()}
+      />
+    )
   }
 
-  const total = ordersQuery.data?.total ?? 0;
-  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const total = ordersQuery.data?.total ?? 0
+  const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE))
 
   return (
     <>
@@ -198,8 +225,10 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
             aria-label="Fiş no ara"
             value={receiptNumber}
             onChange={(event) => {
-              setReceiptNumber(event.target.value.replace(/\D/g, "").replace(/^0+/, ""));
-              setPage(0);
+              setReceiptNumber(
+                event.target.value.replace(/\D/g, "").replace(/^0+/, ""),
+              )
+              setPage(0)
             }}
             placeholder="Fiş no ara…"
             className="h-10 w-36 rounded-xl"
@@ -209,8 +238,8 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
             aria-label="Fiş tarihi"
             value={receiptDate}
             onChange={(event) => {
-              setReceiptDate(event.target.value);
-              setPage(0);
+              setReceiptDate(event.target.value)
+              setPage(0)
             }}
             className="h-10 w-40 rounded-xl"
           />
@@ -231,8 +260,8 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
           <Select
             value={status}
             onValueChange={(value) => {
-              setStatus(value as OrderStatus | "ALL");
-              setPage(0);
+              setStatus(value as OrderStatus | "ALL")
+              setPage(0)
             }}
           >
             <SelectTrigger className="h-10 min-w-44 rounded-xl">
@@ -248,7 +277,10 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
               ))}
             </SelectContent>
           </Select>
-          <Select value={source} onValueChange={(value) => setSource(value as OrderSource | "ALL")}>
+          <Select
+            value={source}
+            onValueChange={(value) => setSource(value as OrderSource | "ALL")}
+          >
             <SelectTrigger className="h-10 min-w-36 rounded-xl">
               <ListFilter />
               <SelectValue />
@@ -265,13 +297,15 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
         </div>
       </div>
       <p className="mb-3 text-xs text-muted-foreground">
-        Fiş numarası her gün yeniden başlar. Belirli bir güne ait fişi bulmak için fiş tarihini seçebilirsiniz.
+        Fiş numarası her gün yeniden başlar. Belirli bir güne ait fişi bulmak
+        için fiş tarihini seçebilirsiniz.
       </p>
 
-      <AdapterNotice className="mb-4" title="Filtre kapsamı">
-        Durum ve sayfalama backend’de uygulanır. Mevcut sipariş API’si kaynak ve metin araması
-        parametrelerini desteklemediği için kanal ve arama filtreleri yalnız yüklenen API sayfasında
-        çalışır (adapter TODO).
+      <AdapterNotice className="mb-4" title="Arama kapsamı">
+        Sipariş durumu ve fiş bilgileri tüm kayıtlarda aranır. Kanal ve metin
+        araması bu sayfada yüklenen siparişleri daraltır. Aradığınız kaydı
+        göremiyorsanız sayfayı değiştirin veya fiş numarası ve tarihini
+        kullanın.
       </AdapterNotice>
 
       <Card>
@@ -300,9 +334,13 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
                         className="text-left"
                         onClick={() => setSelectedOrderId(order.id)}
                       >
-                        <span className="block font-semibold">#{shortId(order.id)}</span>
+                        <span className="block font-semibold">
+                          #{shortId(order.id)}
+                        </span>
                         {order.receipt_number != null ? (
-                          <span className="block text-xs font-medium">Fiş no: {order.receipt_number}</span>
+                          <span className="block text-xs font-medium">
+                            Fiş no: {order.receipt_number}
+                          </span>
                         ) : null}
                         <span className="block text-xs text-muted-foreground">
                           {order.customer_name || "Misafir"}
@@ -351,8 +389,10 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
 
       <div className="mt-4 flex flex-col gap-2 text-sm text-muted-foreground sm:flex-row sm:items-center sm:justify-between">
         <p>
-          {total ? `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, total)}` : "0"} /{" "}
-          {number(total)} kayıt
+          {total
+            ? `${page * PAGE_SIZE + 1}–${Math.min((page + 1) * PAGE_SIZE, total)}`
+            : "0"}{" "}
+          / {number(total)} kayıt
         </p>
         <div className="flex items-center gap-2">
           <Button
@@ -382,7 +422,7 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
       <Dialog
         open={Boolean(selectedOrderId)}
         onOpenChange={(open) => {
-          if (!open) setSelectedOrderId(null);
+          if (!open) setSelectedOrderId(null)
         }}
       >
         <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-2xl">
@@ -409,8 +449,8 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
             {selectedQuery.data?.status === "SUBMITTED" ? (
               <Button
                 onClick={() => {
-                  const order = selectedQuery.data;
-                  if (order) acceptMutation.mutate(order.id);
+                  const order = selectedQuery.data
+                  if (order) acceptMutation.mutate(order.id)
                 }}
                 disabled={acceptMutation.isPending}
               >
@@ -424,7 +464,7 @@ export function OrderManagement({ initialOrderId }: { initialOrderId?: string })
         </DialogContent>
       </Dialog>
     </>
-  );
+  )
 }
 
 function OrderDetail({ order }: { order: Order }) {
@@ -432,7 +472,9 @@ function OrderDetail({ order }: { order: Order }) {
     <div className="space-y-4">
       <div className="grid gap-2 sm:grid-cols-3">
         <DetailMetric label="Durum">
-          <StatusBadge tone={toneForOrder(order.status)}>{orderStatusText[order.status]}</StatusBadge>
+          <StatusBadge tone={toneForOrder(order.status)}>
+            {orderStatusText[order.status]}
+          </StatusBadge>
         </DetailMetric>
         <DetailMetric label="Kaynak" value={sourceLabels[order.source]} />
         <DetailMetric label="Oluşturulma" value={dateTime(order.created_at)} />
@@ -453,7 +495,10 @@ function OrderDetail({ order }: { order: Order }) {
                 {item.modifiers.length ? (
                   <p className="mt-1 text-xs text-muted-foreground">
                     {item.modifiers
-                      .map((modifier) => `${modifier.quantity}× ${modifier.name_snapshot}`)
+                      .map(
+                        (modifier) =>
+                          `${modifier.quantity}× ${modifier.name_snapshot}`,
+                      )
                       .join(" · ")}
                   </p>
                 ) : null}
@@ -482,20 +527,35 @@ function OrderDetail({ order }: { order: Order }) {
             <div className="mt-3 space-y-2">
               {order.payments.map((payment) => (
                 <div key={payment.id} className="flex justify-between text-sm">
-                  <span className="text-muted-foreground">{payment.method}</span>
-                  <span className="font-medium">{money(payment.amount, order.currency)}</span>
+                  <span className="text-muted-foreground">
+                    {payment.method}
+                  </span>
+                  <span className="font-medium">
+                    {money(payment.amount, order.currency)}
+                  </span>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="mt-2 text-xs text-muted-foreground">Henüz ödeme kaydı yok.</p>
+            <p className="mt-2 text-xs text-muted-foreground">
+              Henüz ödeme kaydı yok.
+            </p>
           )}
         </div>
         <div className="rounded-xl border bg-muted/25 p-4">
           <p className="mb-3 font-semibold">Tutar özeti</p>
-          <MoneyRow label="Ara toplam" value={money(order.subtotal, order.currency)} />
-          <MoneyRow label="İndirim" value={`−${money(order.discount_total, order.currency)}`} />
-          <MoneyRow label="Vergi" value={money(order.tax_total, order.currency)} />
+          <MoneyRow
+            label="Ara toplam"
+            value={money(order.subtotal, order.currency)}
+          />
+          <MoneyRow
+            label="İndirim"
+            value={`−${money(order.discount_total, order.currency)}`}
+          />
+          <MoneyRow
+            label="Vergi"
+            value={money(order.tax_total, order.currency)}
+          />
           <div className="mt-3 flex justify-between border-t pt-3 text-base font-bold">
             <span>Toplam</span>
             <span>{money(order.total, order.currency)}</span>
@@ -503,7 +563,7 @@ function OrderDetail({ order }: { order: Order }) {
         </div>
       </div>
     </div>
-  );
+  )
 }
 
 function DetailMetric({
@@ -511,16 +571,16 @@ function DetailMetric({
   value,
   children,
 }: {
-  label: string;
-  value?: string;
-  children?: React.ReactNode;
+  label: string
+  value?: string
+  children?: React.ReactNode
 }) {
   return (
     <div className="rounded-xl border bg-muted/20 p-3">
       <p className="text-xs text-muted-foreground">{label}</p>
       <div className="mt-1 font-medium">{children ?? value}</div>
     </div>
-  );
+  )
 }
 
 function MoneyRow({ label, value }: { label: string; value: string }) {
@@ -529,5 +589,5 @@ function MoneyRow({ label, value }: { label: string; value: string }) {
       <span className="text-muted-foreground">{label}</span>
       <span className="tabular-nums">{value}</span>
     </div>
-  );
+  )
 }

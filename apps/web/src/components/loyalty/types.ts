@@ -153,6 +153,7 @@ export type CampaignApplyResult = {
   membership_code: string
   program_name: string
   applied: AppliedCampaign[]
+  campaigns: AppliedCampaign[]
   total_discount: string
   order_total: string
   /** Set when the code was valid but nothing could be granted. */

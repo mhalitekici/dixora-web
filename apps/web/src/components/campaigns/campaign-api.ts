@@ -2,12 +2,23 @@ import { api } from "@/lib/api"
 
 export type CampaignRewardKind = "FREE_ITEM" | "PERCENT" | "AMOUNT"
 export type CampaignAudience = "MEMBERS_ONLY"
+export type CampaignNotificationStatus =
+  | "NOT_REQUESTED"
+  | "NO_RECIPIENTS"
+  | "PENDING"
+  | "SENT"
+  | "FAILED"
+  | "CANCELLED"
 
 export type Campaign = {
   id: string
   name: string
   description: string | null
   is_active: boolean
+  notify_loyalty_members: boolean
+  activation_version: number
+  email_notification_status: CampaignNotificationStatus
+  email_notification_recipients: number
   branch_ids: string[]
   buy_product_id: string | null
   buy_category_id: string | null
@@ -31,6 +42,7 @@ export type CampaignInput = {
   name: string
   description: string | null
   is_active: boolean
+  notify_loyalty_members: boolean
   branch_ids: string[]
   buy_product_id: string | null
   buy_category_id: string | null

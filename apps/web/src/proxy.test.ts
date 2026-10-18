@@ -20,6 +20,19 @@ function request(path: string, cookie?: string) {
 }
 
 describe("auth proxy", () => {
+  it.each([
+    "/admin",
+    "/admin/printers",
+    "/admin/loyalty",
+    "/waiter/tables",
+    "/cashier",
+  ])("allows the business administrator to open %s", (path) => {
+    const response = proxy(
+      request(path, `dixora_refresh=${roleToken("BUSINESS_ADMIN")}`),
+    )
+    expect(response.headers.get("x-middleware-next")).toBe("1")
+  })
+
   it("redirects a logged-out back navigation to login", () => {
     const response = proxy(request("/admin/orders?status=PAID"))
 

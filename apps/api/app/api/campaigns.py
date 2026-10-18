@@ -242,9 +242,12 @@ async def update_campaign(
     await _validate_references(db, tenant_id=tenant_id, payload=payload)
 
     was_active = campaign.is_active
+    was_notifying = campaign.notify_loyalty_members
     _assign(campaign, payload)
     if not was_active and campaign.is_active:
         campaign.activation_version += 1
+    if campaign.is_active and campaign.activation_version == 0:
+        campaign.activation_version = 1
     campaign.version += 1
 
     existing = {link.branch_id for link in campaign.campaign_branches}
@@ -259,7 +262,7 @@ async def update_campaign(
             )
         )
     await db.flush()
-    if not was_active and campaign.is_active:
+    if campaign.is_active and (not was_active or not was_notifying):
         await queue_campaign_announcements(db, campaign=campaign)
     add_audit_log(
         db,

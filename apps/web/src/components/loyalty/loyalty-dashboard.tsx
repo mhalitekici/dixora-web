@@ -12,7 +12,11 @@ import type { ReactNode } from "react"
 import { useState } from "react"
 import { toast } from "sonner"
 
-import { ErrorState, LoadingState, number } from "@/components/admin/admin-utils"
+import {
+  ErrorState,
+  LoadingState,
+  number,
+} from "@/components/admin/admin-utils"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
 import { StatusBadge } from "@/components/shared/status-badge"
@@ -27,6 +31,8 @@ import {
 } from "@/components/ui/table"
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { toErrorMessage } from "@/lib/api/errors"
+import { useCurrentUser } from "@/hooks/use-auth"
+import { hasPermission } from "@/lib/permissions"
 
 import { LoyaltyEnrollmentDialog } from "./loyalty-enrollment-dialog"
 
@@ -38,17 +44,24 @@ import {
   useUpdateLoyaltyProgram,
 } from "./loyalty-hooks"
 import { LoyaltyProgramForm } from "./loyalty-program-form"
-import type { LoyaltyAdminReward, LoyaltyCustomer, LoyaltyProgram } from "./types"
+import type {
+  LoyaltyAdminReward,
+  LoyaltyCustomer,
+  LoyaltyProgram,
+} from "./types"
 
 export function LoyaltyDashboard() {
+  const currentUser = useCurrentUser()
+  const canManage = hasPermission(currentUser.data, "loyalty.manage")
+  const canEnroll = hasPermission(currentUser.data, "loyalty.redeem")
   const programQuery = useLoyaltyProgram()
-  const setupQuery = useLoyaltySetupOptions()
+  const setupQuery = useLoyaltySetupOptions(canManage)
   const customersQuery = useLoyaltyCustomers()
   const [enrollOpen, setEnrollOpen] = useState(false)
   const rewardsQuery = useLoyaltyRewards()
   const mutation = useUpdateLoyaltyProgram()
 
-  if (programQuery.isLoading || setupQuery.isLoading) {
+  if (programQuery.isLoading || (canManage && setupQuery.isLoading)) {
     return <LoadingState label="Sadakat programı yükleniyor…" />
   }
   const error = programQuery.error ?? setupQuery.error
@@ -66,14 +79,14 @@ export function LoyaltyDashboard() {
 
   const program = programQuery.data ?? null
   const options = setupQuery.data
-  if (!options) return null
+  if (canManage && !options) return null
 
   return (
     <>
       <PageHeader
-        eyebrow="Müşteri ilişkileri"
+        eyebrow="Kampanyalar ve Sadakat"
         title="Sadakat Programı"
-        description="Müdavimlerinizi anlaşılır bir ödül yolculuğuyla karşılayın; ilerlemeyi ve kullanımları tek ekrandan izleyin."
+        description="İlerlemeyi ve ödülleri tek ekrandan izleyin. Ödül kazanan müşterilerinize ikramlarını hatırlatan e-posta otomatik gönderilir."
         icon={HeartHandshake}
       />
 
@@ -81,34 +94,55 @@ export function LoyaltyDashboard() {
 
       <Tabs defaultValue="program">
         <TabsList className="mb-5 h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl bg-muted/70 p-1 sm:w-auto">
-          <TabsTrigger value="program">Programı düzenle</TabsTrigger>
+          <TabsTrigger value="program">
+            {canManage ? "Programı düzenle" : "Program özeti"}
+          </TabsTrigger>
           <TabsTrigger value="customers">Müşteriler</TabsTrigger>
           <TabsTrigger value="rewards">Ödül hareketleri</TabsTrigger>
         </TabsList>
         <TabsContent value="program">
-          <LoyaltyProgramForm
-            key={program ? `${program.id}:${program.version}` : "new-loyalty-program"}
-            program={program}
-            options={options}
-            pending={mutation.isPending}
-            onSubmit={(input) =>
-              mutation.mutate(input, {
-                onSuccess: () => toast.success("Sadakat programı kaydedildi."),
-                onError: (mutationError) => toast.error(toErrorMessage(mutationError)),
-              })
-            }
-          />
+          {canManage && options ? (
+            <LoyaltyProgramForm
+              key={
+                program
+                  ? `${program.id}:${program.version}`
+                  : "new-loyalty-program"
+              }
+              program={program}
+              options={options}
+              pending={mutation.isPending}
+              onSubmit={(input) =>
+                mutation.mutate(input, {
+                  onSuccess: () =>
+                    toast.success("Sadakat programı kaydedildi."),
+                  onError: (mutationError) =>
+                    toast.error(toErrorMessage(mutationError)),
+                })
+              }
+            />
+          ) : (
+            <div className="rounded-xl border bg-card p-4 text-sm leading-6 text-muted-foreground">
+              {program
+                ? `“${program.name}” programının üyelerini ve ödül hareketlerini yukarıdaki sekmelerden izleyebilirsiniz.`
+                : "Bu işletmede henüz bir sadakat programı tanımlanmadı."}
+              <p className="mt-2">
+                Program kurallarını işletme sahibi veya yönetici düzenleyebilir.
+              </p>
+            </div>
+          )}
         </TabsContent>
         <TabsContent value="customers">
           <div className="mb-3 flex flex-wrap items-center justify-between gap-2 rounded-2xl border bg-card p-3">
             <p className="text-xs text-muted-foreground">
-              Müşteriler kasada kaydedilir: bilgileri girin, e-postasına gelen kodu
-              doğrulayın, üyelik kartı kendisine gönderilsin.
+              Müşteriler kasada kaydedilir: bilgileri girin, e-postasına gelen
+              kodu doğrulayın, üyelik kartı kendisine gönderilsin.
             </p>
-            <Button size="sm" onClick={() => setEnrollOpen(true)}>
-              <UserPlus className="size-4" />
-              Yeni müşteri kaydet
-            </Button>
+            {canEnroll ? (
+              <Button size="sm" onClick={() => setEnrollOpen(true)}>
+                <UserPlus className="size-4" />
+                Yeni müşteri kaydet
+              </Button>
+            ) : null}
           </div>
           <CustomerTable
             loading={customersQuery.isLoading}
@@ -137,13 +171,21 @@ export function LoyaltyDashboard() {
 
 function ProgramPulse({ program }: { program: LoyaltyProgram | null }) {
   return (
-    <section className="mb-6 overflow-hidden rounded-3xl border bg-card shadow-sm" aria-label="Program özeti">
+    <section
+      className="mb-6 overflow-hidden rounded-3xl border bg-card shadow-sm"
+      aria-label="Program özeti"
+    >
       <div className="grid lg:grid-cols-[minmax(17rem,0.85fr)_minmax(0,1.35fr)]">
         <div className="relative overflow-hidden bg-[#292524] p-5 text-stone-50 sm:p-6">
-          <div className="absolute -right-6 -top-8 size-28 rounded-full border-[18px] border-brand/20" aria-hidden="true" />
+          <div
+            className="absolute -right-6 -top-8 size-28 rounded-full border-[18px] border-brand/20"
+            aria-hidden="true"
+          />
           <div className="relative">
             <span className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/8 px-3 py-1 text-xs font-semibold">
-              <span className={`size-2 rounded-full ${program?.is_active ? "bg-emerald-400" : "bg-amber-400"}`} />
+              <span
+                className={`size-2 rounded-full ${program?.is_active ? "bg-emerald-400" : "bg-amber-400"}`}
+              />
               {program?.is_active ? "Program yayında" : "Program taslakta"}
             </span>
             <p className="mt-5 text-xs font-semibold uppercase tracking-[0.16em] text-orange-300">
@@ -210,12 +252,16 @@ function PulseMetric({
   }[tone]
   return (
     <div className="flex items-center gap-4 p-5 sm:block sm:p-6">
-      <span className={`flex size-10 shrink-0 items-center justify-center rounded-full ${toneClass}`}>
+      <span
+        className={`flex size-10 shrink-0 items-center justify-center rounded-full ${toneClass}`}
+      >
         <Icon className="size-4" />
       </span>
       <div className="min-w-0 sm:mt-5">
         <dt className="text-xs font-medium text-muted-foreground">{label}</dt>
-        <dd className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight">{value}</dd>
+        <dd className="mt-0.5 text-2xl font-semibold tabular-nums tracking-tight">
+          {value}
+        </dd>
         <p className="mt-0.5 text-xs text-muted-foreground">{detail}</p>
       </div>
     </div>
@@ -255,9 +301,15 @@ function CustomerTable({
           <article key={customer.membership_code} className="p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="font-mono text-xs font-semibold">{customer.membership_code}</p>
-                <p className="mt-1 text-sm font-medium">{customer.display_name}</p>
-                <p className="text-xs text-muted-foreground">{customer.contact_masked}</p>
+                <p className="font-mono text-xs font-semibold">
+                  {customer.membership_code}
+                </p>
+                <p className="mt-1 text-sm font-medium">
+                  {customer.display_name}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {customer.contact_masked}
+                </p>
               </div>
               <span className="rounded-full bg-emerald-500/10 px-2.5 py-1 text-xs font-semibold text-emerald-700 dark:text-emerald-300">
                 {customer.progress} ilerleme
@@ -265,7 +317,9 @@ function CustomerTable({
             </div>
             <div className="mt-4 flex items-center justify-between text-xs text-muted-foreground">
               <span>{customer.available_rewards} hazır ödül</span>
-              <time dateTime={customer.joined_at}>{formatDate(customer.joined_at)}</time>
+              <time dateTime={customer.joined_at}>
+                {formatDate(customer.joined_at)}
+              </time>
             </div>
           </article>
         ))}
@@ -284,14 +338,26 @@ function CustomerTable({
           <TableBody>
             {customers.map((customer) => (
               <TableRow key={customer.membership_code}>
-                <TableCell className="font-mono text-xs font-semibold">{customer.membership_code}</TableCell>
+                <TableCell className="font-mono text-xs font-semibold">
+                  {customer.membership_code}
+                </TableCell>
                 <TableCell>
                   <span className="font-medium">{customer.display_name}</span>
-                  <span className="block text-xs text-muted-foreground">{customer.contact_masked}</span>
+                  <span className="block text-xs text-muted-foreground">
+                    {customer.contact_masked}
+                  </span>
                 </TableCell>
-                <TableCell className="font-medium tabular-nums">{customer.progress}</TableCell>
-                <TableCell className="tabular-nums">{customer.available_rewards}</TableCell>
-                <TableCell><time dateTime={customer.joined_at}>{formatDate(customer.joined_at)}</time></TableCell>
+                <TableCell className="font-medium tabular-nums">
+                  {customer.progress}
+                </TableCell>
+                <TableCell className="tabular-nums">
+                  {customer.available_rewards}
+                </TableCell>
+                <TableCell>
+                  <time dateTime={customer.joined_at}>
+                    {formatDate(customer.joined_at)}
+                  </time>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -334,14 +400,28 @@ function RewardTable({
           <article key={reward.redemption_code} className="p-4">
             <div className="flex items-start justify-between gap-3">
               <div>
-                <p className="font-mono text-xs font-semibold">{reward.redemption_code}</p>
-                <p className="mt-1 font-mono text-[0.7rem] text-muted-foreground">Üye {reward.membership_code}</p>
+                <p className="font-mono text-xs font-semibold">
+                  {reward.redemption_code}
+                </p>
+                <p className="mt-1 font-mono text-[0.7rem] text-muted-foreground">
+                  Üye {reward.membership_code}
+                </p>
               </div>
               <RewardStatus status={reward.status} />
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-muted-foreground">
-              <p><span className="block font-medium text-foreground">Kazanım</span>{formatDate(reward.issued_at)}</p>
-              <p><span className="block font-medium text-foreground">Kullanım</span>{reward.redeemed_at ? formatDate(reward.redeemed_at) : "—"}</p>
+              <p>
+                <span className="block font-medium text-foreground">
+                  Kazanım
+                </span>
+                {formatDate(reward.issued_at)}
+              </p>
+              <p>
+                <span className="block font-medium text-foreground">
+                  Kullanım
+                </span>
+                {reward.redeemed_at ? formatDate(reward.redeemed_at) : "—"}
+              </p>
             </div>
           </article>
         ))}
@@ -360,11 +440,29 @@ function RewardTable({
           <TableBody>
             {rewards.map((reward) => (
               <TableRow key={reward.redemption_code}>
-                <TableCell className="font-mono text-xs font-semibold">{reward.redemption_code}</TableCell>
-                <TableCell className="font-mono text-xs">{reward.membership_code}</TableCell>
-                <TableCell><RewardStatus status={reward.status} /></TableCell>
-                <TableCell><time dateTime={reward.issued_at}>{formatDate(reward.issued_at)}</time></TableCell>
-                <TableCell>{reward.redeemed_at ? <time dateTime={reward.redeemed_at}>{formatDate(reward.redeemed_at)}</time> : "—"}</TableCell>
+                <TableCell className="font-mono text-xs font-semibold">
+                  {reward.redemption_code}
+                </TableCell>
+                <TableCell className="font-mono text-xs">
+                  {reward.membership_code}
+                </TableCell>
+                <TableCell>
+                  <RewardStatus status={reward.status} />
+                </TableCell>
+                <TableCell>
+                  <time dateTime={reward.issued_at}>
+                    {formatDate(reward.issued_at)}
+                  </time>
+                </TableCell>
+                <TableCell>
+                  {reward.redeemed_at ? (
+                    <time dateTime={reward.redeemed_at}>
+                      {formatDate(reward.redeemed_at)}
+                    </time>
+                  ) : (
+                    "—"
+                  )}
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -388,7 +486,9 @@ function LedgerShell({
   return (
     <section className="overflow-hidden rounded-3xl border bg-card">
       <header className="border-b bg-[#fbf8f2] p-4 dark:bg-muted/30 sm:p-5">
-        <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-brand">{eyebrow}</p>
+        <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-brand">
+          {eyebrow}
+        </p>
         <h2 className="mt-1 text-lg font-semibold">{title}</h2>
         <p className="mt-1 text-sm text-muted-foreground">{description}</p>
       </header>
@@ -399,8 +499,20 @@ function LedgerShell({
 
 function RewardStatus({ status }: { status: LoyaltyAdminReward["status"] }) {
   return (
-    <StatusBadge tone={status === "AVAILABLE" ? "success" : status === "REDEEMED" ? "info" : "neutral"}>
-      {status === "AVAILABLE" ? "Kullanılabilir" : status === "REDEEMED" ? "Kullanıldı" : "Geri alındı"}
+    <StatusBadge
+      tone={
+        status === "AVAILABLE"
+          ? "success"
+          : status === "REDEEMED"
+            ? "info"
+            : "neutral"
+      }
+    >
+      {status === "AVAILABLE"
+        ? "Kullanılabilir"
+        : status === "REDEEMED"
+          ? "Kullanıldı"
+          : "Geri alındı"}
     </StatusBadge>
   )
 }

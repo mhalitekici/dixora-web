@@ -14,6 +14,7 @@ from app.api import (
     kitchen,
     loyalty,
     media,
+    notifications,
     orders,
     organization,
     printing,
@@ -46,6 +47,7 @@ api_router.include_router(orders.router)
 api_router.include_router(qr.router)
 api_router.include_router(kitchen.router)
 api_router.include_router(loyalty.router)
+api_router.include_router(notifications.router)
 api_router.include_router(reports.router)
 api_router.include_router(printing.router)
 api_router.include_router(audit.router)

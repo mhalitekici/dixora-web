@@ -1,12 +1,13 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen } from "@testing-library/react";
-import type { ReactNode } from "react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
+import { render, screen, waitFor } from "@testing-library/react"
+import userEvent from "@testing-library/user-event"
+import type { ReactNode } from "react"
+import { afterEach, describe, expect, it, vi } from "vitest"
 
-import { BillRequestDrawer } from "@/components/qr/bill-request-drawer";
+import { BillRequestDrawer } from "@/components/qr/bill-request-drawer"
 
 describe("BillRequestDrawer", () => {
-  afterEach(() => vi.unstubAllGlobals());
+  afterEach(() => vi.unstubAllGlobals())
 
   it("keeps the bill preview readable and marks complimentary lines", async () => {
     vi.stubGlobal(
@@ -19,13 +20,13 @@ describe("BillRequestDrawer", () => {
           }),
         ),
       ),
-    );
+    )
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
-    });
+    })
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
-    );
+    )
 
     render(
       <BillRequestDrawer
@@ -65,15 +66,73 @@ describe("BillRequestDrawer", () => {
         }}
       />,
       { wrapper },
-    );
+    )
 
-    expect(await screen.findByText("Kahve")).toBeVisible();
-    expect(screen.getByText("İKRAM")).toBeVisible();
-    expect(screen.getByText("Ara toplam")).toBeVisible();
-    expect(screen.getByText("Servis")).toBeVisible();
-    expect(screen.getByText("Toplam")).toBeVisible();
+    expect(await screen.findByText("Kahve")).toBeVisible()
+    expect(screen.getByText("İKRAM")).toBeVisible()
+    expect(screen.getByText("Ara toplam")).toBeVisible()
+    expect(screen.getByText("Servis")).toBeVisible()
+    expect(screen.getByText("Toplam")).toBeVisible()
     expect(
       screen.getByRole("button", { name: "Hesap talebini garsona gönder" }),
-    ).toBeEnabled();
-  });
-});
+    ).toBeEnabled()
+  })
+
+  it("captures optional campaign consent separately from membership consent", async () => {
+    const user = userEvent.setup({ delay: null })
+    const posted: unknown[] = []
+    vi.stubGlobal(
+      "fetch",
+      vi.fn((_input: RequestInfo | URL, init?: RequestInit) => {
+        const body =
+          init?.method === "POST"
+            ? { verification_id: "v-1", development_code: null }
+            : { enabled: true }
+        if (init?.method === "POST") posted.push(JSON.parse(String(init.body)))
+        return Promise.resolve(
+          new Response(JSON.stringify(body), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          }),
+        )
+      }),
+    )
+    const client = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    })
+    render(
+      <QueryClientProvider client={client}>
+        <BillRequestDrawer
+          open
+          onOpenChange={vi.fn()}
+          businessSlug="dodo"
+          branchSlug="merkez"
+          total="₺100,00"
+          submitting={false}
+          onSubmit={vi.fn(async () => undefined)}
+          order={null}
+        />
+      </QueryClientProvider>,
+    )
+    await user.click(await screen.findByRole("button", { name: /Yeni üye/ }))
+    await user.type(screen.getByLabelText("Ad"), "Ayşe")
+    await user.type(screen.getByLabelText("Soyad"), "Yılmaz")
+    await user.type(screen.getByLabelText("E-posta"), "ayse@example.com")
+    const campaignConsent = screen.getByRole("checkbox", {
+      name: /Kampanya duyurularını/,
+    })
+    expect(campaignConsent).not.toBeChecked()
+    await user.click(
+      screen.getByRole("checkbox", { name: /Sadakat programı kapsamında/ }),
+    )
+    const send = screen.getByRole("button", { name: "Kodu gönder" })
+    expect(send).toBeEnabled()
+    await user.click(campaignConsent)
+    await user.click(send)
+    await waitFor(() => expect(posted).toHaveLength(1))
+    expect(posted[0]).toMatchObject({
+      consent_accepted: true,
+      marketing_email_consent: true,
+    })
+  })
+})

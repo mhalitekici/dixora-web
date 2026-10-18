@@ -1,6 +1,6 @@
-"use client";
+"use client"
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query"
 import {
   ChevronLeft,
   ChevronRight,
@@ -11,31 +11,31 @@ import {
   Search,
   ShieldCheck,
   UserRound,
-} from "lucide-react";
-import { useMemo, useState } from "react";
+} from "lucide-react"
+import { useMemo, useState } from "react"
 
-import { EmptyState } from "@/components/shared/empty-state";
-import { PageHeader } from "@/components/shared/page-header";
-import { StatCard } from "@/components/shared/stat-card";
-import { StatusBadge } from "@/components/shared/status-badge";
-import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { EmptyState } from "@/components/shared/empty-state"
+import { PageHeader } from "@/components/shared/page-header"
+import { StatCard } from "@/components/shared/stat-card"
+import { StatusBadge } from "@/components/shared/status-badge"
+import { Button } from "@/components/ui/button"
+import { Card, CardContent } from "@/components/ui/card"
 import {
   Dialog,
   DialogContent,
   DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -43,9 +43,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/ui/table"
 
-import { adminApi, adminKeys } from "./admin-api";
+import { adminApi, adminKeys } from "./admin-api"
 import {
   AdapterNotice,
   dateTime,
@@ -53,53 +53,62 @@ import {
   LoadingState,
   number,
   shortId,
-} from "./admin-utils";
-import { auditActionLabel, auditResourceLabel } from "./audit-labels";
-import type { AuditLog } from "./types";
+} from "./admin-utils"
+import { auditActionLabel, auditResourceLabel } from "./audit-labels"
+import type { AuditLog } from "./types"
 
-const PAGE_SIZE = 25;
+const PAGE_SIZE = 25
 
 export function AuditLogViewer() {
-  const [serverAction, setServerAction] = useState("ALL");
-  const [search, setSearch] = useState("");
-  const [role, setRole] = useState("ALL");
-  const [resourceType, setResourceType] = useState("ALL");
-  const [dateFrom, setDateFrom] = useState("");
-  const [dateTo, setDateTo] = useState("");
-  const [page, setPage] = useState(0);
-  const [selected, setSelected] = useState<AuditLog | null>(null);
+  const [serverAction, setServerAction] = useState("ALL")
+  const [search, setSearch] = useState("")
+  const [role, setRole] = useState("ALL")
+  const [resourceType, setResourceType] = useState("ALL")
+  const [dateFrom, setDateFrom] = useState("")
+  const [dateTo, setDateTo] = useState("")
+  const [page, setPage] = useState(0)
+  const [selected, setSelected] = useState<AuditLog | null>(null)
 
   const query = useQuery({
     queryKey: adminKeys.audit(serverAction, 250),
     queryFn: ({ signal }) =>
-      adminApi.auditLogs(serverAction === "ALL" ? "" : serverAction, 250, signal),
-  });
+      adminApi.auditLogs(
+        serverAction === "ALL" ? "" : serverAction,
+        250,
+        signal,
+      ),
+  })
 
-  const logs = useMemo(() => query.data ?? [], [query.data]);
+  const logs = useMemo(() => query.data ?? [], [query.data])
   const actions = useMemo(
     () => Array.from(new Set(logs.map((log) => log.action))).sort(),
     [logs],
-  );
+  )
   const roles = useMemo(
     () =>
-      Array.from(new Set(logs.map((log) => log.actor_role).filter(Boolean) as string[])).sort(),
+      Array.from(
+        new Set(logs.map((log) => log.actor_role).filter(Boolean) as string[]),
+      ).sort(),
     [logs],
-  );
+  )
   const resourceTypes = useMemo(
     () => Array.from(new Set(logs.map((log) => log.resource_type))).sort(),
     [logs],
-  );
+  )
   const filtered = useMemo(() => {
-    const normalized = search.trim().toLocaleLowerCase("tr-TR");
-    const fromTime = dateFrom ? new Date(`${dateFrom}T00:00:00`).getTime() : null;
-    const toTime = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null;
+    const normalized = search.trim().toLocaleLowerCase("tr-TR")
+    const fromTime = dateFrom
+      ? new Date(`${dateFrom}T00:00:00`).getTime()
+      : null
+    const toTime = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null
     return logs.filter((log) => {
-      if (role !== "ALL" && log.actor_role !== role) return false;
-      if (resourceType !== "ALL" && log.resource_type !== resourceType) return false;
-      const timestamp = new Date(log.timestamp).getTime();
-      if (fromTime !== null && timestamp < fromTime) return false;
-      if (toTime !== null && timestamp > toTime) return false;
-      if (!normalized) return true;
+      if (role !== "ALL" && log.actor_role !== role) return false
+      if (resourceType !== "ALL" && log.resource_type !== resourceType)
+        return false
+      const timestamp = new Date(log.timestamp).getTime()
+      if (fromTime !== null && timestamp < fromTime) return false
+      if (toTime !== null && timestamp > toTime) return false
+      if (!normalized) return true
       return [
         log.action,
         log.resource_type,
@@ -107,23 +116,33 @@ export function AuditLogViewer() {
         log.actor_role ?? "",
         log.actor_user_id ?? "",
         log.reason ?? "",
-      ].some((value) => value.toLocaleLowerCase("tr-TR").includes(normalized));
-    });
-  }, [dateFrom, dateTo, logs, resourceType, role, search]);
+      ].some((value) => value.toLocaleLowerCase("tr-TR").includes(normalized))
+    })
+  }, [dateFrom, dateTo, logs, resourceType, role, search])
 
-  if (query.isLoading) return <LoadingState label="Denetim kayıtları yükleniyor…" />;
+  if (query.isLoading)
+    return <LoadingState label="Denetim kayıtları yükleniyor…" />
   if (query.error) {
-    return <ErrorState error={query.error} onRetry={() => void query.refetch()} />;
+    return (
+      <ErrorState error={query.error} onRetry={() => void query.refetch()} />
+    )
   }
 
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
-  const safePage = Math.min(page, pageCount - 1);
-  const pageItems = filtered.slice(safePage * PAGE_SIZE, (safePage + 1) * PAGE_SIZE);
-  const today = new Date().toDateString();
-  const todayCount = logs.filter((log) => new Date(log.timestamp).toDateString() === today).length;
-  const actorCount = new Set(logs.map((log) => log.actor_user_id).filter(Boolean)).size;
+  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage = Math.min(page, pageCount - 1)
+  const pageItems = filtered.slice(
+    safePage * PAGE_SIZE,
+    (safePage + 1) * PAGE_SIZE,
+  )
+  const today = new Date().toDateString()
+  const todayCount = logs.filter(
+    (log) => new Date(log.timestamp).toDateString() === today,
+  ).length
+  const actorCount = new Set(
+    logs.map((log) => log.actor_user_id).filter(Boolean),
+  ).size
 
-  const resetPage = () => setPage(0);
+  const resetPage = () => setPage(0)
 
   return (
     <>
@@ -165,11 +184,10 @@ export function AuditLogViewer() {
         />
       </div>
 
-      <AdapterNotice className="mb-4" title="Sayfalama adapter sınırı">
-        Backend denetim endpoint’i <code>offset</code> ve <code>total</code> döndürmüyor. En yeni 250
-        gerçek kayıt alınır; rol, kaynak, tarih, arama ve sayfalama istemci tarafında uygulanır.
-        Tam sunucu sayfalaması için API sözleşmesine <code>offset</code>/<code>total</code> eklenmelidir
-        (TODO).
+      <AdapterNotice className="mb-4" title="Gösterilen kayıtlar">
+        Bu görünüm en yeni 250 işlemi içerir. Rol, kaynak, tarih ve arama
+        filtreleri bu kayıtlar üzerinde çalışır. Belirli bir işlem türünü
+        seçerek ilgili kayıtları yeniden yükleyebilirsiniz.
       </AdapterNotice>
 
       <div className="mb-4 space-y-3 rounded-2xl border bg-card p-3">
@@ -181,8 +199,8 @@ export function AuditLogViewer() {
             name="audit-log-search"
             value={search}
             onChange={(event) => {
-              setSearch(event.target.value);
-              resetPage();
+              setSearch(event.target.value)
+              resetPage()
             }}
             placeholder="Aksiyon, kaynak, aktör veya gerekçe ara…"
             className="h-10 rounded-xl pl-9"
@@ -192,8 +210,8 @@ export function AuditLogViewer() {
           <Select
             value={serverAction}
             onValueChange={(value) => {
-              setServerAction(value ?? "ALL");
-              resetPage();
+              setServerAction(value ?? "ALL")
+              resetPage()
             }}
           >
             <SelectTrigger className="h-10 w-full rounded-xl">
@@ -212,8 +230,8 @@ export function AuditLogViewer() {
           <Select
             value={role}
             onValueChange={(value) => {
-              setRole(value ?? "ALL");
-              resetPage();
+              setRole(value ?? "ALL")
+              resetPage()
             }}
           >
             <SelectTrigger className="h-10 w-full rounded-xl">
@@ -231,8 +249,8 @@ export function AuditLogViewer() {
           <Select
             value={resourceType}
             onValueChange={(value) => {
-              setResourceType(value ?? "ALL");
-              resetPage();
+              setResourceType(value ?? "ALL")
+              resetPage()
             }}
           >
             <SelectTrigger className="h-10 w-full rounded-xl">
@@ -256,8 +274,8 @@ export function AuditLogViewer() {
               type="date"
               value={dateFrom}
               onChange={(event) => {
-                setDateFrom(event.target.value);
-                resetPage();
+                setDateFrom(event.target.value)
+                resetPage()
               }}
               className="h-10"
             />
@@ -271,8 +289,8 @@ export function AuditLogViewer() {
               type="date"
               value={dateTo}
               onChange={(event) => {
-                setDateTo(event.target.value);
-                resetPage();
+                setDateTo(event.target.value)
+                resetPage()
               }}
               className="h-10"
             />
@@ -303,7 +321,9 @@ export function AuditLogViewer() {
                       {dateTime(log.timestamp)}
                     </TableCell>
                     <TableCell>
-                      <p className="font-medium">{log.actor_role ?? "SYSTEM"}</p>
+                      <p className="font-medium">
+                        {log.actor_role ?? "SYSTEM"}
+                      </p>
                       <p className="text-xs text-muted-foreground">
                         {shortId(log.actor_user_id)}
                       </p>
@@ -385,10 +405,16 @@ export function AuditLogViewer() {
 
       <AuditDetail log={selected} onClose={() => setSelected(null)} />
     </>
-  );
+  )
 }
 
-function AuditDetail({ log, onClose }: { log: AuditLog | null; onClose: () => void }) {
+function AuditDetail({
+  log,
+  onClose,
+}: {
+  log: AuditLog | null
+  onClose: () => void
+}) {
   return (
     <Dialog open={Boolean(log)} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-3xl">
@@ -397,7 +423,9 @@ function AuditDetail({ log, onClose }: { log: AuditLog | null; onClose: () => vo
             {log ? auditActionLabel(log.action) : "Denetim kaydı"}
           </DialogTitle>
           <DialogDescription>
-            {log ? `${dateTime(log.timestamp)} · ${log.actor_role ?? "SYSTEM"}` : ""}
+            {log
+              ? `${dateTime(log.timestamp)} · ${log.actor_role ?? "SYSTEM"}`
+              : ""}
           </DialogDescription>
         </DialogHeader>
         {log ? (
@@ -408,8 +436,14 @@ function AuditDetail({ log, onClose }: { log: AuditLog | null; onClose: () => vo
                 value={auditResourceLabel(log.resource_type) ?? "—"}
               />
               <AuditMetric label="Teknik kod" value={log.action} />
-              <AuditMetric label="Kaynak kimliği" value={log.resource_id ?? "—"} />
-              <AuditMetric label="Aktör kimliği" value={log.actor_user_id ?? "SYSTEM"} />
+              <AuditMetric
+                label="Kaynak kimliği"
+                value={log.resource_id ?? "—"}
+              />
+              <AuditMetric
+                label="Aktör kimliği"
+                value={log.actor_user_id ?? "SYSTEM"}
+              />
             </div>
             {log.reason ? (
               <div className="rounded-xl border bg-muted/25 p-3">
@@ -425,7 +459,7 @@ function AuditDetail({ log, onClose }: { log: AuditLog | null; onClose: () => vo
         ) : null}
       </DialogContent>
     </Dialog>
-  );
+  )
 }
 
 function AuditMetric({ label, value }: { label: string; value: string }) {
@@ -434,7 +468,7 @@ function AuditMetric({ label, value }: { label: string; value: string }) {
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className="mt-1 truncate font-mono text-xs">{value}</p>
     </div>
-  );
+  )
 }
 
 function JsonPanel({ title, value }: { title: string; value: unknown }) {
@@ -447,23 +481,26 @@ function JsonPanel({ title, value }: { title: string; value: unknown }) {
           : JSON.stringify(redactSecrets(value), null, 2)}
       </pre>
     </div>
-  );
+  )
 }
 
 function redactSecrets(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(redactSecrets);
-  if (typeof value !== "object" || value === null) return value;
+  if (Array.isArray(value)) return value.map(redactSecrets)
+  if (typeof value !== "object" || value === null) return value
   return Object.fromEntries(
     Object.entries(value as Record<string, unknown>).map(([key, item]) => [
       key,
-      /password|pin|token|secret/i.test(key) ? "[REDACTED]" : redactSecrets(item),
+      /password|pin|token|secret/i.test(key)
+        ? "[REDACTED]"
+        : redactSecrets(item),
     ]),
-  );
+  )
 }
 
 function actionTone(action: string) {
-  if (/delete|archive|cancel|reject|void|deactiv/i.test(action)) return "danger" as const;
-  if (/create|approve|accept|paid/i.test(action)) return "success" as const;
-  if (/update|change|transfer|reset/i.test(action)) return "warning" as const;
-  return "info" as const;
+  if (/delete|archive|cancel|reject|void|deactiv/i.test(action))
+    return "danger" as const
+  if (/create|approve|accept|paid/i.test(action)) return "success" as const
+  if (/update|change|transfer|reset/i.test(action)) return "warning" as const
+  return "info" as const
 }

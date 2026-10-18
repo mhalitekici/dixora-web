@@ -1,25 +1,25 @@
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { render, screen } from "@testing-library/react"
+import { describe, expect, it } from "vitest"
 
-import { INFO_EMAIL, SUPPORT_EMAIL, SupportCenter } from "./support-center";
+import { INFO_EMAIL, SUPPORT_EMAIL, SupportCenter } from "./support-center"
 
 describe("SupportCenter", () => {
   it("exposes both Dixora support addresses as clickable mailto links", () => {
-    render(<SupportCenter />);
+    render(<SupportCenter />)
     const links = screen
       .getAllByRole("link")
-      .map((link) => link.getAttribute("href"));
-    expect(links).toContain(`mailto:${SUPPORT_EMAIL}`);
-    expect(links).toContain(`mailto:${INFO_EMAIL}`);
-  });
+      .map((link) => link.getAttribute("href"))
+    expect(links).toContain(`mailto:${SUPPORT_EMAIL}`)
+    expect(links).toContain(`mailto:${INFO_EMAIL}`)
+  })
 
   it("uses the dixoratech.com addresses", () => {
-    expect(SUPPORT_EMAIL).toBe("support@dixoratech.com");
-    expect(INFO_EMAIL).toBe("info@dixoratech.com");
-  });
+    expect(SUPPORT_EMAIL).toBe("support@dixoratech.com")
+    expect(INFO_EMAIL).toBe("info@dixoratech.com")
+  })
 
   it("covers the documented FAQ topics", () => {
-    render(<SupportCenter />);
+    render(<SupportCenter />)
     for (const topic of [
       /Şifremi unuttum/i,
       /QR menü açılmıyor/i,
@@ -30,19 +30,35 @@ describe("SupportCenter", () => {
       /Şube nasıl değiştiririm/i,
       /Teknik destek/i,
     ]) {
-      expect(screen.getByRole("button", { name: topic })).toBeVisible();
+      expect(screen.getByRole("button", { name: topic })).toBeVisible()
     }
-  });
+  })
 
   it("expands an answer when its question is opened", async () => {
-    const { default: userEvent } = await import("@testing-library/user-event");
-    const user = userEvent.setup();
-    render(<SupportCenter />);
+    const { default: userEvent } = await import("@testing-library/user-event")
+    const user = userEvent.setup()
+    render(<SupportCenter />)
 
-    const question = screen.getByRole("button", { name: /Yazıcı çalışmıyor/i });
-    expect(question).toHaveAttribute("aria-expanded", "false");
-    await user.click(question);
-    expect(question).toHaveAttribute("aria-expanded", "true");
-    expect(screen.getByText(/Print Bridge/)).toBeVisible();
-  });
-});
+    const question = screen.getByRole("button", { name: /Yazıcı çalışmıyor/i })
+    expect(question).toHaveAttribute("aria-expanded", "false")
+    await user.click(question)
+    expect(question).toHaveAttribute("aria-expanded", "true")
+    expect(screen.getByText(/Print Bridge/)).toBeVisible()
+  })
+
+  it("finds the emailed reward-code instructions through search", async () => {
+    const { default: userEvent } = await import("@testing-library/user-event")
+    const user = userEvent.setup({ delay: null })
+    render(<SupportCenter />)
+    await user.type(
+      screen.getByRole("searchbox", { name: "Yardım konularında ara" }),
+      "6 haneli",
+    )
+    expect(
+      screen.getByRole("button", { name: /Sadakat ve kampanya/ }),
+    ).toBeVisible()
+    expect(
+      screen.queryByRole("button", { name: /Şifremi unuttum/ }),
+    ).not.toBeInTheDocument()
+  })
+})

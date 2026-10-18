@@ -1,6 +1,6 @@
-"use client";
+"use client"
 
-import { useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query"
 import {
   Check,
   Building2,
@@ -14,20 +14,22 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   RefreshCw,
-  Search,
   Settings,
-} from "lucide-react";
-import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import { useMemo, useState, type ReactNode } from "react";
-import { toast } from "sonner";
+} from "lucide-react"
+import Link from "next/link"
+import { usePathname, useRouter } from "next/navigation"
+import { useMemo, useState, type ReactNode } from "react"
+import { toast } from "sonner"
 
-import { adminApi, adminKeys } from "@/components/admin/admin-api";
-import { BrandLogo } from "@/components/brand/brand-logo";
-import { type NavGroup } from "@/components/layout/nav-config";
-import { ThemeToggle } from "@/components/layout/theme-toggle";
-import { Avatar, AvatarFallback } from "@/components/ui/avatar";
-import { Button } from "@/components/ui/button";
+import { adminApi, adminKeys } from "@/components/admin/admin-api"
+import { BrandLogo } from "@/components/brand/brand-logo"
+import { type NavGroup } from "@/components/layout/nav-config"
+import { ThemeToggle } from "@/components/layout/theme-toggle"
+import { NavigationSearch } from "@/components/layout/navigation-search"
+import { SkipLink } from "@/components/shared/skip-link"
+import { canNavigate } from "@/lib/navigation-access"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+import { Button } from "@/components/ui/button"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,62 +38,37 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
+} from "@/components/ui/dropdown-menu"
 import {
   Sheet,
   SheetContent,
   SheetDescription,
   SheetHeader,
   SheetTitle,
-} from "@/components/ui/sheet";
+} from "@/components/ui/sheet"
 import {
   useAccessibleBranches,
   useCurrentUser,
   useLogout,
   useSwitchBranch,
-} from "@/hooks/use-auth";
-import { hasPermission } from "@/lib/permissions";
-import { cn } from "@/lib/utils";
+} from "@/hooks/use-auth"
+import { hasPermission } from "@/lib/permissions"
+import { cn } from "@/lib/utils"
 
 type AppShellProps = {
-  children: ReactNode;
-  navigation: NavGroup[];
-  workspaceName?: string;
-  branchName?: string;
-  userName?: string;
-  userRole?: string;
-  platformMode?: boolean;
-};
-
-function isActive(pathname: string, href: string, exact?: boolean) {
-  return exact ? pathname === href : pathname === href || pathname.startsWith(`${href}/`);
+  children: ReactNode
+  navigation: NavGroup[]
+  workspaceName?: string
+  branchName?: string
+  userName?: string
+  userRole?: string
+  platformMode?: boolean
 }
 
-function permissionForNavigation(href: string): string | null {
-  const mappings: Array<[string, string]> = [
-    ["/super-admin/system", "platform.system.read"],
-    ["/super-admin/audit-logs", "platform.system.read"],
-    ["/super-admin", "platform.businesses.manage"],
-    ["/admin/branch-settings", "settings.manage"],
-    ["/admin/settings", "settings.manage"],
-    ["/admin/audit-logs", "audit.read"],
-    ["/admin/approvals", "orders.manage"],
-    ["/admin/employees", "users.manage"],
-    ["/admin/roles", "roles.manage"],
-    ["/admin/reports", "reports.read"],
-    ["/admin/inventory", "inventory.read"],
-    ["/admin/qr-menu", "qr.read"],
-    ["/admin/loyalty", "loyalty.read"],
-    ["/admin/printers", "printing.read"],
-    ["/admin/products", "catalog.read"],
-    ["/admin/categories", "catalog.read"],
-    ["/admin/modifiers", "catalog.read"],
-    ["/admin/tables", "tables.read"],
-    ["/admin/orders", "orders.read"],
-    ["/admin/live", "dashboard.read"],
-    ["/admin", "dashboard.read"],
-  ];
-  return mappings.find(([prefix]) => href === prefix || href.startsWith(`${prefix}/`))?.[1] ?? null;
+function isActive(pathname: string, href: string, exact?: boolean) {
+  return exact
+    ? pathname === href
+    : pathname === href || pathname.startsWith(`${href}/`)
 }
 
 function SidebarNavigation({
@@ -100,13 +77,16 @@ function SidebarNavigation({
   compact,
   onNavigate,
 }: {
-  navigation: NavGroup[];
-  pathname: string;
-  compact: boolean;
-  onNavigate?: () => void;
+  navigation: NavGroup[]
+  pathname: string
+  compact: boolean
+  onNavigate?: () => void
 }) {
   return (
-    <nav className="scrollbar-subtle flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-3 py-4">
+    <nav
+      aria-label="Yönetim menüsü"
+      className="scrollbar-subtle flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto px-3 py-4"
+    >
       {navigation.map((group) => (
         <div key={group.label} className="space-y-1">
           {!compact ? (
@@ -115,11 +95,12 @@ function SidebarNavigation({
             </p>
           ) : null}
           {group.items.map((item) => {
-            const active = isActive(pathname, item.href, item.exact);
+            const active = isActive(pathname, item.href, item.exact)
             return (
               <Link
                 key={item.href}
                 href={item.href}
+                aria-current={active ? "page" : undefined}
                 onClick={onNavigate}
                 title={compact ? item.label : undefined}
                 className={cn(
@@ -137,7 +118,9 @@ function SidebarNavigation({
                 />
                 {!compact ? (
                   <>
-                    <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                    <span className="min-w-0 flex-1 truncate">
+                      {item.label}
+                    </span>
                     {item.badge ? (
                       <span className="rounded-full bg-sidebar-primary/15 px-1.5 py-0.5 text-[0.62rem] font-semibold uppercase text-sidebar-primary">
                         {item.badge}
@@ -146,12 +129,12 @@ function SidebarNavigation({
                   </>
                 ) : null}
               </Link>
-            );
+            )
           })}
         </div>
       ))}
     </nav>
-  );
+  )
 }
 
 export function AppShell({
@@ -163,15 +146,15 @@ export function AppShell({
   userRole = "Kullanıcı",
   platformMode = false,
 }: AppShellProps) {
-  const pathname = usePathname();
-  const router = useRouter();
-  const [mobileOpen, setMobileOpen] = useState(false);
-  const [compact, setCompact] = useState(false);
-  const currentUser = useCurrentUser();
-  const session = currentUser.data;
+  const pathname = usePathname()
+  const router = useRouter()
+  const [mobileOpen, setMobileOpen] = useState(false)
+  const [compact, setCompact] = useState(false)
+  const currentUser = useCurrentUser()
+  const session = currentUser.data
   const accessibleBranches = useAccessibleBranches({
     enabled: !platformMode && currentUser.isSuccess && Boolean(session?.tenant),
-  });
+  })
   const approvalsPendingCount = useQuery({
     queryKey: adminKeys.approvalPendingCount(),
     queryFn: ({ signal }) => adminApi.approvalPendingCount(signal),
@@ -182,10 +165,10 @@ export function AppShell({
       hasPermission(session, "orders.manage"),
     refetchInterval: 15_000,
     staleTime: 5_000,
-  });
-  const resolvedWorkspaceName = session?.tenant?.name ?? workspaceName;
-  const resolvedBranchName = session?.branch?.name ?? branchName;
-  const resolvedUserName = session?.user.displayName ?? userName;
+  })
+  const resolvedWorkspaceName = session?.tenant?.name ?? workspaceName
+  const resolvedBranchName = session?.branch?.name ?? branchName
+  const resolvedUserName = session?.user.displayName ?? userName
   const roleLabels: Record<string, string> = {
     SUPER_ADMIN: "Platform Yöneticisi",
     BUSINESS_OWNER: "İşletme Sahibi",
@@ -196,11 +179,11 @@ export function AppShell({
     WAITER: "Garson",
     KITCHEN: "Mutfak",
     BAR: "Bar",
-  };
+  }
   const resolvedUserRole = session
-    ? roleLabels[session.user.roleCode] ?? session.user.roleCode
-    : userRole;
-  const pendingApprovals = approvalsPendingCount.data?.pending ?? 0;
+    ? (roleLabels[session.user.roleCode] ?? session.user.roleCode)
+    : userRole
+  const pendingApprovals = approvalsPendingCount.data?.pending ?? 0
   const visibleNavigation = useMemo(
     () =>
       session
@@ -208,12 +191,11 @@ export function AppShell({
             .map((group) => ({
               ...group,
               items: group.items.filter((item) => {
-                const requirement = permissionForNavigation(item.href);
-                return requirement === null || hasPermission(session, requirement);
+                return canNavigate(session, item.href)
               }),
             }))
             .filter((group) => group.items.length > 0)
-        : navigation,
+        : [],
     [navigation, session],
   ).map((group) => ({
     ...group,
@@ -222,23 +204,23 @@ export function AppShell({
         ? { ...item, badge: String(pendingApprovals) }
         : item,
     ),
-  }));
+  }))
   const logout = useLogout({
     onSettled: () => {
       // A full navigation drops the authenticated Router Cache as well as the
       // in-memory query state. This prevents a stale protected layout from
       // being shown after the HttpOnly cookies have been expired.
-      window.location.replace(platformMode ? "/super-admin/login" : "/login");
+      window.location.replace(platformMode ? "/super-admin/login" : "/login")
     },
-  });
+  })
   const switchBranch = useSwitchBranch({
     onSuccess: () => {
-      router.refresh();
+      router.refresh()
     },
     onError: (error) => {
-      toast.error("Şube değiştirilemedi", { description: error.message });
+      toast.error("Şube değiştirilemedi", { description: error.message })
     },
-  });
+  })
   const initials = useMemo(
     () =>
       resolvedUserName
@@ -248,10 +230,11 @@ export function AppShell({
         .join("")
         .toUpperCase(),
     [resolvedUserName],
-  );
+  )
 
   return (
     <div className="min-h-dvh bg-background">
+      <SkipLink />
       <aside
         className={cn(
           "fixed inset-y-0 left-0 z-40 hidden flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground transition-[width] duration-200 lg:flex",
@@ -319,7 +302,9 @@ export function AppShell({
                 <Building2 className="size-4" />
               </span>
               <span className="hidden min-w-0 sm:block">
-                <span className="block truncate text-sm font-semibold">{resolvedWorkspaceName}</span>
+                <span className="block truncate text-sm font-semibold">
+                  {resolvedWorkspaceName}
+                </span>
                 <span className="block truncate text-xs font-normal text-muted-foreground">
                   {platformMode ? "Platform yönetimi" : resolvedBranchName}
                 </span>
@@ -330,7 +315,8 @@ export function AppShell({
               <DropdownMenuGroup>
                 <DropdownMenuLabel>Çalışma alanı</DropdownMenuLabel>
                 <DropdownMenuItem disabled>
-                  {resolvedWorkspaceName} · {platformMode ? "Platform" : resolvedBranchName}
+                  {resolvedWorkspaceName} ·{" "}
+                  {platformMode ? "Platform" : resolvedBranchName}
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 {!platformMode && accessibleBranches.isLoading ? (
@@ -356,11 +342,12 @@ export function AppShell({
                 {!platformMode && accessibleBranches.isSuccess
                   ? accessibleBranches.data.branches.map((branch) => {
                       const currentBranchId =
-                        accessibleBranches.data.currentBranchId ?? session?.branch?.id;
-                      const isCurrent = branch.id === currentBranchId;
+                        accessibleBranches.data.currentBranchId ??
+                        session?.branch?.id
+                      const isCurrent = branch.id === currentBranchId
                       const isSwitching =
                         switchBranch.isPending &&
-                        switchBranch.variables?.branchId === branch.id;
+                        switchBranch.variables?.branchId === branch.id
                       return (
                         <DropdownMenuItem
                           key={branch.id}
@@ -380,18 +367,24 @@ export function AppShell({
                           ) : (
                             <Building2 />
                           )}
-                          <span className="min-w-0 flex-1 truncate">{branch.name}</span>
+                          <span className="min-w-0 flex-1 truncate">
+                            {branch.name}
+                          </span>
                           {isCurrent ? (
-                            <span className="text-xs text-muted-foreground">Aktif</span>
+                            <span className="text-xs text-muted-foreground">
+                              Aktif
+                            </span>
                           ) : null}
                         </DropdownMenuItem>
-                      );
+                      )
                     })
                   : null}
                 {!platformMode &&
                 accessibleBranches.isSuccess &&
                 accessibleBranches.data.branches.length === 0 ? (
-                  <DropdownMenuItem disabled>Kullanılabilir şube yok</DropdownMenuItem>
+                  <DropdownMenuItem disabled>
+                    Kullanılabilir şube yok
+                  </DropdownMenuItem>
                 ) : null}
                 {!platformMode && switchBranch.isError ? (
                   <DropdownMenuItem disabled className="text-destructive">
@@ -401,15 +394,21 @@ export function AppShell({
                 ) : null}
               </DropdownMenuGroup>
               {!platformMode ? <DropdownMenuSeparator /> : null}
-              <DropdownMenuItem
-                render={
-                  <Link
-                    href={platformMode ? "/super-admin/businesses" : "/admin/branch-settings"}
-                  />
-                }
-              >
-                {platformMode ? "İşletme yönetimi" : "Şube yönetimi"}
-              </DropdownMenuItem>
+              {platformMode || hasPermission(session, "settings.manage") ? (
+                <DropdownMenuItem
+                  render={
+                    <Link
+                      href={
+                        platformMode
+                          ? "/super-admin/businesses"
+                          : "/admin/branch-settings"
+                      }
+                    />
+                  }
+                >
+                  {platformMode ? "İşletme yönetimi" : "Şube yönetimi"}
+                </DropdownMenuItem>
+              ) : null}
               {!platformMode ? (
                 <DropdownMenuItem render={<Link href="/support" />}>
                   <LifeBuoy />
@@ -420,22 +419,15 @@ export function AppShell({
           </DropdownMenu>
 
           <div className="ml-auto flex items-center gap-1">
-            {platformMode ? (
-              <Button
-                render={<Link href="/super-admin/businesses" />}
-                variant="ghost"
-                size="icon"
-                className="hidden size-10 rounded-xl md:inline-flex"
-                aria-label="İşletmelerde ara"
-              >
-                <Search />
-              </Button>
-            ) : null}
+            <NavigationSearch navigation={visibleNavigation} />
             <ThemeToggle />
             <DropdownMenu>
               <DropdownMenuTrigger
                 render={
-                  <Button variant="ghost" className="h-11 gap-2 rounded-xl px-1.5 sm:px-2" />
+                  <Button
+                    variant="ghost"
+                    className="h-11 gap-2 rounded-xl px-1.5 sm:px-2"
+                  />
                 }
               >
                 <Avatar className="size-8">
@@ -444,7 +436,9 @@ export function AppShell({
                   </AvatarFallback>
                 </Avatar>
                 <span className="hidden max-w-36 text-left lg:block">
-                  <span className="block truncate text-xs font-semibold">{resolvedUserName}</span>
+                  <span className="block truncate text-xs font-semibold">
+                    {resolvedUserName}
+                  </span>
                   <span className="block truncate text-[0.68rem] font-normal text-muted-foreground">
                     {resolvedUserRole}
                   </span>
@@ -455,18 +449,13 @@ export function AppShell({
                 <DropdownMenuGroup>
                   <DropdownMenuLabel>{resolvedUserName}</DropdownMenuLabel>
                   <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    render={<Link href={platformMode ? "/super-admin" : "/admin/settings"} />}
-                  >
+                  <DropdownMenuItem render={<Link href="/profile" />}>
                     <Settings />
-                    Profil ve tercihler
+                    Hesabım ve parola
                   </DropdownMenuItem>
-                  <DropdownMenuItem
-                    disabled
-                    title="Yardım merkezi yakında kullanıma açılacak"
-                  >
+                  <DropdownMenuItem render={<Link href="/support" />}>
                     <CircleHelp />
-                    Yardım merkezi · yakında
+                    Yardım ve destek
                   </DropdownMenuItem>
                   <DropdownMenuSeparator />
                   <DropdownMenuItem
@@ -474,7 +463,11 @@ export function AppShell({
                     disabled={logout.isPending}
                     onClick={() => logout.mutate()}
                   >
-                    {logout.isPending ? <Loader2 className="animate-spin" /> : <LogOut />}
+                    {logout.isPending ? (
+                      <Loader2 className="animate-spin" />
+                    ) : (
+                      <LogOut />
+                    )}
                     {logout.isPending ? "Çıkış yapılıyor" : "Güvenli çıkış"}
                   </DropdownMenuItem>
                 </DropdownMenuGroup>
@@ -482,7 +475,11 @@ export function AppShell({
             </DropdownMenu>
           </div>
         </header>
-        <main className="mx-auto w-full max-w-[1680px] px-4 py-5 sm:px-6 sm:py-7 lg:px-8">
+        <main
+          id="dixora-main"
+          tabIndex={-1}
+          className="mx-auto min-w-0 w-full max-w-[1680px] scroll-mt-20 px-4 py-5 sm:px-6 sm:py-7 lg:px-8"
+        >
           {children}
         </main>
       </div>
@@ -494,7 +491,9 @@ export function AppShell({
         >
           <SheetHeader className="h-[72px] justify-center border-b border-sidebar-border px-5 text-left">
             <SheetTitle className="sr-only">Ana menü</SheetTitle>
-            <SheetDescription className="sr-only">Dixora uygulama menüsü</SheetDescription>
+            <SheetDescription className="sr-only">
+              Dixora uygulama menüsü
+            </SheetDescription>
             <BrandLogo theme="dark" className="h-10 text-white" priority />
           </SheetHeader>
           <SidebarNavigation
@@ -506,5 +505,5 @@ export function AppShell({
         </SheetContent>
       </Sheet>
     </div>
-  );
+  )
 }

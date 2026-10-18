@@ -1,7 +1,7 @@
-"use client";
+"use client"
 
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useQuery } from "@tanstack/react-query";
+import { zodResolver } from "@hookform/resolvers/zod"
+import { useQuery } from "@tanstack/react-query"
 import {
   BarChart3,
   CalendarDays,
@@ -10,9 +10,9 @@ import {
   ReceiptText,
   TrendingUp,
   WalletCards,
-} from "lucide-react";
-import { useMemo, useState } from "react";
-import { useForm } from "react-hook-form";
+} from "lucide-react"
+import { useMemo, useState } from "react"
+import { useForm } from "react-hook-form"
 import {
   Bar,
   BarChart,
@@ -22,17 +22,17 @@ import {
   Tooltip,
   XAxis,
   YAxis,
-} from "recharts";
-import { z } from "zod";
+} from "recharts"
+import { z } from "zod"
 
-import { EmptyState } from "@/components/shared/empty-state";
-import { PageHeader } from "@/components/shared/page-header";
-import { SectionCard } from "@/components/shared/section-card";
-import { StatCard } from "@/components/shared/stat-card";
-import { StatusBadge } from "@/components/shared/status-badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { EmptyState } from "@/components/shared/empty-state"
+import { PageHeader } from "@/components/shared/page-header"
+import { SectionCard } from "@/components/shared/section-card"
+import { StatCard } from "@/components/shared/stat-card"
+import { StatusBadge } from "@/components/shared/status-badge"
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Table,
   TableBody,
@@ -40,9 +40,9 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
+} from "@/components/ui/table"
 
-import { adminApi, adminKeys } from "./admin-api";
+import { adminApi, adminKeys } from "./admin-api"
 import {
   AdapterNotice,
   dateTime,
@@ -51,7 +51,7 @@ import {
   LoadingState,
   money,
   number,
-} from "./admin-utils";
+} from "./admin-utils"
 
 const rangeSchema = z
   .object({
@@ -67,8 +67,8 @@ const rangeSchema = z
       new Date(value.to).getTime() - new Date(value.from).getTime() <=
       366 * 24 * 60 * 60 * 1000,
     { message: "Tarih aralığı en fazla 366 gün olabilir.", path: ["to"] },
-  );
-type RangeValues = z.infer<typeof rangeSchema>;
+  )
+type RangeValues = z.infer<typeof rangeSchema>
 
 const paymentLabels: Record<string, string> = {
   CASH: "Nakit",
@@ -77,85 +77,95 @@ const paymentLabels: Record<string, string> = {
   ONLINE: "Online",
   MEAL_CARD: "Yemek kartı",
   OTHER: "Diğer",
-};
-const chartColors = ["#f15a24", "#2563eb", "#059669", "#7c3aed", "#d97706", "#64748b"];
+}
+const chartColors = [
+  "#f15a24",
+  "#2563eb",
+  "#059669",
+  "#7c3aed",
+  "#d97706",
+  "#64748b",
+]
 
 export function ReportDashboard() {
-  const today = useMemo(() => startOfToday(), []);
+  const today = useMemo(() => startOfToday(), [])
   const defaultRange = useMemo(
     () => ({
       from: dateInput(addDays(today, -29)),
       to: dateInput(today),
     }),
     [today],
-  );
-  const [range, setRange] = useState<RangeValues>(defaultRange);
+  )
+  const [range, setRange] = useState<RangeValues>(defaultRange)
   const form = useForm<RangeValues>({
     resolver: zodResolver(rangeSchema),
     defaultValues: defaultRange,
-  });
+  })
 
-  const queryRange = toApiRange(range);
-  const previousRange = previousPeriod(range);
-  const previousApiRange = toApiRange(previousRange);
+  const queryRange = toApiRange(range)
+  const previousRange = previousPeriod(range)
+  const previousApiRange = toApiRange(previousRange)
   const currentQuery = useQuery({
     queryKey: adminKeys.report(queryRange.from, queryRange.to),
     queryFn: ({ signal }) =>
       adminApi.salesSummary(queryRange.from, queryRange.to, signal),
-  });
+  })
   const previousQuery = useQuery({
     queryKey: adminKeys.report(previousApiRange.from, previousApiRange.to),
     queryFn: ({ signal }) =>
       adminApi.salesSummary(previousApiRange.from, previousApiRange.to, signal),
-  });
+  })
   const shiftHistoryQuery = useQuery({
     queryKey: adminKeys.shiftHistory(100),
     queryFn: ({ signal }) => adminApi.shiftHistory(100, signal),
-  });
+  })
 
   const applyPreset = (days: number) => {
     const next = {
       from: dateInput(addDays(today, -(days - 1))),
       to: dateInput(today),
-    };
-    form.reset(next);
-    setRange(next);
-  };
+    }
+    form.reset(next)
+    setRange(next)
+  }
 
   if (currentQuery.isLoading || previousQuery.isLoading) {
-    return <LoadingState label="Satış raporu hesaplanıyor…" />;
+    return <LoadingState label="Satış raporu hesaplanıyor…" />
   }
-  const firstError = currentQuery.error ?? previousQuery.error;
+  const firstError = currentQuery.error ?? previousQuery.error
   if (firstError) {
     return (
       <ErrorState
         error={firstError}
         onRetry={() => {
-          void currentQuery.refetch();
-          void previousQuery.refetch();
+          void currentQuery.refetch()
+          void previousQuery.refetch()
         }}
       />
-    );
+    )
   }
 
-  const summary = currentQuery.data;
-  const previous = previousQuery.data;
+  const summary = currentQuery.data
+  const previous = previousQuery.data
   const paymentData = Object.entries(summary?.by_payment_method ?? {})
     .map(([method, value]) => ({
       method: paymentLabels[method] ?? prettify(method),
       value: Number(value),
     }))
-    .sort((a, b) => b.value - a.value);
-  const grossTrend = percentChange(Number(summary?.gross_sales), Number(previous?.gross_sales));
+    .sort((a, b) => b.value - a.value)
+  const grossTrend = percentChange(
+    Number(summary?.gross_sales),
+    Number(previous?.gross_sales),
+  )
   const ordersTrend = percentChange(
     Number(summary?.paid_orders),
     Number(previous?.paid_orders),
-  );
+  )
   const averageTrend = percentChange(
     Number(summary?.average_order_value),
     Number(previous?.average_order_value),
-  );
-  const paymentTotal = paymentData.reduce((sum, item) => sum + item.value, 0);
+  )
+  const paymentTotal = paymentData.reduce((sum, item) => sum + item.value, 0)
 
   return (
     <>
@@ -174,22 +184,44 @@ export function ReportDashboard() {
           <div className="grid flex-1 gap-3 sm:grid-cols-2">
             <div>
               <Label htmlFor="report-from">Başlangıç</Label>
-              <Input id="report-from" type="date" className="mt-1.5" {...form.register("from")} />
+              <Input
+                id="report-from"
+                type="date"
+                className="mt-1.5"
+                {...form.register("from")}
+              />
             </div>
             <div>
               <Label htmlFor="report-to">Bitiş</Label>
-              <Input id="report-to" type="date" className="mt-1.5" {...form.register("to")} />
+              <Input
+                id="report-to"
+                type="date"
+                className="mt-1.5"
+                {...form.register("to")}
+              />
               <FieldError>{form.formState.errors.to?.message}</FieldError>
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
-            <Button type="button" variant="outline" onClick={() => applyPreset(7)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => applyPreset(7)}
+            >
               Son 7 gün
             </Button>
-            <Button type="button" variant="outline" onClick={() => applyPreset(30)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => applyPreset(30)}
+            >
               Son 30 gün
             </Button>
-            <Button type="button" variant="outline" onClick={() => applyPreset(90)}>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => applyPreset(90)}
+            >
               Son 90 gün
             </Button>
             <Button type="submit">
@@ -240,11 +272,26 @@ export function ReportDashboard() {
           description="Gerçek tamamlanmış ödeme tutarları"
         >
           {paymentData.length ? (
-            <div className="h-80 w-full" aria-label="Ödeme yöntemi satış grafiği">
+            <div
+              className="h-80 w-full"
+              aria-label="Ödeme yöntemi satış grafiği"
+            >
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={paymentData} margin={{ top: 10, right: 8, left: 8, bottom: 8 }}>
-                  <CartesianGrid strokeDasharray="3 3" vertical={false} opacity={0.2} />
-                  <XAxis dataKey="method" tick={{ fontSize: 11 }} axisLine={false} tickLine={false} />
+                <BarChart
+                  data={paymentData}
+                  margin={{ top: 10, right: 8, left: 8, bottom: 8 }}
+                >
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    vertical={false}
+                    opacity={0.2}
+                  />
+                  <XAxis
+                    dataKey="method"
+                    tick={{ fontSize: 11 }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
                   <YAxis
                     tick={{ fontSize: 11 }}
                     axisLine={false}
@@ -257,7 +304,10 @@ export function ReportDashboard() {
                   />
                   <Bar dataKey="value" name="Satış" radius={[8, 8, 2, 2]}>
                     {paymentData.map((entry, index) => (
-                      <Cell key={entry.method} fill={chartColors[index % chartColors.length]} />
+                      <Cell
+                        key={entry.method}
+                        fill={chartColors[index % chartColors.length]}
+                      />
                     ))}
                   </Bar>
                 </BarChart>
@@ -280,25 +330,32 @@ export function ReportDashboard() {
           {paymentData.length ? (
             <div className="space-y-4">
               {paymentData.map((item, index) => {
-                const share = paymentTotal > 0 ? (item.value / paymentTotal) * 100 : 0;
+                const share =
+                  paymentTotal > 0 ? (item.value / paymentTotal) * 100 : 0
                 return (
                   <div key={item.method}>
                     <div className="mb-1.5 flex items-center justify-between gap-3 text-sm">
                       <span className="flex items-center gap-2">
                         <span
                           className="size-2 rounded-full"
-                          style={{ backgroundColor: chartColors[index % chartColors.length] }}
+                          style={{
+                            backgroundColor:
+                              chartColors[index % chartColors.length],
+                          }}
                         />
                         {item.method}
                       </span>
-                      <span className="font-semibold tabular-nums">{money(item.value)}</span>
+                      <span className="font-semibold tabular-nums">
+                        {money(item.value)}
+                      </span>
                     </div>
                     <div className="h-1.5 overflow-hidden rounded-full bg-muted">
                       <div
                         className="h-full rounded-full"
                         style={{
                           width: `${Math.max(2, share)}%`,
-                          backgroundColor: chartColors[index % chartColors.length],
+                          backgroundColor:
+                            chartColors[index % chartColors.length],
                         }}
                       />
                     </div>
@@ -306,11 +363,13 @@ export function ReportDashboard() {
                       %{number(share, 1)}
                     </p>
                   </div>
-                );
+                )
               })}
             </div>
           ) : (
-            <p className="text-sm text-muted-foreground">Dağılım hesaplanamadı.</p>
+            <p className="text-sm text-muted-foreground">
+              Dağılım hesaplanamadı.
+            </p>
           )}
         </SectionCard>
       </div>
@@ -323,7 +382,10 @@ export function ReportDashboard() {
         {shiftHistoryQuery.isLoading ? (
           <LoadingState label="Vardiyalar yükleniyor…" />
         ) : shiftHistoryQuery.isError ? (
-          <ErrorState error={shiftHistoryQuery.error} onRetry={() => void shiftHistoryQuery.refetch()} />
+          <ErrorState
+            error={shiftHistoryQuery.error}
+            onRetry={() => void shiftHistoryQuery.refetch()}
+          />
         ) : (shiftHistoryQuery.data ?? []).length === 0 ? (
           <EmptyState
             compact
@@ -348,14 +410,20 @@ export function ReportDashboard() {
               </TableHeader>
               <TableBody>
                 {(shiftHistoryQuery.data ?? []).map((shift) => {
-                  const expected = Number(shift.opening_cash) + Number(shift.cash_sales);
-                  const variance = shift.cash_variance !== null ? Number(shift.cash_variance) : null;
+                  const expected =
+                    Number(shift.opening_cash) + Number(shift.cash_sales)
+                  const variance =
+                    shift.cash_variance !== null
+                      ? Number(shift.cash_variance)
+                      : null
                   return (
                     <TableRow key={shift.id}>
                       <TableCell className="font-medium">
                         {shift.cashier_name || shift.user_display_name || "—"}
                         {shift.predecessor_shift_id ? (
-                          <span className="ml-1.5 text-xs text-muted-foreground">(devir)</span>
+                          <span className="ml-1.5 text-xs text-muted-foreground">
+                            (devir)
+                          </span>
                         ) : null}
                       </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
@@ -367,9 +435,13 @@ export function ReportDashboard() {
                       <TableCell className="text-right tabular-nums">
                         {money(shift.opening_cash)}
                       </TableCell>
-                      <TableCell className="text-right tabular-nums">{money(expected)}</TableCell>
                       <TableCell className="text-right tabular-nums">
-                        {shift.closing_cash !== null ? money(shift.closing_cash) : "—"}
+                        {money(expected)}
+                      </TableCell>
+                      <TableCell className="text-right tabular-nums">
+                        {shift.closing_cash !== null
+                          ? money(shift.closing_cash)
+                          : "—"}
                       </TableCell>
                       <TableCell
                         className={
@@ -383,12 +455,15 @@ export function ReportDashboard() {
                         {variance === null ? "—" : money(variance)}
                       </TableCell>
                       <TableCell>
-                        <StatusBadge tone={shift.status === "OPEN" ? "info" : "neutral"} dot={false}>
+                        <StatusBadge
+                          tone={shift.status === "OPEN" ? "info" : "neutral"}
+                          dot={false}
+                        >
                           {shift.status === "OPEN" ? "Açık" : "Kapalı"}
                         </StatusBadge>
                       </TableCell>
                     </TableRow>
-                  );
+                  )
                 })}
               </TableBody>
             </Table>
@@ -397,51 +472,53 @@ export function ReportDashboard() {
       </SectionCard>
 
       <AdapterNotice className="mt-5" title="Rapor kapsamı">
-        Backend şu anda yalnız satış özeti ve ödeme yöntemi kırılımı döndürüyor. Grafikler bu gerçek
-        toplamlardan üretilir; sahte zaman serisi kullanılmaz. Saatlik/günlük trend için
-        <code> /reports/sales-timeseries</code> adapter endpoint’i eklenmelidir (TODO).
+        Rapor, seçtiğiniz tarih aralığındaki satış ve ödeme yöntemi toplamlarını
+        gösterir. Önceki dönem karşılaştırması aynı uzunluktaki tarih aralığını
+        kullanır. Saatlik satış dağılımı bu görünümde yer almaz.
       </AdapterNotice>
     </>
-  );
+  )
 }
 
 function startOfToday() {
-  const date = new Date();
-  date.setHours(0, 0, 0, 0);
-  return date;
+  const date = new Date()
+  date.setHours(0, 0, 0, 0)
+  return date
 }
 
 function addDays(value: Date, amount: number) {
-  const date = new Date(value);
-  date.setDate(date.getDate() + amount);
-  return date;
+  const date = new Date(value)
+  date.setDate(date.getDate() + amount)
+  return date
 }
 
 function dateInput(value: Date) {
-  const year = value.getFullYear();
-  const month = `${value.getMonth() + 1}`.padStart(2, "0");
-  const day = `${value.getDate()}`.padStart(2, "0");
-  return `${year}-${month}-${day}`;
+  const year = value.getFullYear()
+  const month = `${value.getMonth() + 1}`.padStart(2, "0")
+  const day = `${value.getDate()}`.padStart(2, "0")
+  return `${year}-${month}-${day}`
 }
 
 function toApiRange(range: RangeValues) {
-  const from = new Date(`${range.from}T00:00:00`);
-  const to = new Date(`${range.to}T23:59:59.999`);
-  return { from: from.toISOString(), to: to.toISOString() };
+  const from = new Date(`${range.from}T00:00:00`)
+  const to = new Date(`${range.to}T23:59:59.999`)
+  return { from: from.toISOString(), to: to.toISOString() }
 }
 
 function previousPeriod(range: RangeValues): RangeValues {
-  const from = new Date(`${range.from}T00:00:00`);
-  const to = new Date(`${range.to}T00:00:00`);
-  const durationDays = Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1;
-  const previousTo = addDays(from, -1);
-  const previousFrom = addDays(previousTo, -(durationDays - 1));
-  return { from: dateInput(previousFrom), to: dateInput(previousTo) };
+  const from = new Date(`${range.from}T00:00:00`)
+  const to = new Date(`${range.to}T00:00:00`)
+  const durationDays =
+    Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1
+  const previousTo = addDays(from, -1)
+  const previousFrom = addDays(previousTo, -(durationDays - 1))
+  return { from: dateInput(previousFrom), to: dateInput(previousTo) }
 }
 
 function percentChange(current: number, previous: number) {
-  if (!Number.isFinite(current) || !Number.isFinite(previous) || previous === 0) return undefined;
-  return Number((((current - previous) / previous) * 100).toFixed(1));
+  if (!Number.isFinite(current) || !Number.isFinite(previous) || previous === 0)
+    return undefined
+  return Number((((current - previous) / previous) * 100).toFixed(1))
 }
 
 function compactMoney(value: number) {
@@ -450,7 +527,7 @@ function compactMoney(value: number) {
     currency: "TRY",
     notation: "compact",
     maximumFractionDigits: 1,
-  }).format(value);
+  }).format(value)
 }
 
 function prettify(value: string) {
@@ -458,5 +535,5 @@ function prettify(value: string) {
     .toLocaleLowerCase("tr-TR")
     .split("_")
     .map((part) => part.charAt(0).toLocaleUpperCase("tr-TR") + part.slice(1))
-    .join(" ");
+    .join(" ")
 }

@@ -6,9 +6,21 @@ from uuid import UUID
 
 from sqlalchemy import func, select
 
-from app.models import LoyaltyLedgerEntry, LoyaltyRedemption
+from app.models import LoyaltyLedgerEntry, LoyaltyRedemption, LoyaltyReward
 from app.models.enums import LoyaltyLedgerEntryType
+from app.services.email_notifications import reward_verification_code
 from tests.conftest import ApiContext, auth_headers, login, seeded_resources
+
+
+async def _reward_verification(api: ApiContext, redemption_code: str) -> str:
+    async with api.database.session_factory() as db:
+        reward = await db.scalar(
+            select(LoyaltyReward).where(LoyaltyReward.redemption_code == redemption_code)
+        )
+        assert reward is not None
+        return reward_verification_code(
+            api.settings, tenant_id=reward.tenant_id, reward_id=reward.id
+        )
 
 
 async def _configure_visit_program(
@@ -350,6 +362,7 @@ async def test_paid_order_accrues_once_and_reward_redemption_is_idempotent(
         "order_id": reward_order["id"],
         "order_item_id": reward_order["items"][0]["id"],
         "idempotency_key": "loyalty-redemption-0001",
+        "verification_code": await _reward_verification(api, reward_code),
     }
     redeemed = await api.client.post(
         f"/api/v1/loyalty/rewards/{reward_code}/redeem",
@@ -372,6 +385,7 @@ async def test_paid_order_accrues_once_and_reward_redemption_is_idempotent(
             "order_id": order["id"],
             "order_item_id": order["items"][0]["id"],
             "idempotency_key": redemption_payload["idempotency_key"],
+            "verification_code": redemption_payload["verification_code"],
         },
     )
     assert mismatched_replay.status_code == 409
@@ -580,6 +594,7 @@ async def test_product_progress_excludes_quantity_paid_with_a_loyalty_reward(
             "order_id": mixed_order["id"],
             "order_item_id": mixed_order["items"][0]["id"],
             "idempotency_key": "loyalty-product-redemption-0001",
+            "verification_code": await _reward_verification(api, reward_code),
         },
     )
     assert redeemed.status_code == 201, redeemed.text

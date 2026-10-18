@@ -38,12 +38,7 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from "@/components/ui/tabs"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
 import { formatMoney } from "@/lib/formatters"
 import { cn } from "@/lib/utils"
 
@@ -89,14 +84,18 @@ export function SubscriptionsOverview() {
 
   const filteredTenants = useMemo(() => {
     const normalizedSearch = search.trim().toLocaleLowerCase("tr-TR")
-    return (query.data?.businesses ?? []).filter(({ business, plan, status }) => {
-      const text = `${business.name} ${business.slug} ${business.business_type} ${plan.name} ${plan.code}`
-        .toLocaleLowerCase("tr-TR")
-      const matchesSearch =
-        normalizedSearch.length === 0 || text.includes(normalizedSearch)
-      const matchesState = stateFilter === "all" || status === stateFilter
-      return matchesSearch && matchesState
-    })
+    return (query.data?.businesses ?? []).filter(
+      ({ business, plan, status }) => {
+        const text =
+          `${business.name} ${business.slug} ${business.business_type} ${plan.name} ${plan.code}`.toLocaleLowerCase(
+            "tr-TR",
+          )
+        const matchesSearch =
+          normalizedSearch.length === 0 || text.includes(normalizedSearch)
+        const matchesState = stateFilter === "all" || status === stateFilter
+        return matchesSearch && matchesState
+      },
+    )
   }, [query.data?.businesses, search, stateFilter])
 
   if (query.isPending) {
@@ -167,13 +166,13 @@ export function SubscriptionsOverview() {
 
       <AdapterNotice
         title="Canlı abonelik verisi"
-        badge="subscription-api"
+        badge="Güncel"
         tone="live"
         className="mb-5"
       >
-        Plan kataloğu <code>/subscriptions/plans</code>, tenant-plan eşleşmeleri
-        ise <code>/subscriptions/portfolio</code> endpointinden gelir. Plan,
-        başlangıç ve bitiş tarihleri tahmin edilmeden gösterilir.
+        İşletmelerin planlarını, başlangıç ve bitiş tarihlerini birlikte
+        inceleyin. Abonelik süresi yaklaşan işletmeleri filtreleyerek ayrıntı
+        ekranından devam edebilirsiniz.
       </AdapterNotice>
 
       {issues.map((issue) => (
@@ -223,14 +222,20 @@ export function SubscriptionsOverview() {
           <TabsTrigger value="tenants">
             <Building2 />
             Tenantlar
-            <Badge variant="secondary" className="ml-1 h-4 px-1.5 text-[0.62rem]">
+            <Badge
+              variant="secondary"
+              className="ml-1 h-4 px-1.5 text-[0.62rem]"
+            >
               {businesses.length}
             </Badge>
           </TabsTrigger>
           <TabsTrigger value="plans">
             <Layers3 />
             Plan kataloğu
-            <Badge variant="secondary" className="ml-1 h-4 px-1.5 text-[0.62rem]">
+            <Badge
+              variant="secondary"
+              className="ml-1 h-4 px-1.5 text-[0.62rem]"
+            >
               {plans.length}
             </Badge>
           </TabsTrigger>
@@ -287,9 +292,7 @@ export function SubscriptionsOverview() {
                       <TableHead>Abonelik durumu</TableHead>
                       <TableHead>Atanmış plan</TableHead>
                       <TableHead>Veri kaynağı</TableHead>
-                      <TableHead className="pr-4 text-right">
-                        Ayrıntı
-                      </TableHead>
+                      <TableHead className="pr-4 text-right">Ayrıntı</TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -359,7 +362,7 @@ export function SubscriptionsOverview() {
             <Card>
               <EmptyDataState
                 title="Aktif plan kaydı bulunamadı"
-                description="Plan kataloğu endpointi boş yanıt verdi. Yeni plan oluşturma işlemi mevcut API sözleşmesinde destekleniyor ancak bu görünüm salt-okunurdur."
+                description="Henüz abonelik planı tanımlanmadı. Plan yapılandırması tamamlandığında kayıtlar burada görünür."
               />
             </Card>
           )}
@@ -369,11 +372,7 @@ export function SubscriptionsOverview() {
   )
 }
 
-function TenantSubscriptionTableRow({
-  row,
-}: {
-  row: TenantSubscriptionRow
-}) {
+function TenantSubscriptionTableRow({ row }: { row: TenantSubscriptionRow }) {
   const state = tenantStatePresentation[row.status]
 
   return (
@@ -403,7 +402,10 @@ function TenantSubscriptionTableRow({
         </p>
       </TableCell>
       <TableCell>
-        <Badge variant="outline" className="bg-emerald-500/[0.06] text-emerald-700">
+        <Badge
+          variant="outline"
+          className="bg-emerald-500/[0.06] text-emerald-700"
+        >
           Canlı abonelik
         </Badge>
         <p className="mt-1 text-[0.65rem] text-muted-foreground">
@@ -423,14 +425,19 @@ function TenantSubscriptionTableRow({
   )
 }
 
-function formatSubscriptionPeriod(startsAt: string, endsAt: string | null): string {
+function formatSubscriptionPeriod(
+  startsAt: string,
+  endsAt: string | null,
+): string {
   const formatter = new Intl.DateTimeFormat("tr-TR", {
     day: "2-digit",
     month: "short",
     year: "numeric",
   })
   const start = formatter.format(new Date(startsAt))
-  return endsAt ? `${start} – ${formatter.format(new Date(endsAt))}` : `${start} – devam ediyor`
+  return endsAt
+    ? `${start} – ${formatter.format(new Date(endsAt))}`
+    : `${start} – devam ediyor`
 }
 
 function PlanCard({ plan }: { plan: SubscriptionPlan }) {
@@ -538,10 +545,7 @@ function PaginationFooter({
   )
 }
 
-function formatPriceRange(
-  prices: number[],
-  currency = "TRY",
-): string {
+function formatPriceRange(prices: number[], currency = "TRY"): string {
   if (prices.length === 0) return "Veri yok"
   const minimum = Math.min(...prices)
   const maximum = Math.max(...prices)

@@ -81,6 +81,39 @@ desteklediği için diğer ülke numaraları açık bir doğrulama hatası alır
 
 Yeni kazanılan ödüller mevcut ödeme modeli nedeniyle sonraki açık siparişte kullanılır. `reward_same_order` alanı gelecekteki ödeme öncesi ödül rezervasyonu akışına ayrılmıştır; fiziksel ödeme tamamlandıktan sonra kapanmış siparişe geriye dönük indirim uygulanmaz.
 
+## Kampanya ve ödül bildirimleri
+
+İşletme menüsündeki **Kampanyalar ve Sadakat** başlığı, kampanyaları, sadakat
+programını ve `/admin/notifications` bildirim ekranını birlikte sunar.
+
+- Aktif oluşturulan veya durdurulduktan sonra yeniden yayınlanan kampanya,
+  seçili şubelerdeki aktif ve kampanya e-postalarına izin vermiş üyelere duyurulur.
+  Taslaklar gönderilmez; aynı yayın üzerindeki düzenlemeler tekrar duyurulmaz.
+- Kampanyadaki **Üyelere e-posta ile duyur** seçeneği gönderimi kontrol eder.
+  Alıcı bulunmazsa kampanya ekranında bu durum açıkça gösterilir.
+- Ödenmiş sipariş sadakat eşiğine ulaştığında kazanılan her yeni ödül, müşterinin
+  doğrulanmış e-posta adresine bir kez bildirilir. Ödül e-postası işlemseldir;
+  kampanya izninden bağımsızdır. İkram hatırlatması ve kasada kullanılacak ödül
+  doğrulama kodunu içerir.
+
+Bildirimler iş işlemiyle aynı veritabanı transaction'ında `email_notifications`
+kuyruğuna yazılır. API başlangıcında çalışan arka plan süreci kuyruğu otomatik
+işler. PostgreSQL satır kilitleri, birden fazla API sürecinin aynı bildirimi
+aynı anda göndermesini önler. Resend istekleri ayrıca bildirim kimliğine bağlı
+`Idempotency-Key` taşır. SMTP için, sağlayıcı kabulünden hemen sonra süreç
+kesilirse aynı e-postanın tekrar gönderilmesi mümkündür.
+
+Başarısız gönderimler 2, 4, 8 ve 16 dakika sonra yeniden denenir; toplam beş
+denemeden sonra durur. Gönderim öncesinde müşteri, üyelik, kampanya izni ve ödül
+kullanılabilirliği tekrar kontrol edilir. Durdurulan veya süresi dolan
+kampanyalar, geri çekilmiş izinler ve kullanılmış/geri alınmış ödüller için
+sıradaki bildirim iptal edilir.
+
+Bildirim ekranı yalnızca `loyalty.manage` yetkisiyle, ilgili işletmenin kayıtlarını
+ve maskelenmiş alıcı adreslerini gösterir. `DIXORA_EMAIL_PROVIDER=resend` veya
+`smtp` gerçek gönderim yapar; `development` yalnızca kayıt tutar ve ekranda açıkça
+belirtilir. Testler gerçek sağlayıcıya e-posta göndermez.
+
 ## Otomatik testler
 
 Backend testleri programın varsayılan kapalı durumunu, cross-tenant katalog referansını, public veri minimizasyonunu, tekil paid-order accrual'ını, siparişe bağlı ödül uygunluğunu, idempotent redemption'ı ve append-only reversal'ı kapsar:

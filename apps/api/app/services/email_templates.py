@@ -196,7 +196,7 @@ def campaign_announcement_email(
     detail_html = _paragraph(escape(details)) if details else ""
     body = (
         _paragraph(f"Merhaba <strong>{name}</strong>,")
-        + _paragraph(f"<strong>{business}</strong>’de yeni bir kampanya başladı.")
+        + _paragraph(f"<strong>{business}</strong> sizi yeni bir kampanyaya davet ediyor.")
         + _paragraph(f'<strong style="color:{BRAND};">{offer_text}</strong>')
         + detail_html
         + _paragraph("Sizi tekrar aramızda görmekten mutluluk duyarız.")
@@ -224,6 +224,7 @@ def loyalty_reward_available_email(
         + _paragraph("Tebrikler!")
         + _paragraph(f"<strong>{business}</strong> sadakat programında ödül kazandınız.")
         + _paragraph(f"Ödülünüz:<br><strong>{reward}</strong>")
+        + _paragraph("İkramınızı almayı unutmayın. Sizi yeniden bekliyoruz!")
         + _paragraph(
             "Ödülünüzü kullanmak için işletmede bu doğrulama kodunu kasiyere gösterin:"
         )

@@ -1,7 +1,7 @@
-"use client";
+"use client"
 
-import { zodResolver } from "@hookform/resolvers/zod";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { zodResolver } from "@hookform/resolvers/zod"
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   CheckCircle2,
   Clock3,
@@ -18,17 +18,17 @@ import {
   Route,
   TriangleAlert,
   Unlink,
-} from "lucide-react";
-import { useState } from "react";
-import { useForm, useWatch } from "react-hook-form";
-import { toast } from "sonner";
-import { z } from "zod";
+} from "lucide-react"
+import { useEffect, useState } from "react"
+import { useForm, useWatch } from "react-hook-form"
+import { toast } from "sonner"
+import { z } from "zod"
 
-import { EmptyState } from "@/components/shared/empty-state";
-import { PageHeader } from "@/components/shared/page-header";
-import { SectionCard } from "@/components/shared/section-card";
-import { StatusBadge } from "@/components/shared/status-badge";
-import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/shared/empty-state"
+import { PageHeader } from "@/components/shared/page-header"
+import { SectionCard } from "@/components/shared/section-card"
+import { StatusBadge } from "@/components/shared/status-badge"
+import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
@@ -36,21 +36,26 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
-import { Switch } from "@/components/ui/switch";
-import { cn } from "@/lib/utils";
+} from "@/components/ui/select"
+import { Switch } from "@/components/ui/switch"
+import { cn } from "@/lib/utils"
+import { useAccessibleBranches } from "@/hooks/use-auth"
+import { PrinterSetupGuide } from "@/components/printing/printer-setup-guide"
+import { printBridgeApiUrl, suggestedPrinterCode } from "@/lib/printing-setup"
+import { useCurrentUser } from "@/hooks/use-auth"
+import { hasPermission } from "@/lib/permissions"
 
-import { adminApi, adminKeys } from "./admin-api";
-import { ErrorState, FieldError, LoadingState } from "./admin-utils";
+import { adminApi, adminKeys } from "./admin-api"
+import { ErrorState, FieldError, LoadingState } from "./admin-utils"
 import type {
   PrintBridge,
   PrintBridgeEnrollment,
@@ -58,7 +63,7 @@ import type {
   PrintJob,
   PrinterDevice,
   Station,
-} from "./types";
+} from "./types"
 
 const printerSchema = z.object({
   name: z
@@ -78,7 +83,7 @@ const printerSchema = z.object({
   purpose: z.enum(["PREPARATION", "CASHIER"]),
   preparation_station_id: z.string(),
   paper_width: z.literal("80"),
-});
+})
 
 const stationSchema = z.object({
   name: z
@@ -95,50 +100,57 @@ const stationSchema = z.object({
       /^[A-Za-z][A-Za-z0-9_-]+$/,
       "Harf, rakam, tire ve alt çizgi kullanın.",
     ),
-});
+})
 
-type PrinterValues = z.infer<typeof printerSchema>;
-type StationValues = z.infer<typeof stationSchema>;
+type PrinterValues = z.infer<typeof printerSchema>
+type StationValues = z.infer<typeof stationSchema>
 
-const UNMAPPED_VALUE = "__UNMAPPED__";
+const UNMAPPED_VALUE = "__UNMAPPED__"
 
 export function PrinterManagement() {
-  const queryClient = useQueryClient();
-  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null);
-  const [createOpen, setCreateOpen] = useState(false);
-  const [stationCreateOpen, setStationCreateOpen] = useState(false);
+  const currentUser = useCurrentUser()
+  const canCreateStation = hasPermission(currentUser.data, "catalog.manage")
+  const canManage = hasPermission(currentUser.data, "printing.manage")
+  const queryClient = useQueryClient()
+  const [selectedBranchId, setSelectedBranchId] = useState<string | null>(null)
+  const [createOpen, setCreateOpen] = useState(false)
+  const [stationCreateOpen, setStationCreateOpen] = useState(false)
+  const [retryCandidate, setRetryCandidate] = useState<PrintJob | null>(null)
+  const [revokeCandidate, setRevokeCandidate] = useState<PrintBridge | null>(
+    null,
+  )
   const [enrollment, setEnrollment] = useState<PrintBridgeEnrollment | null>(
     null,
-  );
-  const branchesQuery = useQuery({
-    queryKey: adminKeys.branches(),
-    queryFn: ({ signal }) => adminApi.branches(signal),
-  });
-  const branches = branchesQuery.data ?? [];
+  )
+  const branchesQuery = useAccessibleBranches()
+  const branches = branchesQuery.data?.branches ?? []
   const branchId =
-    selectedBranchId ?? branches.find((branch) => branch.is_active)?.id ?? "";
+    branches.find((branch) => branch.id === selectedBranchId)?.id ??
+    branchesQuery.data?.currentBranchId ??
+    branches.find((branch) => branch.isActive)?.id ??
+    ""
   const stationsQuery = useQuery({
     queryKey: adminKeys.stations(branchId || "none"),
     queryFn: ({ signal }) => adminApi.stations(signal, branchId),
     enabled: Boolean(branchId),
-  });
+  })
   const devicesQuery = useQuery({
     queryKey: adminKeys.printerDevices(branchId || "none"),
     queryFn: ({ signal }) => adminApi.printerDevices(branchId, signal),
     enabled: Boolean(branchId),
-  });
+  })
   const bridgesQuery = useQuery({
     queryKey: adminKeys.printBridges(branchId || "none"),
     queryFn: ({ signal }) => adminApi.printBridges(branchId, signal),
     enabled: Boolean(branchId),
     refetchInterval: 10_000,
-  });
+  })
   const jobsQuery = useQuery({
     queryKey: adminKeys.printJobs(branchId || "none"),
     queryFn: ({ signal }) => adminApi.printJobs(signal, branchId),
     enabled: Boolean(branchId),
     refetchInterval: 5_000,
-  });
+  })
 
   const invalidate = () =>
     Promise.all([
@@ -151,7 +163,7 @@ export function PrinterManagement() {
       queryClient.invalidateQueries({
         queryKey: adminKeys.printJobs(branchId),
       }),
-    ]);
+    ])
 
   const createMutation = useMutation({
     mutationFn: (values: PrinterValues) =>
@@ -169,15 +181,15 @@ export function PrinterManagement() {
         settings: { paper_width: Number(values.paper_width) },
       }),
     onSuccess: async () => {
-      setCreateOpen(false);
-      toast.success("Yazıcı cihazı kaydedildi.");
-      await invalidate();
+      setCreateOpen(false)
+      toast.success("Yazıcı cihazı kaydedildi.")
+      await invalidate()
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "Yazıcı kaydedilemedi.",
       ),
-  });
+  })
   const createStationMutation = useMutation({
     mutationFn: (values: StationValues) =>
       adminApi.createStation({
@@ -187,50 +199,50 @@ export function PrinterManagement() {
         sort_order: stationsQuery.data?.length ?? 0,
       }),
     onSuccess: async () => {
-      setStationCreateOpen(false);
-      toast.success("Hazırlık istasyonu eklendi.");
+      setStationCreateOpen(false)
+      toast.success("Hazırlık istasyonu eklendi.")
       await Promise.all([
         queryClient.invalidateQueries({
           queryKey: adminKeys.stations(branchId),
         }),
         queryClient.invalidateQueries({ queryKey: ["catalog", "stations"] }),
-      ]);
+      ])
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "İstasyon eklenemedi.",
       ),
-  });
+  })
   const updateMutation = useMutation({
     mutationFn: ({
       id,
       input,
     }: {
-      id: string;
-      input: Parameters<typeof adminApi.updatePrinterDevice>[1];
+      id: string
+      input: Parameters<typeof adminApi.updatePrinterDevice>[1]
     }) => adminApi.updatePrinterDevice(id, input),
     onSuccess: async () => {
-      toast.success("Yazıcı yönlendirmesi güncellendi.");
-      await invalidate();
+      toast.success("Yazıcı yönlendirmesi güncellendi.")
+      await invalidate()
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "Yazıcı güncellenemedi.",
       ),
-  });
+  })
   const testMutation = useMutation({
     mutationFn: adminApi.testPrinterDevice,
     onSuccess: async (job) => {
-      toast.info(`Test işi #${job.id.slice(0, 8)} kuyruğa alındı.`);
+      toast.info(`Test işi #${job.id.slice(0, 8)} kuyruğa alındı.`)
       await queryClient.invalidateQueries({
         queryKey: adminKeys.printJobs(branchId),
-      });
+      })
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "Test işi oluşturulamadı.",
       ),
-  });
+  })
   const enrollmentMutation = useMutation({
     mutationFn: () =>
       adminApi.createPrintBridgeEnrollment({ branch_id: branchId }),
@@ -241,50 +253,50 @@ export function PrinterManagement() {
           ? error.message
           : "Bağlantı kodu oluşturulamadı.",
       ),
-  });
+  })
   const mapMutation = useMutation({
     mutationFn: ({
       bridgeId,
       deviceId,
       localPrinterName,
     }: {
-      bridgeId: string;
-      deviceId: string;
-      localPrinterName: string;
+      bridgeId: string
+      deviceId: string
+      localPrinterName: string
     }) => adminApi.mapBridgePrinter(bridgeId, deviceId, localPrinterName),
     onSuccess: async () => {
-      toast.success("Yerel yazıcı eşleştirildi.");
-      await invalidate();
+      toast.success("Yerel yazıcı eşleştirildi.")
+      await invalidate()
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "Yazıcı eşleştirilemedi.",
       ),
-  });
+  })
   const unmapMutation = useMutation({
     mutationFn: ({
       bridgeId,
       deviceId,
     }: {
-      bridgeId: string;
-      deviceId: string;
+      bridgeId: string
+      deviceId: string
     }) => adminApi.unmapBridgePrinter(bridgeId, deviceId),
     onSuccess: async () => {
-      toast.success("Yerel yazıcı eşleştirmesi kaldırıldı.");
-      await invalidate();
+      toast.success("Yerel yazıcı eşleştirmesi kaldırıldı.")
+      await invalidate()
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "Eşleştirme kaldırılamadı.",
       ),
-  });
+  })
   const retryMutation = useMutation({
     mutationFn: adminApi.retryPrintJob,
     onSuccess: async () => {
-      toast.success("Baskı işi operatör onayıyla yeniden kuyruğa alındı.");
+      toast.success("Baskı işi operatör onayıyla yeniden kuyruğa alındı.")
       await queryClient.invalidateQueries({
         queryKey: adminKeys.printJobs(branchId),
-      });
+      })
     },
     onError: (error) =>
       toast.error(
@@ -292,57 +304,58 @@ export function PrinterManagement() {
           ? error.message
           : "Baskı işi yeniden denenemedi.",
       ),
-  });
+  })
   const revokeMutation = useMutation({
     mutationFn: adminApi.revokePrintBridge,
     onSuccess: async () => {
-      toast.success("Print Bridge bağlantısı kaldırıldı.");
-      await invalidate();
+      toast.success("Print Bridge bağlantısı kaldırıldı.")
+      await invalidate()
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "Bridge kaldırılamadı.",
       ),
-  });
+  })
 
   const error =
     branchesQuery.error ??
     stationsQuery.error ??
     devicesQuery.error ??
     bridgesQuery.error ??
-    jobsQuery.error;
+    jobsQuery.error
   if (branchesQuery.isLoading) {
-    return <LoadingState label="Yazıcı yönetimi yükleniyor..." />;
+    return <LoadingState label="Yazıcı yönetimi yükleniyor..." />
   }
   if (error) {
     return (
       <ErrorState
         error={error}
         onRetry={() => {
-          void branchesQuery.refetch();
-          void stationsQuery.refetch();
-          void devicesQuery.refetch();
-          void bridgesQuery.refetch();
-          void jobsQuery.refetch();
+          void branchesQuery.refetch()
+          void stationsQuery.refetch()
+          void devicesQuery.refetch()
+          void bridgesQuery.refetch()
+          void jobsQuery.refetch()
         }}
       />
-    );
+    )
   }
 
-  const stations = stationsQuery.data ?? [];
-  const devices = devicesQuery.data ?? [];
-  const bridges = bridgesQuery.data ?? [];
-  const jobs = jobsQuery.data ?? [];
-  const mappings = bridges.flatMap((bridge) => bridge.printer_mappings);
+  const stations = stationsQuery.data ?? []
+  const devices = devicesQuery.data ?? []
+  const bridges = bridgesQuery.data ?? []
+  const jobs = jobsQuery.data ?? []
+  const mappings = bridges.flatMap((bridge) => bridge.printer_mappings)
   const mappingByDevice = new Map(
     mappings.map((mapping) => [mapping.printer_device_id, mapping]),
-  );
+  )
   const busy =
+    !canManage ||
     updateMutation.isPending ||
     testMutation.isPending ||
     mapMutation.isPending ||
     unmapMutation.isPending ||
-    retryMutation.isPending;
+    retryMutation.isPending
 
   return (
     <>
@@ -355,13 +368,21 @@ export function PrinterManagement() {
           <>
             <Button
               variant="outline"
-              disabled={!branchId}
+              disabled={!branchId || !canCreateStation}
+              title={
+                !canCreateStation
+                  ? "Hazırlık istasyonlarını yöneticiniz düzenleyebilir."
+                  : undefined
+              }
               onClick={() => setStationCreateOpen(true)}
             >
               <Plus />
               İstasyon ekle
             </Button>
-            <Button disabled={!branchId} onClick={() => setCreateOpen(true)}>
+            <Button
+              disabled={!branchId || !canManage}
+              onClick={() => setCreateOpen(true)}
+            >
               <Plus />
               Yazıcı ekle
             </Button>
@@ -412,9 +433,22 @@ export function PrinterManagement() {
         <LoadingState label="Şube yazıcıları yükleniyor..." />
       ) : (
         <div className="space-y-5">
+          <PrinterSetupGuide
+            bridges={bridges}
+            devices={devices}
+            jobs={jobs}
+            apiUrl={printBridgeApiUrl()}
+            connectDisabled={!canManage || enrollmentMutation.isPending}
+            onConnect={() => enrollmentMutation.mutate()}
+            onAddPrinter={() => setCreateOpen(true)}
+            onRefresh={() => {
+              void bridgesQuery.refetch()
+              void jobsQuery.refetch()
+            }}
+          />
           <SectionCard
-            title="Yerel Print Bridge"
-            description="Şubedeki bilgisayarların son heartbeat ve işletim sistemi yazıcıları."
+            title="Yazdırma bilgisayarları"
+            description="Dixora Print Bridge bağlantıları ve bilgisayarlarda bulunan yerel yazıcılar."
             action={
               <div className="flex flex-wrap justify-end gap-2">
                 <Button
@@ -435,7 +469,7 @@ export function PrinterManagement() {
                 </Button>
                 <Button
                   size="sm"
-                  disabled={enrollmentMutation.isPending}
+                  disabled={!canManage || enrollmentMutation.isPending}
                   onClick={() => enrollmentMutation.mutate()}
                 >
                   {enrollmentMutation.isPending ? (
@@ -443,7 +477,7 @@ export function PrinterManagement() {
                   ) : (
                     <Link2 />
                   )}
-                  Yeni Bridge bağla
+                  Bilgisayar bağla
                 </Button>
               </div>
             }
@@ -458,7 +492,7 @@ export function PrinterManagement() {
                       revokeMutation.isPending &&
                       revokeMutation.variables === bridge.id
                     }
-                    onRevoke={() => revokeMutation.mutate(bridge.id)}
+                    onRevoke={() => setRevokeCandidate(bridge)}
                   />
                 ))}
               </div>
@@ -516,22 +550,22 @@ export function PrinterManagement() {
                       onTest={() => testMutation.mutate(device.id)}
                       onMappingChange={(value) => {
                         if (value === UNMAPPED_VALUE) {
-                          const existing = mappingByDevice.get(device.id);
+                          const existing = mappingByDevice.get(device.id)
                           if (existing) {
                             unmapMutation.mutate({
                               bridgeId: existing.bridge_id,
                               deviceId: device.id,
-                            });
+                            })
                           }
-                          return;
+                          return
                         }
-                        const parsed = parseMappingValue(value);
+                        const parsed = parseMappingValue(value)
                         if (parsed) {
                           mapMutation.mutate({
                             bridgeId: parsed.bridgeId,
                             deviceId: device.id,
                             localPrinterName: parsed.localPrinterName,
-                          });
+                          })
                         }
                       }}
                     />
@@ -574,7 +608,7 @@ export function PrinterManagement() {
                         retryMutation.isPending &&
                         retryMutation.variables === job.id
                       }
-                      onRetry={() => retryMutation.mutate(job.id)}
+                      onRetry={() => setRetryCandidate(job)}
                     />
                   ))}
                 </div>
@@ -608,8 +642,71 @@ export function PrinterManagement() {
         enrollment={enrollment}
         onClose={() => setEnrollment(null)}
       />
+      <Dialog
+        open={Boolean(retryCandidate)}
+        onOpenChange={(open) => !open && setRetryCandidate(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Çıktıyı yeniden dene</DialogTitle>
+            <DialogDescription>
+              Önce yazıcıdaki kağıdı kontrol edin. Önceki çıktı basıldıysa
+              tekrar denemek aynı fişi yeniden basabilir. Yazıcı ve bağlantı
+              sorununu giderdikten sonra devam edin.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRetryCandidate(null)}>
+              Vazgeç
+            </Button>
+            <Button
+              disabled={retryMutation.isPending}
+              onClick={() => {
+                if (retryCandidate)
+                  retryMutation.mutate(retryCandidate.id, {
+                    onSuccess: () => setRetryCandidate(null),
+                  })
+              }}
+            >
+              Kontrol ettim, yeniden dene
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      <Dialog
+        open={Boolean(revokeCandidate)}
+        onOpenChange={(open) => !open && setRevokeCandidate(null)}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Bilgisayar bağlantısını kaldır</DialogTitle>
+            <DialogDescription>
+              {revokeCandidate?.name} bağlantısı kaldırılacak. Bu bilgisayara
+              bağlı yazıcılar, başka bir bilgisayarla eşlenene kadar çıktı
+              alamaz.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRevokeCandidate(null)}>
+              Vazgeç
+            </Button>
+            <Button
+              variant="destructive"
+              disabled={revokeMutation.isPending}
+              onClick={() => {
+                if (revokeCandidate)
+                  revokeMutation.mutate(revokeCandidate.id, {
+                    onSuccess: () => setRevokeCandidate(null),
+                  })
+              }}
+            >
+              Bağlantıyı kaldır
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </>
-  );
+  )
 }
 
 function BridgeRow({
@@ -617,27 +714,23 @@ function BridgeRow({
   pending,
   onRevoke,
 }: {
-  bridge: PrintBridge;
-  pending: boolean;
-  onRevoke: () => void;
+  bridge: PrintBridge
+  pending: boolean
+  onRevoke: () => void
 }) {
   const state = bridge.is_active
     ? bridge.is_online
       ? "online"
       : "offline"
-    : "revoked";
+    : "revoked"
   const label =
     state === "online"
       ? "Çevrimiçi"
       : state === "offline"
         ? "Çevrimdışı"
-        : "Kaldırıldı";
+        : "Kaldırıldı"
   const tone =
-    state === "online"
-      ? "success"
-      : state === "offline"
-        ? "warning"
-        : "neutral";
+    state === "online" ? "success" : state === "offline" ? "warning" : "neutral"
 
   return (
     <div className="flex flex-col gap-3 py-4 first:pt-0 last:pb-0 lg:flex-row lg:items-start">
@@ -669,7 +762,7 @@ function BridgeRow({
           Son bağlantı:{" "}
           {bridge.last_seen_at
             ? new Date(bridge.last_seen_at).toLocaleString("tr-TR")
-            : "Henüz heartbeat alınmadı"}
+            : "Bilgisayardan henüz bağlantı alınmadı"}
           {bridge.version ? ` · v${bridge.version}` : ""}
         </p>
         <div
@@ -705,7 +798,7 @@ function BridgeRow({
         </Button>
       ) : null}
     </div>
-  );
+  )
 }
 
 function DeviceRow({
@@ -720,26 +813,26 @@ function DeviceRow({
   onTest,
   onMappingChange,
 }: {
-  device: PrinterDevice;
-  stations: Station[];
-  bridges: PrintBridge[];
-  mapping: PrintBridgePrinterMapping | undefined;
-  pending: boolean;
-  onRoute: (stationId: string) => void;
-  onPurposeChange: (purpose: "PREPARATION" | "CASHIER") => void;
-  onToggle: (active: boolean) => void;
-  onTest: () => void;
-  onMappingChange: (value: string) => void;
+  device: PrinterDevice
+  stations: Station[]
+  bridges: PrintBridge[]
+  mapping: PrintBridgePrinterMapping | undefined
+  pending: boolean
+  onRoute: (stationId: string) => void
+  onPurposeChange: (purpose: "PREPARATION" | "CASHIER") => void
+  onToggle: (active: boolean) => void
+  onTest: () => void
+  onMappingChange: (value: string) => void
 }) {
   const mappingValue = mapping
     ? createMappingValue(mapping.bridge_id, mapping.local_printer_name)
-    : UNMAPPED_VALUE;
+    : UNMAPPED_VALUE
   const mappedBridge = mapping
     ? bridges.find((bridge) => bridge.id === mapping.bridge_id)
-    : undefined;
+    : undefined
   const canTest =
     Boolean(mapping && mappedBridge?.is_active && mappedBridge.is_online) &&
-    device.is_active;
+    device.is_active
 
   return (
     <div className="py-4 first:pt-0 last:pb-0">
@@ -880,7 +973,7 @@ function DeviceRow({
         </div>
       </div>
     </div>
-  );
+  )
 }
 
 function JobRow({
@@ -889,13 +982,13 @@ function JobRow({
   pending,
   onRetry,
 }: {
-  job: PrintJob;
-  devices: PrinterDevice[];
-  pending: boolean;
-  onRetry: () => void;
+  job: PrintJob
+  devices: PrinterDevice[]
+  pending: boolean
+  onRetry: () => void
 }) {
-  const printer = devices.find((device) => device.id === job.printer_device_id);
-  const failed = job.status === "FAILED";
+  const printer = devices.find((device) => device.id === job.printer_device_id)
+  const failed = job.status === "FAILED"
   return (
     <div className="border-b pb-3 last:border-0 last:pb-0">
       <div className="flex items-start gap-2">
@@ -943,15 +1036,15 @@ function JobRow({
         </div>
       </div>
     </div>
-  );
+  )
 }
 
 function EnrollmentCodeDialog({
   enrollment,
   onClose,
 }: {
-  enrollment: PrintBridgeEnrollment | null;
-  onClose: () => void;
+  enrollment: PrintBridgeEnrollment | null
+  onClose: () => void
 }) {
   return (
     <Dialog
@@ -960,7 +1053,7 @@ function EnrollmentCodeDialog({
     >
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Bridge bağlantı kodu</DialogTitle>
+          <DialogTitle>Bilgisayar bağlantı kodu</DialogTitle>
           <DialogDescription>
             Kodu şubedeki Print Bridge uygulamasına girin. Kod{" "}
             {enrollment
@@ -974,6 +1067,25 @@ function EnrollmentCodeDialog({
         </DialogHeader>
         {enrollment ? (
           <>
+            <div className="rounded-lg border bg-muted/30 p-3">
+              <p className="text-xs font-medium">
+                Uygulamaya girilecek API adresi
+              </p>
+              <code className="mt-1 block break-all text-sm" translate="no">
+                {printBridgeApiUrl()}
+              </code>
+              <Button
+                className="mt-2"
+                size="sm"
+                variant="outline"
+                onClick={() =>
+                  void copyText(printBridgeApiUrl(), "API adresi kopyalandı.")
+                }
+              >
+                <Copy aria-hidden="true" />
+                Adresi kopyala
+              </Button>
+            </div>
             <div className="flex items-center justify-between border-y py-4">
               <code className="font-mono text-xl font-semibold tracking-[0.08em]">
                 {enrollment.code}
@@ -994,7 +1106,10 @@ function EnrollmentCodeDialog({
               <p>
                 1. Bilgisayarınız için Print Bridge uygulamasını indirip kurun.
               </p>
-              <p>2. Açılan Dixora Print Bridge uygulamasına bu kodu girin.</p>
+              <p>
+                2. Uygulamaya yukarıdaki API adresini ve bu bağlantı kodunu
+                girin.
+              </p>
               <p>
                 3. Bağlantı tamamlanınca yerel yazıcıları bu ekrandan eşleyin.
               </p>
@@ -1008,7 +1123,7 @@ function EnrollmentCodeDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
+  )
 }
 
 function StationCreateDialog({
@@ -1017,15 +1132,24 @@ function StationCreateDialog({
   onClose,
   onSubmit,
 }: {
-  open: boolean;
-  pending: boolean;
-  onClose: () => void;
-  onSubmit: (values: StationValues) => void;
+  open: boolean
+  pending: boolean
+  onClose: () => void
+  onSubmit: (values: StationValues) => void
 }) {
   const form = useForm<StationValues>({
     resolver: zodResolver(stationSchema),
     defaultValues: { name: "", code: "" },
-  });
+  })
+  const stationName = useWatch({ control: form.control, name: "name" })
+  const stationCodeEdited = form.formState.dirtyFields.code
+  useEffect(() => {
+    if (!stationCodeEdited)
+      form.setValue("code", suggestedPrinterCode(stationName, "ISTASYON"))
+  }, [stationName, stationCodeEdited, form])
+  useEffect(() => {
+    if (!open) form.reset()
+  }, [open, form])
 
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
@@ -1061,6 +1185,9 @@ function StationCreateDialog({
               {...form.register("code")}
             />
             <FieldError>{form.formState.errors.code?.message}</FieldError>
+            <p className="mt-1 text-xs text-muted-foreground">
+              Kod addan otomatik oluşturulur; gerekirse düzenleyebilirsiniz.
+            </p>
           </div>
         </form>
         <DialogFooter>
@@ -1074,7 +1201,7 @@ function StationCreateDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
+  )
 }
 
 function PrinterCreateDialog({
@@ -1084,11 +1211,11 @@ function PrinterCreateDialog({
   onClose,
   onSubmit,
 }: {
-  open: boolean;
-  stations: Station[];
-  pending: boolean;
-  onClose: () => void;
-  onSubmit: (values: PrinterValues) => void;
+  open: boolean
+  stations: Station[]
+  pending: boolean
+  onClose: () => void
+  onSubmit: (values: PrinterValues) => void
 }) {
   const form = useForm<PrinterValues>({
     resolver: zodResolver(printerSchema),
@@ -1099,8 +1226,17 @@ function PrinterCreateDialog({
       preparation_station_id: "GENERAL",
       paper_width: "80",
     },
-  });
-  const purpose = useWatch({ control: form.control, name: "purpose" });
+  })
+  const purpose = useWatch({ control: form.control, name: "purpose" })
+  const printerName = useWatch({ control: form.control, name: "name" })
+  const printerCodeEdited = form.formState.dirtyFields.code
+  useEffect(() => {
+    if (!printerCodeEdited)
+      form.setValue("code", suggestedPrinterCode(printerName))
+  }, [printerName, printerCodeEdited, form])
+  useEffect(() => {
+    if (!open) form.reset()
+  }, [open, form])
   return (
     <Dialog open={open} onOpenChange={(next) => !next && onClose()}>
       <DialogContent>
@@ -1156,12 +1292,12 @@ function PrinterCreateDialog({
               ]}
               value={purpose}
               onValueChange={(value) => {
-                if (!value) return;
+                if (!value) return
                 form.setValue("purpose", value as PrinterValues["purpose"], {
                   shouldDirty: true,
-                });
+                })
                 if (value === "CASHIER") {
-                  form.setValue("preparation_station_id", "GENERAL");
+                  form.setValue("preparation_station_id", "GENERAL")
                 }
               }}
             >
@@ -1206,28 +1342,28 @@ function PrinterCreateDialog({
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
+  )
 }
 
 function createMappingValue(
   bridgeId: string,
   localPrinterName: string,
 ): string {
-  return `${bridgeId}|${encodeURIComponent(localPrinterName)}`;
+  return `${bridgeId}|${encodeURIComponent(localPrinterName)}`
 }
 
 function parseMappingValue(
   value: string,
 ): { bridgeId: string; localPrinterName: string } | null {
-  const separator = value.indexOf("|");
-  if (separator <= 0) return null;
+  const separator = value.indexOf("|")
+  if (separator <= 0) return null
   try {
     return {
       bridgeId: value.slice(0, separator),
       localPrinterName: decodeURIComponent(value.slice(separator + 1)),
-    };
+    }
   } catch {
-    return null;
+    return null
   }
 }
 
@@ -1244,54 +1380,54 @@ function mappingItems(
           label: `${bridge.name} · ${localPrinterName}`,
         })),
       ),
-  ];
+  ]
 }
 
 function platformLabel(platform: string): string {
-  if (platform === "windows") return "Windows";
-  if (platform === "macos") return "macOS";
-  return platform;
+  if (platform === "windows") return "Windows"
+  if (platform === "macos") return "macOS"
+  return platform
 }
 
 async function downloadInstaller(platform: "windows" | "macos"): Promise<void> {
   const installer =
     platform === "windows"
       ? "/downloads/Dixora-Print-Bridge-Setup.exe"
-      : "/downloads/Dixora-Print-Bridge.dmg";
+      : "/downloads/Dixora-Print-Bridge.dmg"
   try {
     const response = await fetch(installer, {
       method: "HEAD",
       cache: "no-store",
-    });
+    })
     if (!response.ok) {
       toast.error(
         platform === "macos"
-          ? "macOS masaüstü paketi henüz yayımlanmadı. Paketi macOS üzerinde oluşturup web imajını yenileyin."
+          ? "macOS kurulum paketi henüz yayımlanmadı. Paketi temin etmek için destek ekibine başvurun."
           : "Windows kurulum paketi bulunamadı.",
-      );
-      return;
+      )
+      return
     }
   } catch {
-    toast.error("Kurulum paketi denetlenemedi.");
-    return;
+    toast.error("Kurulum paketi denetlenemedi.")
+    return
   }
-  const link = document.createElement("a");
-  link.href = installer;
+  const link = document.createElement("a")
+  link.href = installer
   link.download =
     platform === "windows"
       ? "Dixora-Print-Bridge-Setup.exe"
-      : "Dixora-Print-Bridge.dmg";
-  document.body.append(link);
-  link.click();
-  link.remove();
+      : "Dixora-Print-Bridge.dmg"
+  document.body.append(link)
+  link.click()
+  link.remove()
 }
 
 async function copyText(value: string, successMessage: string): Promise<void> {
   try {
-    await navigator.clipboard.writeText(value);
-    toast.success(successMessage);
+    await navigator.clipboard.writeText(value)
+    toast.success(successMessage)
   } catch {
-    toast.error("Panoya kopyalanamadı.");
+    toast.error("Panoya kopyalanamadı.")
   }
 }
 
@@ -1303,12 +1439,12 @@ function jobLabel(status: PrintJob["status"]) {
     PRINTED: "Yazdırıldı",
     FAILED: "Hata",
     CANCELLED: "İptal",
-  }[status];
+  }[status]
 }
 
 function jobTone(status: PrintJob["status"]) {
-  if (status === "PRINTED") return "success" as const;
-  if (status === "FAILED" || status === "CANCELLED") return "danger" as const;
-  if (status === "PENDING") return "warning" as const;
-  return "info" as const;
+  if (status === "PRINTED") return "success" as const
+  if (status === "FAILED" || status === "CANCELLED") return "danger" as const
+  if (status === "PENDING") return "warning" as const
+  return "info" as const
 }

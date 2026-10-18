@@ -23,7 +23,11 @@ const emptyContext = {
   available_rewards: [],
 }
 
-function setup(applyResponse: unknown, status = 201) {
+function setup(
+  applyResponse: unknown,
+  status = 201,
+  context: unknown = emptyContext,
+) {
   const posted: Array<{ url: string; body: unknown }> = []
   vi.stubGlobal(
     "fetch",
@@ -33,7 +37,7 @@ function setup(applyResponse: unknown, status = 201) {
         posted.push({ url, body: JSON.parse(String(init.body)) })
         return Promise.resolve(jsonResponse(applyResponse, status))
       }
-      return Promise.resolve(jsonResponse(emptyContext))
+      return Promise.resolve(jsonResponse(context))
     }),
   )
   const queryClient = new QueryClient({
@@ -46,7 +50,11 @@ function setup(applyResponse: unknown, status = 201) {
     <StaffLoyaltyPanel
       orderId={ORDER_ID}
       items={[
-        { id: DESSERT_ITEM, product_name_snapshot: "Tiramisu", status: "ACCEPTED" },
+        {
+          id: DESSERT_ITEM,
+          product_name_snapshot: "Tiramisu",
+          status: "ACCEPTED",
+        },
       ]}
     />,
     { wrapper },
@@ -71,6 +79,7 @@ describe("StaffLoyaltyPanel campaign codes", () => {
           amount: "120.00",
         },
       ],
+      campaigns: [],
       total_discount: "120.00",
       order_total: "180.00",
       unapplied_reason: null,
@@ -119,8 +128,58 @@ describe("StaffLoyaltyPanel campaign codes", () => {
     const user = userEvent.setup({ delay: null })
     const { posted } = setup({})
 
-    await user.type(await screen.findByLabelText("Üyelik / kampanya kodu"), "DXR")
+    await user.type(
+      await screen.findByLabelText("Üyelik / kampanya kodu"),
+      "DXR",
+    )
     expect(screen.getByRole("button", { name: /Uygula/ })).toBeDisabled()
     expect(posted).toHaveLength(0)
+  })
+
+  it("requires the emailed six-digit code to redeem an earned reward", async () => {
+    const user = userEvent.setup({ delay: null })
+    const { posted } = setup(
+      { redemption_code: "RW-1", amount: "120.00" },
+      201,
+      {
+        order_id: ORDER_ID,
+        membership_code: "DXR1923",
+        program_name: "Kahve Kulübü",
+        available_rewards: [
+          {
+            redemption_code: "RW-1",
+            description: "Tiramisu ikramı",
+            eligible_order_item_ids: [DESSERT_ITEM],
+            expires_at: null,
+          },
+        ],
+      },
+    )
+    await user.click(await screen.findByLabelText("Kullanılabilir ödül"))
+    await user.click(
+      await screen.findByRole("option", { name: /Tiramisu ikramı/ }),
+    )
+    await user.click(screen.getByLabelText("Uygulanacak ürün"))
+    await user.click(await screen.findByRole("option", { name: "Tiramisu" }))
+    const redeem = screen.getByRole("button", { name: "Ödülü siparişe uygula" })
+    expect(redeem).toBeDisabled()
+    await user.type(
+      screen.getByLabelText("E-postadaki ödül doğrulama kodu"),
+      "12345",
+    )
+    expect(redeem).toBeDisabled()
+    await user.type(
+      screen.getByLabelText("E-postadaki ödül doğrulama kodu"),
+      "6",
+    )
+    expect(redeem).toBeEnabled()
+    await user.click(redeem)
+    await waitFor(() => expect(posted).toHaveLength(1))
+    expect(posted[0].url).toContain("RW-1/redeem")
+    expect(posted[0].body).toMatchObject({
+      verification_code: "123456",
+      order_id: ORDER_ID,
+      order_item_id: DESSERT_ITEM,
+    })
   })
 })

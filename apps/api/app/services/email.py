@@ -32,6 +32,7 @@ class OutgoingEmail:
     text_body: str
     html_body: str | None = None
     attachments: tuple[EmailAttachment, ...] = ()
+    idempotency_key: str | None = None
 
 
 EmailMode = Literal["DEVELOPMENT", "SMTP", "RESEND", "DISABLED"]
@@ -123,6 +124,11 @@ class ResendEmailSender:
                 headers={
                     "Authorization": f"Bearer {self._api_key}",
                     "Content-Type": "application/json",
+                    **(
+                        {"Idempotency-Key": message.idempotency_key}
+                        if message.idempotency_key
+                        else {}
+                    ),
                 },
                 json=payload,
             )

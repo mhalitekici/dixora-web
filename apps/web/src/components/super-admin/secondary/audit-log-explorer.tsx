@@ -48,10 +48,7 @@ import { formatDateTime } from "@/lib/formatters"
 import { cn } from "@/lib/utils"
 
 import { AdapterNotice } from "./adapter-notice"
-import {
-  getAuditLogFeed,
-  secondaryAdminQueryKeys,
-} from "./platform-admin-api"
+import { getAuditLogFeed, secondaryAdminQueryKeys } from "./platform-admin-api"
 import {
   EmptyDataState,
   QueryErrorState,
@@ -76,15 +73,12 @@ export function AuditLogExplorer() {
   })
 
   const actionOptions = useMemo(
-    () =>
-      uniqueSorted((query.data?.items ?? []).map((item) => item.action)),
+    () => uniqueSorted((query.data?.items ?? []).map((item) => item.action)),
     [query.data?.items],
   )
   const resourceOptions = useMemo(
     () =>
-      uniqueSorted(
-        (query.data?.items ?? []).map((item) => item.resource_type),
-      ),
+      uniqueSorted((query.data?.items ?? []).map((item) => item.resource_type)),
     [query.data?.items],
   )
   const filtered = useMemo(() => {
@@ -116,8 +110,7 @@ export function AuditLogExplorer() {
         (normalizedSearch.length === 0 ||
           searchable.includes(normalizedSearch)) &&
         (actionFilter === "all" || entry.action === actionFilter) &&
-        (resourceFilter === "all" ||
-          entry.resource_type === resourceFilter) &&
+        (resourceFilter === "all" || entry.resource_type === resourceFilter) &&
         (fromTimestamp === null ||
           (Number.isFinite(timestamp) && timestamp >= fromTimestamp)) &&
         (toTimestamp === null ||
@@ -209,14 +202,10 @@ export function AuditLogExplorer() {
       <AdapterNotice
         title={
           feed.availability === "live"
-            ? "Canlı audit penceresi"
-            : "Platform audit scope endpointi bekleniyor"
+            ? "Güncel denetim kayıtları"
+            : "Denetim kayıtları kullanılamıyor"
         }
-        badge={
-          feed.availability === "live"
-            ? "current-identity"
-            : "compatibility-adapter"
-        }
+        badge={feed.availability === "live" ? "Güncel" : "Sınırlı görünüm"}
         tone={feed.availability === "live" ? "live" : "warning"}
         className="mb-5"
       >
@@ -592,10 +581,7 @@ function AuditEmptyState({
             edilmedi.
           </p>
           <div className="mt-4 grid gap-2 text-left text-xs sm:grid-cols-3">
-            <ContractRequirement
-              label="Scope"
-              value="platform | tenant"
-            />
+            <ContractRequirement label="Scope" value="platform | tenant" />
             <ContractRequirement label="Cursor" value="offset / cursor" />
             <ContractRequirement
               label="Filtreler"
@@ -767,10 +753,7 @@ function uniqueSorted(values: string[]): string[] {
 }
 
 function formatAction(action: string): string {
-  return action
-    .split(".")
-    .map(formatToken)
-    .join(" · ")
+  return action.split(".").map(formatToken).join(" · ")
 }
 
 function formatToken(value: string): string {

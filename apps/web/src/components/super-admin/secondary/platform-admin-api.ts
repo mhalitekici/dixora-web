@@ -27,7 +27,7 @@ export const supportModeCapability: SupportModeCapability = {
   available: false,
   contract: "platform-support-session-v1",
   explanation:
-    "API henüz gerekçe, süre, tenant kapsamı ve çıkış kaydı üreten denetlenebilir bir destek oturumu endpointi sunmuyor.",
+    "İşletme hesabına süreli ve kayıtlı destek erişimi henüz kullanılamıyor. İşletme yöneticisinden ilgili ekranın hata bilgisini isteyin.",
 }
 
 export async function getBusiness(
@@ -122,7 +122,9 @@ export async function getBusinessOverview(
   businessId: string,
   signal?: AbortSignal,
 ): Promise<BusinessOverview> {
-  return api.get<BusinessOverview>(`businesses/${businessId}/overview`, { signal })
+  return api.get<BusinessOverview>(`businesses/${businessId}/overview`, {
+    signal,
+  })
 }
 
 export async function getBusinessUsers(
@@ -148,7 +150,10 @@ export async function getSubscriptionPortfolio(
 ): Promise<SubscriptionPortfolio> {
   const [plansResult, portfolioResult] = await Promise.allSettled([
     api.get<SubscriptionPlan[]>("subscriptions/plans", { signal }),
-    api.get<Array<Omit<TenantSubscriptionRow, "source">>>("subscriptions/portfolio", { signal }),
+    api.get<Array<Omit<TenantSubscriptionRow, "source">>>(
+      "subscriptions/portfolio",
+      { signal },
+    ),
   ])
 
   if (signal?.aborted) {
@@ -165,12 +170,12 @@ export async function getSubscriptionPortfolio(
   const issues: string[] = []
   if (plansResult.status === "rejected") {
     issues.push(
-      "Plan kataloğu alınamadı; canlı tenant-abonelik eşleşmeleri gösteriliyor.",
+      "Plan listesi alınamadı. İşletmelere ait abonelik kayıtları gösteriliyor.",
     )
   }
   if (portfolioResult.status === "rejected") {
     issues.push(
-      "Tenant abonelik eşleşmeleri alınamadı; yalnız plan kataloğu gösteriliyor.",
+      "İşletmelerin abonelik kayıtları alınamadı. Yalnız plan listesi gösteriliyor.",
     )
   }
 
@@ -205,7 +210,7 @@ export async function getAuditLogFeed(
       scope: "current-identity",
       maxRecords: PLATFORM_AUDIT_WINDOW,
       limitation:
-        "Mevcut API yalnız son 250 kaydı döndürüyor; filtreleme ve sayfalama bu canlı pencere üzerinde uygulanıyor.",
+        "Son 250 işlem gösterilir. Filtreler ve sayfalar bu kayıtlar üzerinde çalışır.",
     }
   } catch (error) {
     if (
@@ -219,7 +224,7 @@ export async function getAuditLogFeed(
         scope: "current-identity",
         maxRecords: PLATFORM_AUDIT_WINDOW,
         limitation:
-          "Mevcut audit endpointi tenant bağlamı istiyor ve platform-geneli kayıt akışı sunmuyor. Adapter hazır; platform scope endpointi bağlandığında aynı filtre ve sayfalama kullanılacak.",
+          "Platform genelindeki denetim kayıtları henüz bu görünümde kullanılamıyor. İşletmeye ait kayıtları ilgili işletme bağlamında inceleyin.",
       }
     }
 
