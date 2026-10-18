@@ -178,7 +178,7 @@ Because the flags are long, export them once per shell:
 
 ```bash
 export COMPOSE_FILE=docker-compose.prod.yml
-export COMPOSE_ENV_FILE=.env.production     # docker compose v2.24+
+export COMPOSE_ENV_FILES=.env.production     # docker compose v2.24+
 docker compose ps                            # now picks both up
 ```
 
@@ -296,31 +296,23 @@ Cap the disk that logs can take, or they will eventually fill it:
 sudo systemctl restart docker
 ```
 
-## 15. Backup cron
+## 15. PostgreSQL + MinIO backups
 
-Nightly dump with verification and retention (`ops/backup.sh` reads its
-settings from the env file):
-
-```cron
-15 3 * * * cd /srv/dixora && export COMPOSE_FILE=docker-compose.prod.yml && set -a && . ./.env.production && set +a && ./ops/backup.sh >> /var/log/dixora-backup.log 2>&1
-```
-
-- Retention: 30 days (`RETENTION_DAYS`), which covers a mistake noticed a
-  month later without filling the disk.
-- `BACKUP_DIR=/srv/dixora-backups` — outside the repository. Dumps contain
-  customer names, e-mails and order history.
-- Local dumps do not survive the server being lost. Copy them off the host as
-  soon as there is somewhere to put them (Hetzner Storage Box over `rsync`,
-  or S3 with server-side encryption).
-
-**Rehearse a restore monthly.** A backup nobody has restored is not a backup.
+Use the combined backup and tested recovery procedure in
+[Operations](operations.md#backups). Bundles include the database, current media,
+checksums and object metadata; a database dump alone cannot recover product images.
 
 ```bash
-COMPOSE_FILE=docker-compose.prod.yml ./ops/restore.sh /srv/dixora-backups/dixora-....dump
+COMPOSE_FILE=docker-compose.prod.yml COMPOSE_ENV_FILES=.env.production \
+  python3 ops/backup.py create --directory /srv/dixora-backups --quiesce
 ```
 
-That restores into a scratch database and prints row counts, so an empty dump
-looks like the failure it is instead of a clean exit code.
+Schedule the supplied systemd timer or the documented cron command outside
+business hours. `--quiesce` briefly stops the web/API writers and restarts them
+afterwards. Retention defaults to 14 days; set `RETENTION_DAYS=30` if required.
+Store a verified encrypted copy offsite and rehearse recovery into a fresh database
+and fresh bucket monthly. Production scheduler installation and offsite storage
+configuration require access to that host.
 
 ## 16. Update procedure
 

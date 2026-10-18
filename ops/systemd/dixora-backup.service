@@ -1,0 +1,15 @@
+[Unit]
+Description=Dixora PostgreSQL and MinIO verified backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+User=dixora
+WorkingDirectory=/srv/dixora
+Environment=COMPOSE_FILE=/srv/dixora/docker-compose.prod.yml
+Environment=COMPOSE_ENV_FILES=/srv/dixora/.env.production
+Environment=BACKUP_DIR=/srv/dixora-backups
+UMask=0077
+ExecStart=/usr/bin/python3 /srv/dixora/ops/backup.py create --quiesce
+TimeoutStartSec=1h

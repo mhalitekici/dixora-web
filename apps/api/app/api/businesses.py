@@ -236,7 +236,7 @@ async def list_platform_invoices(
     if status_filter:
         query = query.where(Invoice.status == status_filter.upper())
 
-    rows = (await db.execute(query)).all()
+    rows = (await db.execute(query)).tuples().all()
     return [
         PlatformInvoiceOut(
             id=invoice.id,

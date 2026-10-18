@@ -190,3 +190,42 @@ jobs:
 
       - name: Production API image builds
         run: docker build -f infrastructure/docker/api.Dockerfile --target production -t dixora-api:ci .
+
+  business-day:
+    name: Business day and backup restore (PostgreSQL + MinIO)
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_FILE: infrastructure/docker-compose.validation.yml
+      COMPOSE_PROJECT_NAME: dixora-validation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Backup integrity and restore destination safeguards
+        run: python -m unittest discover -s ops -p 'test_*.py' -v
+
+      - name: Start disposable PostgreSQL and MinIO stack
+        run: docker compose up -d --build --wait api
+
+      - name: Order, split payment, refund, table close and shift reconciliation over HTTP
+        run: python ops/validate_business_day.py
+
+      - name: Add media fixtures including Unicode names and empty objects
+        run: docker compose exec -T api python - < ops/seed_validation_media.py
+
+      - name: Back up both stores and restore into fresh destinations
+        run: |
+          python ops/backup.py create --quiesce --directory backups/ci
+          bundle=$(find backups/ci -mindepth 1 -maxdepth 1 -type d -name 'dixora-*' | head -n 1)
+          python ops/backup.py verify "$bundle"
+          python ops/backup.py restore "$bundle" --database dixora_restore_ci --bucket dixora-restore-ci
+
+      - name: Failure diagnostics
+        if: failure()
+        run: docker compose logs --tail=100
+
+      - name: Remove disposable stack
+        if: always()
+        run: docker compose down --volumes

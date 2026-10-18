@@ -6,54 +6,122 @@ Standing up a new production host is a separate document:
 
 ## Backups
 
-`ops/backup.sh` takes a compressed PostgreSQL dump, verifies it can be read
-back, and prunes anything older than the retention window.
+`ops/backup.py` creates one verified bundle containing `database.dump`,
+`media.tar`, and `manifest.json`. PostgreSQL runs `pg_dump` and `pg_restore
+--list` in the database container. MinIO media is streamed through a one-off API
+container using that stack's configured S3 credentials; credentials never appear
+in command arguments. The host needs Python 3.11+ and Docker Compose v2.
 
 ```bash
-cd /srv/dixora
-set -a && . ./.env && set +a
-./ops/backup.sh                     # writes ./backups
-BACKUP_DIR=/mnt/backup ./ops/backup.sh
+python3 ops/backup.py create --directory /srv/dixora-backups --quiesce
+python3 ops/backup.py verify /srv/dixora-backups/dixora-TIMESTAMP-ID
 ```
 
-On a production host the stack lives in a different Compose file, and these
-scripts talk to it through `docker compose`. Point them at it with the
-variable Compose reads natively:
+Windows uses `python` instead of `python3`. `ops/backup.sh` wraps `create`, and
+honors `BACKUP_DIR`, `RETENTION_DAYS` (default 14), `POSTGRES_SERVICE`,
+`API_SERVICE`, `PYTHON_BIN`, and Compose's native environment variables.
+It no longer requires sourcing `.env` into a shell.
+
+`--quiesce` briefly stops running `web` and `api` services, then restarts only
+those that were running, including after a failed backup. This prevents
+application writes/deletions between the database and media snapshots and records
+all public-table row counts. Coordinate any external writers separately. Without
+this flag the backup is online: both stores are individually readable, but their
+snapshots may reflect different moments. Schedule the quiesced backup outside service hours.
+
+Each file and each media object has a SHA-256 checksum. Media object keys,
+content types and user metadata survive restoration; empty buckets and zero-byte
+objects are supported. This backs up current application media, not MinIO users,
+server configuration, bucket lifecycle policies, historical versions, or PostgreSQL
+roles. Retain deployment configuration and secrets separately. It is a full
+snapshot, not PostgreSQL point-in-time recovery.
+
+Only a complete, verified bundle is published. Concurrent runs are refused by
+`.backup.lock`; investigate an abandoned lock before removing it. Temporary helper
+containers are removed on success and failure. Retention removes only old complete
+bundles directly under the backup root after a successful new backup. Legacy
+`.dump` files and incomplete bundles are not pruned automatically. Data stays in a
+private directory (0700 on Unix); `backups/` and `*.dump` are gitignored.
+
+### Production scheduling
 
 ```bash
 export COMPOSE_FILE=docker-compose.prod.yml
-set -a && . ./.env.production && set +a
-./ops/backup.sh
+export COMPOSE_ENV_FILES=.env.production
+python3 ops/backup.py create --directory /srv/dixora-backups --quiesce
 ```
 
-Schedule it from the host crontab:
-
-```cron
-15 3 * * * cd /srv/dixora && set -a && . ./.env && set +a && ./ops/backup.sh >> /var/log/dixora-backup.log 2>&1
-```
-
-The dump is written and verified **inside** the container before being copied
-out. A custom-format dump has to be seekable to be read back, so verifying it
-through a pipe fails even when the dump is perfectly good.
-
-### Restore — and why you must rehearse it
+Install the supplied systemd units on the production host (paths assume
+`/srv/dixora` and the `dixora` user with Docker access):
 
 ```bash
-./ops/restore.sh backups/dixora-20260813-031500.dump              # into a scratch db
-TARGET_DB=dixora ./ops/restore.sh backups/....dump --force        # over the live db
+sudo install -d -m 700 -o dixora -g dixora /srv/dixora-backups
+sudo install -m 644 ops/systemd/dixora-backup.{service,timer} /etc/systemd/system/
+sudo systemctl daemon-reload
+sudo systemctl enable --now dixora-backup.timer
+systemctl list-timers dixora-backup.timer
+journalctl -u dixora-backup.service
 ```
 
-The script prints row counts after restoring, so an empty dump looks like the
-failure it is instead of a clean exit code. Overwriting the live database is
-refused without `--force`.
+The timer runs at 03:15 in the **host timezone**, with up to five minutes of
+jitter, and catches up after downtime. A cron alternative is:
 
-**Run a restore drill monthly.** A backup nobody has ever restored is not a
-backup — the first time this repository's script ran, it produced a good dump
-and then destroyed it because the verification step was wrong. That was only
-caught by actually restoring.
+```cron
+15 3 * * * cd /srv/dixora && COMPOSE_FILE=docker-compose.prod.yml COMPOSE_ENV_FILES=.env.production BACKUP_DIR=/srv/dixora-backups /usr/bin/python3 ops/backup.py create --quiesce >> /var/log/dixora-backup.log 2>&1
+```
 
-`backups/` and `*.dump` are gitignored: dumps contain customer names, emails and
-order history.
+Choose one scheduler. No production timer is installed by changing this repository.
+Monitor failures and the age of the latest successful backup. Store verified
+bundles on an encrypted destination outside the application host as well; a local
+bundle does not protect against loss of the server. Offsite credentials and the
+production host are deployment inputs, not included in this repository.
+
+### Restore drill
+
+```bash
+python3 ops/backup.py restore /srv/dixora-backups/dixora-TIMESTAMP-ID \
+  --database dixora_restore_check_20261018 --bucket dixora-restore-check-20261018
+```
+
+Both targets must be fresh. The script refuses source/system databases, existing
+databases, the configured media bucket, and existing buckets. It verifies every
+archive before writes, restores PostgreSQL in one transaction, downloads every
+restored object to compare its checksum/content type/metadata, and compares all
+public-table row counts for quiesced bundles. A failed cross-store restore can
+leave its fresh targets for diagnosis; use new names on retry. It never drops or
+overwrites a live destination. Run a restore drill monthly and record its duration.
+Promoting recovered data to production requires a separate maintenance procedure
+and pointing the application at **both** recovered stores.
+
+`ops/restore.sh` accepts bundle directories with `--database` and `--bucket`.
+Its legacy `.dump` mode remains available for old backups and does not restore
+MinIO; only that legacy mode supports `TARGET_DB=... --force` overwrites.
+
+## Business-day integration verification
+
+Use the disposable stack for real PostgreSQL migrations, HTTP requests, MinIO,
+and a backup/restore drill. It has its own network and ephemeral storage; it does
+not use the local development database or mail/payment provider credentials.
+
+```bash
+export COMPOSE_FILE=infrastructure/docker-compose.validation.yml
+export COMPOSE_PROJECT_NAME=dixora-validation
+docker compose up -d --build --wait api
+python3 ops/validate_business_day.py
+docker compose exec -T api python - < ops/seed_validation_media.py
+python3 ops/backup.py create --quiesce --directory backups/validation
+# Verify and restore the printed bundle path into fresh targets as above.
+docker compose down --volumes
+```
+
+`validate_business_day.py` is restricted to localhost and the seeded `dixora-lab`
+tenant. It checks repeated order/payment/refund requests, shift requirements,
+overbalance rejection, split cash/card payment after refund, table closure,
+zero-variance shift closure/history, two-employee handoff, and manager business-day
+closure with open-shift and duplicate-close guards. Run once per fresh stack. Add
+`--profile browser` to Compose to serve the isolated web UI on port 13000.
+The CI `Business day and backup restore` job runs the HTTP and restore checks on
+every configured push/PR, including a Unicode media key and an empty object.
 
 ## Subscription billing
 

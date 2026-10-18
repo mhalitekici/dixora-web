@@ -29,7 +29,7 @@ help:
 	@echo "  make prod-ps       Show production service health"
 	@echo "  make prod-logs     Follow production logs"
 	@echo "  make prod-migrate  Show the applied migration revision"
-	@echo "  make prod-backup   Take a verified database dump"
+	@echo "  make prod-backup   Take a verified PostgreSQL + MinIO bundle"
 
 bootstrap: install config build
 
@@ -118,4 +118,4 @@ prod-migrate:
 	$(PROD_COMPOSE) exec -T api alembic current
 
 prod-backup:
-	COMPOSE_FILE=docker-compose.prod.yml ./ops/backup.sh
+	COMPOSE_FILE=docker-compose.prod.yml COMPOSE_ENV_FILES=.env.production ./ops/backup.sh --quiesce
