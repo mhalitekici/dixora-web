@@ -206,6 +206,13 @@ jobs:
       - name: Backup integrity and restore destination safeguards
         run: python -m unittest discover -s ops -p 'test_*.py' -v
 
+      - name: Backup and restore shell entrypoints
+        run: |
+          bash -n ops/backup.sh
+          bash -n ops/restore.sh
+          bash ops/backup.sh --help
+          bash ops/restore.sh . --help
+
       - name: Start disposable PostgreSQL and MinIO stack
         run: docker compose up -d --build --wait api
 

@@ -12,16 +12,16 @@ set -euo pipefail
 # Git Bash on Windows rewrites container paths like /tmp/x into Windows
 # paths before docker sees them. Harmless to set on Linux, where the
 # variable is simply ignored.
-export MSYS_NO_PATHCONV=1
-
 dump="${1:?usage: restore.sh <dump-file> [--force]}"
 if [ -d "$dump" ]; then
+  unset MSYS_NO_PATHCONV
   script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
   python_bin="${PYTHON_BIN:-python3}"
   if ! command -v "$python_bin" >/dev/null 2>&1; then python_bin=python; fi
   shift
   exec "$python_bin" "$script_dir/backup.py" restore "$dump" "$@"
 fi
+export MSYS_NO_PATHCONV=1
 force="${2:-}"
 SERVICE="${POSTGRES_SERVICE:-postgres}"
 TARGET_DB="${TARGET_DB:-dixora_restore_check}"
