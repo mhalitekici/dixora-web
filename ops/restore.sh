@@ -12,12 +12,23 @@ set -euo pipefail
 # Git Bash on Windows rewrites container paths like /tmp/x into Windows
 # paths before docker sees them. Harmless to set on Linux, where the
 # variable is simply ignored.
-export MSYS_NO_PATHCONV=1
-
 dump="${1:?usage: restore.sh <dump-file> [--force]}"
+if [ -d "$dump" ]; then
+  unset MSYS_NO_PATHCONV
+  script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+  python_bin="${PYTHON_BIN:-python3}"
+  if ! command -v "$python_bin" >/dev/null 2>&1; then python_bin=python; fi
+  shift
+  exec "$python_bin" "$script_dir/backup.py" restore "$dump" "$@"
+fi
+export MSYS_NO_PATHCONV=1
 force="${2:-}"
 SERVICE="${POSTGRES_SERVICE:-postgres}"
 TARGET_DB="${TARGET_DB:-dixora_restore_check}"
+if [[ ! "$TARGET_DB" =~ ^[a-z][a-z0-9_]{0,62}$ ]]; then
+  echo "TARGET_DB must be a simple lowercase SQL identifier" >&2
+  exit 1
+fi
 
 : "${POSTGRES_USER:?POSTGRES_USER must be set (source your .env)}"
 : "${POSTGRES_DB:?POSTGRES_DB must be set (source your .env)}"
@@ -34,7 +45,7 @@ docker compose exec -T "$SERVICE" psql -U "$POSTGRES_USER" -d postgres \
   -c "DROP DATABASE IF EXISTS $TARGET_DB;" -c "CREATE DATABASE $TARGET_DB;" > /dev/null
 
 docker compose exec -T "$SERVICE" \
-  pg_restore -U "$POSTGRES_USER" -d "$TARGET_DB" --no-owner "$remote"
+  pg_restore -U "$POSTGRES_USER" -d "$TARGET_DB" --single-transaction --no-owner "$remote"
 
 docker compose exec -T "$SERVICE" rm -f "$remote"
 

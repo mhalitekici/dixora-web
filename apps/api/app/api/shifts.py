@@ -267,7 +267,7 @@ async def _close(
         money(reported_card_total) if reported_card_total is not None else None
     )
     shift.card_variance = (
-        money(shift.reported_card_total - shift.card_sales)
+        money(shift.reported_card_total - totals.net_card)
         if shift.reported_card_total is not None
         else None
     )

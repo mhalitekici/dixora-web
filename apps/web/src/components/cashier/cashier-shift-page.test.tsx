@@ -13,6 +13,7 @@ const openShift = {
   cash_sales: "50.00",
   card_sales: "80.00",
   cash_refunds: "0.00",
+  card_refunds: "0.00",
   expected_cash: "150.00",
   reported_card_total: null,
   card_variance: null,
@@ -37,6 +38,21 @@ function renderPage() {
 
 describe("CashierShiftPage", () => {
   afterEach(() => vi.unstubAllGlobals())
+
+  it.each([
+    { sales: "80.00", refunds: "20.00", reported: "60,00", expected: "₺60,00" },
+    { sales: "80.10", refunds: "20.05", reported: "60,05", expected: "₺60,05" },
+    { sales: "0.00", refunds: "360.00", reported: "-360,00", expected: "-₺360,00" },
+  ])("compares the POS total with net card sales: $reported", async ({ sales, refunds, reported, expected }) => {
+    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(response({ ...openShift, card_sales: sales, card_refunds: refunds }))))
+    renderPage()
+    await screen.findByText("Vardiya kapanış ve devir")
+    fireEvent.change(screen.getByLabelText("Sayılmış kapanış nakdi"), { target: { value: "150,00" } })
+    fireEvent.change(screen.getByLabelText("POS / Z kart toplamı"), { target: { value: reported } })
+    expect(screen.getAllByText("TAM · ₺0,00")).toHaveLength(2)
+    expect(screen.getByText(/Net kart toplamı:/)).toHaveTextContent(expected)
+    expect(screen.queryByText(/EKSİK/)).not.toBeInTheDocument()
+  })
 
   it("sends the manually entered POS/Z total when a manager closes a shift", async () => {
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {

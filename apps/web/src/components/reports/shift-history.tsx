@@ -179,15 +179,18 @@ export function ShiftHistory() {
     (openRows.length === 1 ? openRows[0] : null)
   const expectedCash =
     closingShift?.expected_cash ?? preview.data?.expected_cash
-  const expectedCard =
-    closingShift?.card_sales ?? preview.data?.system_card_total
+  const expectedCard = closingShift
+    ? ((Math.round(Number(closingShift.card_sales) * 100) -
+        Math.round(Number(closingShift.card_refunds) * 100)) / 100).toFixed(2)
+    : preview.data?.system_card_total
   const cashDifference =
     expectedCash && counted !== ""
       ? Number(counted.replace(",", ".")) - Number(expectedCash)
       : null
   const cardDifference =
     expectedCard && cardZ !== ""
-      ? Number(cardZ.replace(",", ".")) - Number(expectedCard)
+      ? (Math.round(Number(cardZ.replace(",", ".")) * 100) -
+          Math.round(Number(expectedCard) * 100)) / 100
       : null
   const closeShift = useMutation({
     mutationFn: () => {

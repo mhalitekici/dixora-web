@@ -21,6 +21,7 @@ type Shift = {
   cash_sales: string
   card_sales: string
   cash_refunds: string
+  card_refunds: string
   expected_cash: string
   reported_card_total: string | null
   card_variance: string | null
@@ -49,7 +50,8 @@ export function CashierShiftPage() {
   const query = useQuery({ queryKey: ["shifts", "current"], queryFn: () => api.get<Shift | null>("shifts/current"), refetchInterval: 15_000 })
   const shift = query.data
   const difference = counted === "" || !shift ? null : Number(asMoney(counted)) - Number(shift.expected_cash)
-  const cardDifference = reportedCard === "" || !shift ? null : Number(asMoney(reportedCard)) - Number(shift.card_sales)
+  const netCardCents = shift ? Math.round(Number(shift.card_sales) * 100) - Math.round(Number(shift.card_refunds) * 100) : 0
+  const cardDifference = reportedCard === "" || !shift ? null : (Math.round(Number(asMoney(reportedCard)) * 100) - netCardCents) / 100
   const close = useMutation({
     mutationFn: () => {
       if (!shift) throw new Error("Açık vardiya bulunamadı.")
@@ -68,7 +70,7 @@ export function CashierShiftPage() {
     <PageHeader eyebrow="Kasa" title="Vardiya kapanış ve devir" description={`${shift.cashier_name ?? shift.user_display_name ?? "Kasiyer"} · ${new Date(shift.opened_at).toLocaleTimeString("tr-TR", { hour: "2-digit", minute: "2-digit" })} başlangıç`} icon={Banknote} />
     <div className="grid gap-4 lg:grid-cols-[1fr_1.1fr]">
       <Card><CardHeader><CardTitle>Kasa mutabakatı</CardTitle><CardDescription>Kart tahsilatları beklenen nakde eklenmez.</CardDescription></CardHeader><CardContent className="space-y-3">
-        <Row label="Açılış" value={shift.opening_cash} /><Row label="Nakit satış" value={shift.cash_sales} plus /><Row label="Nakit iade" value={shift.cash_refunds} minus /><div className="border-t pt-3"><Row label="Beklenen nakit" value={shift.expected_cash} strong /></div><div className="flex items-center gap-2 text-xs text-muted-foreground"><Banknote className="size-4" />Nakit kasa<ArrowRight className="size-3" /><CreditCard className="size-4" />Kart toplamı: {currency.format(Number(shift.card_sales))}</div>
+        <Row label="Açılış" value={shift.opening_cash} /><Row label="Nakit satış" value={shift.cash_sales} plus /><Row label="Nakit iade" value={shift.cash_refunds} minus /><div className="border-t pt-3"><Row label="Beklenen nakit" value={shift.expected_cash} strong /></div><div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground"><Banknote className="size-4" />Nakit kasa<ArrowRight className="size-3" /><CreditCard className="size-4" />Net kart toplamı: {currency.format(netCardCents / 100)}</div><p className="text-xs text-muted-foreground">Kart iadesi: {currency.format(Number(shift.card_refunds))}</p>
       </CardContent></Card>
       <Card><CardHeader><CardTitle>Sayım ve yetkilendirme</CardTitle><CardDescription>Kapanışı vardiya kasiyeri veya yetkili müdür PIN’iyle onaylar.</CardDescription></CardHeader><CardContent className="space-y-4">
         <div className="grid grid-cols-2 gap-2"><Button type="button" variant={mode === "close" ? "default" : "outline"} onClick={() => setMode("close")}><LogOut />Kapat</Button><Button type="button" variant={mode === "handoff" ? "default" : "outline"} onClick={() => setMode("handoff")}><Repeat2 />Devret</Button></div>

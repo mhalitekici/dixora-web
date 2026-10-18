@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly Dixora backup at 03:15 in the host timezone
+
+[Timer]
+OnCalendar=*-*-* 03:15:00
+RandomizedDelaySec=5m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

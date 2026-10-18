@@ -19,6 +19,10 @@ import {
 } from "lucide-react";
 import { useMemo, useState } from "react";
 import { toast } from "sonner";
+import {
+  PaymentRefundDialog,
+  type RefundTarget,
+} from "@/components/cashier/payment-refund-dialog";
 
 import { PageHeader } from "@/components/shared/page-header";
 import { EmptyState } from "@/components/shared/empty-state";
@@ -35,6 +39,7 @@ import { Input } from "@/components/ui/input";
 import { useCurrentUser } from "@/hooks/use-auth";
 import { formatDateTime, formatMoney } from "@/lib/formatters";
 import { cn } from "@/lib/utils";
+import { hasPermission, PERMISSIONS } from "@/lib/permissions";
 
 type Order = {
   id: string;
@@ -51,6 +56,7 @@ type Order = {
     amount: string | number;
     status: string;
     reference?: string | null;
+    refund_reason?: string | null;
   }>;
 };
 
@@ -206,6 +212,17 @@ const METHOD_FILTERS = ["ALL", "CASH", "CARD", "ROOM_CHARGE"] as const;
 type MethodFilter = (typeof METHOD_FILTERS)[number];
 
 export function ClosedOrdersPage() {
+  const session = useCurrentUser();
+  const [refundTarget, setRefundTarget] = useState<RefundTarget | null>(null);
+  const shiftQuery = useQuery({
+    queryKey: ["shifts", "current"],
+    queryFn: () => request<CashierShift | null>("/shifts/current"),
+    refetchInterval: 30_000,
+  });
+  const canRefund = hasPermission(session.data, PERMISSIONS.payment.manage);
+  const refundShiftReady =
+    session.data?.user.roleCode !== "CASHIER" ||
+    shiftQuery.data?.status === "OPEN";
   const [search, setSearch] = useState("");
   const [methodFilter, setMethodFilter] = useState<MethodFilter>("ALL");
   const query = useQuery({
@@ -260,7 +277,14 @@ export function ClosedOrdersPage() {
   }, [orders, search, methodFilter, receiptsByOrder]);
   const paidTotal = orders
     .filter((order) => order.status === "PAID")
-    .reduce((total, order) => total + Number(order.total), 0);
+    .reduce(
+      (total, order) =>
+        total +
+        (order.payments ?? [])
+          .filter((payment) => payment.status === "COMPLETED")
+          .reduce((amount, payment) => amount + Number(payment.amount), 0),
+      0,
+    );
   const roomTotal = paymentTotal(orders, "ROOM_CHARGE");
 
   const reprint = useMutation({
@@ -397,6 +421,47 @@ export function ClosedOrdersPage() {
                   <p className="text-xs text-muted-foreground">
                     {paymentSummary(order)}
                   </p>
+                  {(order.payments ?? []).map((payment) => (
+                    <div
+                      key={payment.id}
+                      className="mt-2 flex flex-wrap items-center gap-2 text-xs"
+                    >
+                      <span>
+                        {paymentMethodLabel(payment.method)} ·{" "}
+                        {formatMoney(payment.amount, order.currency)}
+                      </span>
+                      {payment.status === "REFUNDED" ? (
+                        <span className="text-muted-foreground">
+                          İade edildi
+                          {payment.refund_reason
+                            ? ` · ${payment.refund_reason}`
+                            : ""}
+                        </span>
+                      ) : payment.status === "COMPLETED" && canRefund ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="min-h-9"
+                          disabled={!refundShiftReady}
+                          title={
+                            refundShiftReady
+                              ? undefined
+                              : "İade için önce vardiya açın"
+                          }
+                          aria-label={`${paymentMethodLabel(payment.method)} ${formatMoney(payment.amount, order.currency)} ödemesini iade et`}
+                          onClick={() =>
+                            setRefundTarget({
+                              orderId: order.id,
+                              payment,
+                              currency: order.currency,
+                            })
+                          }
+                        >
+                          İade et
+                        </Button>
+                      ) : null}
+                    </div>
+                  ))}
                 </div>
                 <div>
                   <Badge
@@ -436,6 +501,12 @@ export function ClosedOrdersPage() {
           ) : null}
         </CardContent>
       </Card>
+      <PaymentRefundDialog
+        key={refundTarget?.payment.id ?? "no-refund"}
+        target={refundTarget}
+        allowed={canRefund && refundShiftReady}
+        onClose={() => setRefundTarget(null)}
+      />
     </div>
   );
 }

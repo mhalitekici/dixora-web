@@ -614,7 +614,11 @@ async def order_activity_detail(
                 status=PaymentStatus(payment.status).value,
                 reference=payment.reference,
                 recorded_at=payment.created_at,
-                recorded_by=recorders.get(payment.recorded_by_user_id),
+                recorded_by=(
+                    recorders.get(payment.recorded_by_user_id)
+                    if payment.recorded_by_user_id is not None
+                    else None
+                ),
             )
             for payment in sorted(order.payments, key=lambda row: row.created_at)
         ],

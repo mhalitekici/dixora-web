@@ -1,0 +1,114 @@
+# Disposable integration stack: independent project/network and no persistent volumes.
+# docker compose -p dixora-validation -f infrastructure/docker-compose.validation.yml up -d --build --wait
+services:
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_USER: dixora
+      POSTGRES_PASSWORD: validation-only-password
+      POSTGRES_DB: dixora_validation
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dixora -d dixora_validation"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/minio.Dockerfile
+      target: server
+    image: dixora-minio-validation:local
+    command: server /data
+    environment:
+      MINIO_ROOT_USER: validation
+      MINIO_ROOT_PASSWORD: validation-only-minio-password
+    tmpfs:
+      - /data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:9000/minio/health/live",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  api:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/api.Dockerfile
+      target: development
+    image: dixora-api-validation:local
+    environment:
+      DIXORA_ENVIRONMENT: development
+      DIXORA_DATABASE_URL: postgresql+asyncpg://dixora:validation-only-password@postgres:5432/dixora_validation
+      DIXORA_JWT_SECRET: validation-only-jwt-secret-at-least-32-characters
+      DIXORA_PRINT_BRIDGE_KEY: validation-only-print-key-at-least-32-characters
+      DIXORA_AUTO_CREATE_SCHEMA: "false"
+      DIXORA_DEV_SEED_ENABLED: "true"
+      DIXORA_PIN_LOGIN_ENABLED: "true"
+      DIXORA_EMAIL_PROVIDER: development
+      DIXORA_LOYALTY_VERIFICATION_PROVIDER: development
+      DIXORA_PAYMENT_PROVIDER: none
+      DIXORA_S3_ENDPOINT: http://minio:9000
+      DIXORA_S3_ACCESS_KEY: validation
+      DIXORA_S3_SECRET_KEY: validation-only-minio-password
+      DIXORA_S3_BUCKET: dixora-validation-media
+      DIXORA_S3_REGION: us-east-1
+      DIXORA_LOG_LEVEL: WARNING
+    command:
+      [
+        "sh",
+        "-c",
+        "alembic upgrade head && dixora-seed && exec uvicorn app.main:app --host 0.0.0.0 --port 8000",
+      ]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${DIXORA_VALIDATION_API_PORT:-18000}:8000"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "python",
+          "-c",
+          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)",
+        ]
+      interval: 3s
+      timeout: 5s
+      retries: 30
+      start_period: 20s
+
+  web:
+    profiles: ["browser"]
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/web.Dockerfile
+      args:
+        NEXT_PUBLIC_API_URL: http://localhost:18000/api/v1
+        NEXT_PUBLIC_WS_URL: ws://localhost:18000/api/v1/ws
+        NEXT_PUBLIC_APP_URL: http://localhost:13000
+        NEXT_PUBLIC_ENABLE_PIN_LOGIN: "true"
+    image: dixora-web-validation:local
+    environment:
+      NODE_ENV: production
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+      BACKEND_API_URL: http://api:8000/api/v1
+      AUTH_COOKIE_SECURE: "false"
+    ports:
+      - "127.0.0.1:13000:3000"
+    depends_on:
+      api:
+        condition: service_healthy
