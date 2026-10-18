@@ -1,6 +1,6 @@
-"use client";
+"use client"
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   Banknote,
   CalendarCheck2,
@@ -8,72 +8,72 @@ import {
   CreditCard,
   Loader2,
   MonitorDot,
-} from "lucide-react";
-import { useMemo, useState } from "react";
-import { toast } from "sonner";
+} from "lucide-react"
+import { useMemo, useState } from "react"
+import { toast } from "sonner"
 
-import { EmptyState } from "@/components/shared/empty-state";
-import { PageHeader } from "@/components/shared/page-header";
-import { Button } from "@/components/ui/button";
+import { EmptyState } from "@/components/shared/empty-state"
+import { PageHeader } from "@/components/shared/page-header"
+import { Button } from "@/components/ui/button"
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/components/ui/card";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
-import { api } from "@/lib/api";
-import { cn } from "@/lib/utils";
-import { useCurrentUser } from "@/hooks/use-auth";
-import { hasPermission } from "@/lib/permissions";
-import { ErrorState } from "@/components/admin/admin-utils";
+} from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { api } from "@/lib/api"
+import { cn } from "@/lib/utils"
+import { useCurrentUser } from "@/hooks/use-auth"
+import { hasPermission } from "@/lib/permissions"
+import { ErrorState } from "@/components/admin/admin-utils"
 
 type Shift = {
-  id: string;
-  user_display_name: string | null;
-  cashier_name: string | null;
-  closed_by_display_name: string | null;
-  business_date: string;
-  status: string;
-  opening_cash: string;
-  closing_cash: string | null;
-  cash_sales: string;
-  card_sales: string;
-  cash_refunds: string;
-  card_refunds: string;
-  expected_cash: string;
-  total_sales: string;
-  cash_variance: string | null;
-  reported_card_total: string | null;
-  card_variance: string | null;
-  opened_at: string;
-  closed_at: string | null;
-  opening_note: string | null;
-  closing_note: string | null;
-};
+  id: string
+  user_display_name: string | null
+  cashier_name: string | null
+  closed_by_display_name: string | null
+  business_date: string
+  status: string
+  opening_cash: string
+  closing_cash: string | null
+  cash_sales: string
+  card_sales: string
+  cash_refunds: string
+  card_refunds: string
+  expected_cash: string
+  total_sales: string
+  cash_variance: string | null
+  reported_card_total: string | null
+  card_variance: string | null
+  opened_at: string
+  closed_at: string | null
+  opening_note: string | null
+  closing_note: string | null
+}
 type Day = {
-  id: string;
-  business_date: string;
-  closed_by_display_name: string | null;
-  closed_at: string;
-  system_cash_total: string;
-  system_card_total: string;
-  expected_cash: string;
-  counted_cash: string;
-  reported_card_total: string;
-  cash_difference: string;
-  card_difference: string;
-  sales_total: string;
-  cash_refunds: string;
-  card_refunds: string;
-  discounts_total: string;
-  complimentary_total: string;
-  service_charge_total: string;
-  receipt_count: number;
-  note: string | null;
-};
+  id: string
+  business_date: string
+  closed_by_display_name: string | null
+  closed_at: string
+  system_cash_total: string
+  system_card_total: string
+  expected_cash: string
+  counted_cash: string
+  reported_card_total: string
+  cash_difference: string
+  card_difference: string
+  sales_total: string
+  cash_refunds: string
+  card_refunds: string
+  discounts_total: string
+  complimentary_total: string
+  service_charge_total: string
+  receipt_count: number
+  note: string | null
+}
 type Preview = Omit<
   Day,
   | "id"
@@ -84,15 +84,15 @@ type Preview = Omit<
   | "cash_difference"
   | "card_difference"
   | "note"
-> & { opening_cash: string; open_shift_count: number };
+> & { opening_cash: string; open_shift_count: number }
 const money = new Intl.NumberFormat("tr-TR", {
   style: "currency",
   currency: "TRY",
-});
-const m = (value: string | number) => money.format(Number(value));
+})
+const m = (value: string | number) => money.format(Number(value))
 
 function State({ value }: { value: number }) {
-  const label = value === 0 ? "TAM" : value < 0 ? "EKSİK" : "FAZLA";
+  const label = value === 0 ? "TAM" : value < 0 ? "EKSİK" : "FAZLA"
   return (
     <span
       className={cn(
@@ -107,35 +107,35 @@ function State({ value }: { value: number }) {
       {label} · {value > 0 ? "+" : ""}
       {m(value)}
     </span>
-  );
+  )
 }
 
 export function ShiftHistory() {
-  const currentUser = useCurrentUser();
-  const canCloseDay = hasPermission(currentUser.data, "cashier.day.close");
-  const client = useQueryClient();
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
-  const [status, setStatus] = useState("");
-  const [employee, setEmployee] = useState("");
-  const [expanded, setExpanded] = useState<string | null>(null);
-  const [username, setUsername] = useState("");
-  const [pin, setPin] = useState("");
-  const [counted, setCounted] = useState("");
-  const [cardZ, setCardZ] = useState("");
-  const [note, setNote] = useState("");
-  const [closingShiftId, setClosingShiftId] = useState<string | null>(null);
+  const currentUser = useCurrentUser()
+  const canCloseDay = hasPermission(currentUser.data, "cashier.day.close")
+  const client = useQueryClient()
+  const [from, setFrom] = useState("")
+  const [to, setTo] = useState("")
+  const [status, setStatus] = useState("")
+  const [employee, setEmployee] = useState("")
+  const [expanded, setExpanded] = useState<string | null>(null)
+  const [username, setUsername] = useState("")
+  const [pin, setPin] = useState("")
+  const [counted, setCounted] = useState("")
+  const [cardZ, setCardZ] = useState("")
+  const [note, setNote] = useState("")
+  const [closingShiftId, setClosingShiftId] = useState<string | null>(null)
   const search = {
     limit: 100,
     date_from: from || undefined,
     date_to: to || undefined,
     status: status || undefined,
-  };
+  }
   const shifts = useQuery({
     queryKey: ["shifts", "history", search],
     queryFn: ({ signal }) =>
       api.get<Shift[]>("shifts/history", { search, signal }),
-  });
+  })
   const days = useQuery({
     queryKey: ["shifts", "day-history", from, to],
     queryFn: ({ signal }) =>
@@ -147,13 +147,13 @@ export function ShiftHistory() {
         },
         signal,
       }),
-  });
+  })
   const preview = useQuery({
     queryKey: ["shifts", "day-preview"],
     queryFn: ({ signal }) => api.get<Preview>("shifts/day/preview", { signal }),
     retry: false,
     enabled: canCloseDay,
-  });
+  })
   const openShifts = useQuery({
     queryKey: ["shifts", "open"],
     queryFn: ({ signal }) =>
@@ -161,7 +161,7 @@ export function ShiftHistory() {
         search: { limit: 100, status: "OPEN" },
         signal,
       }),
-  });
+  })
   const filtered = useMemo(
     () =>
       (shifts.data ?? []).filter((row) =>
@@ -170,57 +170,53 @@ export function ShiftHistory() {
           .includes(employee.toLocaleLowerCase("tr")),
       ),
     [shifts.data, employee],
-  );
+  )
   const openRows = (openShifts.data ?? []).filter(
     (shift) => shift.status === "OPEN",
-  );
+  )
   const closingShift =
     openRows.find((shift) => shift.id === closingShiftId) ??
-    (openRows.length === 1 ? openRows[0] : null);
+    (openRows.length === 1 ? openRows[0] : null)
   const expectedCash =
-    closingShift?.expected_cash ?? preview.data?.expected_cash;
+    closingShift?.expected_cash ?? preview.data?.expected_cash
   const expectedCard = closingShift
-    ? (
-        (Math.round(Number(closingShift.card_sales) * 100) -
-          Math.round(Number(closingShift.card_refunds) * 100)) /
-        100
-      ).toFixed(2)
-    : preview.data?.system_card_total;
+    ? ((Math.round(Number(closingShift.card_sales) * 100) -
+        Math.round(Number(closingShift.card_refunds) * 100)) / 100).toFixed(2)
+    : preview.data?.system_card_total
   const cashDifference =
     expectedCash && counted !== ""
       ? Number(counted.replace(",", ".")) - Number(expectedCash)
-      : null;
+      : null
   const cardDifference =
     expectedCard && cardZ !== ""
       ? (Math.round(Number(cardZ.replace(",", ".")) * 100) -
-          Math.round(Number(expectedCard) * 100)) /
-        100
-      : null;
+          Math.round(Number(expectedCard) * 100)) / 100
+      : null
   const closeShift = useMutation({
     mutationFn: () => {
-      if (!closingShift) throw new Error("Kapatılacak vardiyayı seçin.");
+      if (!closingShift) throw new Error("Kapatılacak vardiyayı seçin.")
       return api.post<Shift>(`shifts/${closingShift.id}/close`, {
         username: username.trim(),
         pin,
         closing_cash: counted.replace(",", "."),
         reported_card_total: cardZ.replace(",", "."),
         note: note.trim() || null,
-      });
+      })
     },
     onSuccess: async () => {
-      toast.success("Açık vardiya kapatıldı. Şimdi gün sonunu verebilirsiniz.");
-      setClosingShiftId(null);
-      setPin("");
-      setCounted("");
-      setCardZ("");
-      setNote("");
-      await client.invalidateQueries({ queryKey: ["shifts"] });
+      toast.success("Açık vardiya kapatıldı. Şimdi gün sonunu verebilirsiniz.")
+      setClosingShiftId(null)
+      setPin("")
+      setCounted("")
+      setCardZ("")
+      setNote("")
+      await client.invalidateQueries({ queryKey: ["shifts"] })
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "Vardiya kapatılamadı.",
       ),
-  });
+  })
   const closeDay = useMutation({
     mutationFn: () =>
       api.post<Day>("shifts/business-day-close", {
@@ -231,15 +227,15 @@ export function ShiftHistory() {
         note: note.trim() || null,
       }),
     onSuccess: async () => {
-      toast.success("İşletme günü kapatıldı.");
-      setPin("");
-      await client.invalidateQueries({ queryKey: ["shifts"] });
+      toast.success("İşletme günü kapatıldı.")
+      setPin("")
+      await client.invalidateQueries({ queryKey: ["shifts"] })
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "Gün sonu tamamlanamadı.",
       ),
-  });
+  })
   return (
     <div className="min-h-full space-y-5 bg-muted/20 p-4 sm:p-6">
       <PageHeader
@@ -296,7 +292,7 @@ export function ShiftHistory() {
         ) : (
           <div className="grid gap-3 lg:grid-cols-2">
             {filtered.map((shift) => {
-              const variance = Number(shift.cash_variance ?? 0);
+              const variance = Number(shift.cash_variance ?? 0)
               return (
                 <Card key={shift.id}>
                   <CardHeader className="pb-3">
@@ -403,7 +399,7 @@ export function ShiftHistory() {
                     ) : null}
                   </CardContent>
                 </Card>
-              );
+              )
             })}
           </div>
         )}
@@ -605,7 +601,7 @@ export function ShiftHistory() {
         </div>
       </section>
     </div>
-  );
+  )
 }
 
 function Field({
@@ -617,7 +613,7 @@ function Field({
   React.ComponentProps<typeof Input>,
   "value" | "onChange"
 >) {
-  const id = `report-${label.toLowerCase().replaceAll(" ", "-")}`;
+  const id = `report-${label.toLowerCase().replaceAll(" ", "-")}`
   return (
     <div>
       <Label htmlFor={id}>{label}</Label>
@@ -629,16 +625,16 @@ function Field({
         {...props}
       />
     </div>
-  );
+  )
 }
 function Metric({
   label,
   value,
   icon,
 }: {
-  label: string;
-  value: string;
-  icon?: React.ReactNode;
+  label: string
+  value: string
+  icon?: React.ReactNode
 }) {
   return (
     <div className="rounded-xl bg-muted/45 p-3">
@@ -650,7 +646,7 @@ function Metric({
         {value.includes("₺") ? value : m(value)}
       </p>
     </div>
-  );
+  )
 }
 function Detail({ label, value }: { label: string; value: string }) {
   return (
@@ -658,5 +654,5 @@ function Detail({ label, value }: { label: string; value: string }) {
       <span className="text-muted-foreground">{label}</span>
       <span className="text-right font-medium tabular-nums">{value}</span>
     </div>
-  );
+  )
 }
