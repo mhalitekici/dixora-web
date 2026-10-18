@@ -23,3 +23,24 @@ LABEL org.opencontainers.image.source="https://github.com/minio/minio" \
 EXPOSE 9000 9001
 ENTRYPOINT ["minio"]
 CMD ["server", "/data"]
+
+FROM golang:1.25.7-alpine AS client-source
+RUN apk add --no-cache git ca-certificates
+WORKDIR /src/mc
+RUN git init \
+    && git remote add origin https://github.com/minio/mc.git \
+    && git fetch --depth=1 origin b00526b153a31b36767991a4f5ce2cced435ee8e \
+    && git checkout --detach FETCH_HEAD
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -o /out/mc .
+
+FROM alpine:3.22.3 AS client
+RUN apk add --no-cache ca-certificates
+COPY --from=client-source /out/mc /usr/local/bin/mc
+COPY --from=client-source /src/mc/LICENSE /licenses/mc-LICENSE
+COPY --from=client-source /src/mc/NOTICE /licenses/mc-NOTICE
+LABEL org.opencontainers.image.source="https://github.com/minio/mc" \
+      org.opencontainers.image.revision="b00526b153a31b36767991a4f5ce2cced435ee8e" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
+ENTRYPOINT ["mc"]

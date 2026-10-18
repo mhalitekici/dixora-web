@@ -307,12 +307,13 @@ COMPOSE_FILE=docker-compose.prod.yml COMPOSE_ENV_FILES=.env.production \
   python3 ops/backup.py create --directory /srv/dixora-backups --quiesce
 ```
 
-Schedule the supplied systemd timer or the documented cron command outside
-business hours. `--quiesce` briefly stops the web/API writers and restarts them
-afterwards. Retention defaults to 14 days; set `RETENTION_DAYS=30` if required.
-Store a verified encrypted copy offsite and rehearse recovery into a fresh database
-and fresh bucket monthly. Production scheduler installation and offsite storage
-configuration require access to that host.
+Configure the independent encrypted restic destination and run
+`sudo bash ops/install-backup-timer.sh` as described in Operations. The installer
+enables the timer only after an actual backup and remote upload succeed.
+`--quiesce` briefly stops the web/API writers and restarts them before uploading.
+Local retention defaults to 14 days; set `RETENTION_DAYS=30` if required. Rehearse
+remote recovery into a fresh database and bucket monthly. Production activation
+requires SSH access and a configured independent storage target.
 
 ## 16. Update procedure
 

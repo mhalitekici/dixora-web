@@ -51,32 +51,74 @@ export COMPOSE_ENV_FILES=.env.production
 python3 ops/backup.py create --directory /srv/dixora-backups --quiesce
 ```
 
-Install the supplied systemd units on the production host (paths assume
-`/srv/dixora` and the `dixora` user with Docker access):
+The production timer **requires an encrypted off-host copy**. Configure restic
+first (paths assume `/srv/dixora` and the `dixora` user with Docker access):
 
 ```bash
-sudo install -d -m 700 -o dixora -g dixora /srv/dixora-backups
-sudo install -m 644 ops/systemd/dixora-backup.{service,timer} /etc/systemd/system/
-sudo systemctl daemon-reload
-sudo systemctl enable --now dixora-backup.timer
-systemctl list-timers dixora-backup.timer
+sudo apt-get update && sudo apt-get install -y restic
+sudo install -d -m 750 -o root -g dixora /etc/dixora
+sudo install -m 600 -o root -g root ops/backup.env.example /etc/dixora/backup.env
+sudo editor /etc/dixora/backup.env
+# Generate the repository encryption password without printing it.
+sudo sh -c 'set -C; umask 077; openssl rand -hex 32 > /etc/dixora/restic-password'
+sudo chown dixora:dixora /etc/dixora/restic-password
+# Save this password in a separate password manager/recovery location now.
+# Initialize a NEW repository once; skip for an existing repository.
+sudo systemd-run --wait --collect --uid=dixora \
+  --property=EnvironmentFile=/etc/dixora/backup.env \
+  /usr/bin/python3 /srv/dixora/ops/offsite.py init
+sudo bash ops/install-backup-timer.sh
+```
+
+Set `RESTIC_REPOSITORY` to an independent S3 HTTPS endpoint/bucket or SFTP host.
+Use dedicated credentials; the application server's own MinIO is not an offsite
+destination. SFTP requires noninteractive SSH and a verified `known_hosts` entry
+for `dixora`. Local and loopback repositories are rejected by scheduled backups.
+Keep the repository location, credentials, encryption password, Compose settings
+and application secrets outside this server so a total host loss is recoverable.
+Restic's [repository setup](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html)
+documents S3/SFTP configuration and password recovery requirements.
+
+The installer checks prerequisites, runs a real backup/upload first, then enables
+and checks the timer. It runs at 03:15 in the **host timezone**, with up to five
+minutes of jitter, and catches up after downtime. `--quiesce` stops web/API only
+during the local snapshot; they restart before offsite upload. Failed uploads or
+repository checks fail the service, preserve the new local bundle, and skip local
+retention. Restic snapshots are encrypted and are not automatically deleted.
+Plan remote retention separately with the storage owner.
+
+```bash
+systemctl is-enabled dixora-backup.timer
+systemctl is-active dixora-backup.timer
+systemctl list-timers --all dixora-backup.timer
 journalctl -u dixora-backup.service
+# Full remote data integrity scan (e.g. monthly):
+sudo systemd-run --wait --collect --uid=dixora \
+  --property=EnvironmentFile=/etc/dixora/backup.env \
+  /usr/bin/python3 /srv/dixora/ops/offsite.py check
 ```
 
-The timer runs at 03:15 in the **host timezone**, with up to five minutes of
-jitter, and catches up after downtime. A cron alternative is:
-
-```cron
-15 3 * * * cd /srv/dixora && COMPOSE_FILE=docker-compose.prod.yml COMPOSE_ENV_FILES=.env.production BACKUP_DIR=/srv/dixora-backups /usr/bin/python3 ops/backup.py create --quiesce >> /var/log/dixora-backup.log 2>&1
-```
-
-Choose one scheduler. No production timer is installed by changing this repository.
-Monitor failures and the age of the latest successful backup. Store verified
-bundles on an encrypted destination outside the application host as well; a local
-bundle does not protect against loss of the server. Offsite credentials and the
-production host are deployment inputs, not included in this repository.
+No production timer is installed by changing this repository. Monitor failed
+service runs and snapshot age in the **remote** repository. A successful manual
+local backup does not prove the timer or remote upload is working. Snapshot IDs
+appear in the journal and each local bundle's `offsite.json` receipt. To retry an
+existing bundle, run `ops/offsite.py upload BUNDLE` with the same environment.
 
 ### Restore drill
+
+On a replacement host, restore `/etc/dixora/backup.env` and the encryption
+password from the separate recovery location, install restic, then list and
+download a specific snapshot (run via `systemd-run` as above to load secrets):
+
+```bash
+python3 ops/offsite.py snapshots
+python3 ops/offsite.py download SNAPSHOT_ID --directory /srv/dixora-recovered-20261018
+```
+
+`download` requires a fresh directory, runs restic's restore verification and
+checks the recovered bundle's checksums. Use its `recovered_bundle` output below.
+Restore the saved production configuration and build the pinned images on the
+replacement host before restoring into fresh PostgreSQL/MinIO destinations.
 
 ```bash
 python3 ops/backup.py restore /srv/dixora-backups/dixora-TIMESTAMP-ID \
@@ -122,16 +164,30 @@ closure with open-shift and duplicate-close guards. Run once per fresh stack. Ad
 `--profile browser` to Compose to serve the isolated web UI on port 13000.
 The CI `Business day and backup restore` job runs the HTTP and restore checks on
 every configured push/PR, including a Unicode media key and an empty object.
-The validation MinIO image builds the production release's immutable official
-source commit (`0d7408f`) because its legacy community registry tag is no longer
-available to clean runners. See the upstream [source distribution instructions](https://github.com/minio/minio#source-only-distribution).
+Both production and validation MinIO images build the production release's
+immutable official source commit (`0d7408f`). The production `mc` initializer
+builds commit `b00526b1`. The legacy community registry tags are no longer needed.
+CI boots the production image definitions on disposable storage, checks private
+bucket initialization twice and reads/writes an object. See the upstream
+[source distribution instructions](https://github.com/minio/minio#source-only-distribution).
+Use explicit Dockerfile targets `server` and `client` for manual builds. Preserve
+the pinned source version when updating existing data volumes; do not downgrade
+a volume written by a newer MinIO version.
+
+CI also encrypts a bundle into a local test restic repository, downloads and
+verifies it, and restores the recovered database and media. This tests the
+transfer/recovery mechanism; it does not establish a live offsite destination.
 
 POS reconciliation uses card sales minus card refunds. Shift and business-day
 closures accept negative net POS totals when refunds exceed that period's sales;
 gross sales and refund amounts remain separate in reports. The HTTP drill also
 refunds a fully paid card payment, repeats the refund, and records a corrected
-payment before checking the net POS closing amount. Refund initiation is currently
-available through the API; the cashier interface has no refund action.
+payment before checking the net POS closing amount. The cashier payment history
+and closed orders screen offer a full-payment refund action to users with `payments.manage`. Cashiers
+need an open shift. The confirmation requires a reason and explains that cash
+must be returned or the POS refund completed separately. Refunded payments remain
+visible; an unpaid balance can be collected again for a correction. The refund
+does not cancel products. Closed table sessions are not reopened by this action.
 
 ## Subscription billing
 

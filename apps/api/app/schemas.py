@@ -1013,6 +1013,7 @@ class PaymentOut(ORMModel):
     shift_id: UUID | None = None
     refund_shift_id: UUID | None = None
     refunded_at: datetime | None = None
+    refund_reason: str | None = None
 
 
 class OrderOut(ORMModel):

@@ -210,8 +210,13 @@ jobs:
         run: |
           bash -n ops/backup.sh
           bash -n ops/restore.sh
+          bash -n ops/install-backup-timer.sh
+          systemd-analyze verify ops/systemd/dixora-backup.service ops/systemd/dixora-backup.timer
           bash ops/backup.sh --help
           bash ops/restore.sh . --help
+
+      - name: Production MinIO source images, initializer and private object storage
+        run: python ops/validate_minio.py
 
       - name: Start disposable PostgreSQL and MinIO stack
         run: docker compose up -d --build --wait api
@@ -228,6 +233,14 @@ jobs:
           bundle=$(find backups/ci -mindepth 1 -maxdepth 1 -type d -name 'dixora-*' | head -n 1)
           python ops/backup.py verify "$bundle"
           python ops/backup.py restore "$bundle" --database dixora_restore_ci --bucket dixora-restore-ci
+
+      - name: Encrypted offsite transfer and recovery mechanism (local test repository)
+        run: |
+          sudo apt-get update && sudo apt-get install -y restic
+          bundle=$(find backups/ci -mindepth 1 -maxdepth 1 -type d -name 'dixora-*' | head -n 1)
+          python ops/validate_offsite.py "$bundle" --directory backups/offsite-drill > /tmp/offsite-receipt.json
+          recovered=$(python -c 'import json; print(json.load(open("/tmp/offsite-receipt.json"))["recovered_bundle"])')
+          python ops/backup.py restore "$recovered" --database dixora_offsite_ci --bucket dixora-offsite-ci
 
       - name: Failure diagnostics
         if: failure()

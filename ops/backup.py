@@ -18,6 +18,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from media_snapshot import inspect_archive
+import offsite
 
 ROOT = Path(__file__).resolve().parents[1]
 PG = os.environ.get("POSTGRES_SERVICE", "postgres")
@@ -133,6 +134,9 @@ def prune(directory, days):
 
 
 def backup(args):
+    if args.offsite:
+        # Fail before stopping writers if the encrypted remote is unavailable.
+        offsite.preflight()
     directory = args.directory.resolve()
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     lock = directory / ".backup.lock"
@@ -166,10 +170,15 @@ def backup(args):
             name = f"dixora-{datetime.now(UTC):%Y%m%dT%H%M%SZ}-{uuid.uuid4().hex[:8]}"
             destination = directory / name
             bundle.rename(destination)
-        # Pruning happens only after both stores have been archived and verified.
+        snapshot = offsite.upload(destination) if args.offsite else None
+        if snapshot:
+            (destination / "offsite.json").write_text(
+                json.dumps({"snapshot_id": snapshot}) + "\n", encoding="utf-8",
+            )
+        # An offsite failure leaves the local bundle intact and skips retention.
         prune(directory, args.retention_days)
         print(json.dumps({"backup": str(destination), "objects": summary["objects"],
-                          "writers_quiesced": args.quiesce}))
+                          "writers_quiesced": args.quiesce, "offsite_snapshot": snapshot}))
     finally:
         try:
             pg("rm", "-f", remote)
@@ -219,6 +228,7 @@ def main():
     create.add_argument("--directory", type=Path, default=Path(os.environ.get("BACKUP_DIR", ROOT / "backups")))
     create.add_argument("--retention-days", type=int, default=int(os.environ.get("RETENTION_DAYS", "14")))
     create.add_argument("--quiesce", action="store_true", help="Stop running web/API writers and restart them afterwards")
+    create.add_argument("--offsite", action="store_true", help="Require a verified encrypted restic copy before pruning")
     check = actions.add_parser("verify")
     check.add_argument("bundle", type=Path)
     recover = actions.add_parser("restore")

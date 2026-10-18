@@ -214,6 +214,7 @@ async def test_card_refund_reconciles_net_pos_total(api: ApiContext, replacement
             json={"reason": "POS ödeme düzeltmesi"},
         )
         assert refunded.status_code == 200, refunded.text
+        assert refunded.json()["refund_reason"] == "POS ödeme düzeltmesi"
     if replacement:
         corrected = await api.client.post(
             f"/api/v1/orders/{order['id']}/payments",
