@@ -1852,7 +1852,7 @@ class ShiftOpen(StaffPinVerification):
 
 class ShiftClose(StaffPinVerification):
     closing_cash: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
-    reported_card_total: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=2)
+    reported_card_total: Decimal | None = Field(default=None, max_digits=14, decimal_places=2)
     note: str | None = Field(default=None, max_length=500)
 
 
@@ -1900,7 +1900,7 @@ class ShiftHandoffOut(BaseModel):
 
 class BusinessDayCloseCreate(StaffPinVerification):
     counted_cash: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
-    reported_card_total: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    reported_card_total: Decimal = Field(max_digits=14, decimal_places=2)
     note: str | None = Field(default=None, max_length=500)
 
 

@@ -110,6 +110,7 @@ describe("ShiftHistory", () => {
       closing_cash: null,
       expected_cash: "250.00",
       card_sales: "250.00",
+      card_refunds: "20.00",
     })
     const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
@@ -172,8 +173,9 @@ describe("ShiftHistory", () => {
       target: { value: "250" },
     })
     fireEvent.change(screen.getByLabelText("Vardiya POS / Z kart toplamı"), {
-      target: { value: "250" },
+      target: { value: "230" },
     })
+    expect(screen.getAllByText("TAM · ₺0,00")).toHaveLength(2)
     expect(
       screen.getByRole("button", { name: /Halit Vardiyasını Kapat/ }),
     ).toBeEnabled()
@@ -191,7 +193,7 @@ describe("ShiftHistory", () => {
       username: "aley",
       pin: "8642",
       closing_cash: "250",
-      reported_card_total: "250",
+      reported_card_total: "230",
     })
     expect(
       await screen.findByRole("button", {

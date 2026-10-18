@@ -102,7 +102,7 @@ def main():
         "method": "CASH", "amount": "100.00", "idempotency_key": f"validation-cash2-{key}",
     }, token, 201)
     card_total = Decimal(order["total"]) - Decimal(cash2["amount"])
-    request("POST", order_path + "/payments", {
+    card = request("POST", order_path + "/payments", {
         "method": "CARD", "amount": str(card_total), "idempotency_key": f"validation-card-{key}",
     }, token, 201)
     settled = request("GET", order_path, token=token)
@@ -110,6 +110,16 @@ def main():
     payments = settled["payments"]
     assert sum(Decimal(p["amount"]) for p in payments if p["status"] == "COMPLETED") == Decimal(order["total"])
     CHECKED.append("cash/card split settles exactly the order balance after refund")
+    card_refund = order_path + f"/payments/{card['id']}/refund"
+    for _ in range(2):
+        request("POST", card_refund, {"reason": "Validation paid-order card refund"}, token)
+    totals = request("GET", "/shifts/current", token=token)
+    assert Decimal(totals["card_refunds"]) == card_total
+    request("POST", order_path + "/payments", {
+        "method": "CARD", "amount": str(card_total),
+        "idempotency_key": f"validation-card-correction-{key}",
+    }, token, 201)
+    CHECKED.append("paid-order card refund and retry count once; corrected collection reconciles net POS total")
     table_now = request("GET", f"/tables/{table['id']}", token=token)
     close_path = f"/tables/{table['id']}/sessions/{order['table_session_id']}/close"
     closed = request("POST", close_path, {"expected_table_version": table_now["version"]}, token)

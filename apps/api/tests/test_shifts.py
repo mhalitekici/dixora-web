@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
+import pytest
 from sqlalchemy import select
 
-from app.models import AuditLog, Branch, Payment, Role, User
+from app.models import AuditLog, Branch, CashierShift, Payment, Role, User
 from app.security import hash_password
 from app.services.cashier_reconciliation import business_window
 from tests.conftest import ApiContext, auth_headers, login, seeded_resources
@@ -182,6 +183,108 @@ async def test_shift_expected_cash_refunds_and_decimal_variance(api: ApiContext)
         json={**CASHIER, "closing_cash": "0"},
     )
     assert again.status_code == 409
+
+
+@pytest.mark.parametrize("replacement", [Decimal("0.00"), Decimal("360.00")])
+async def test_card_refund_reconciles_net_pos_total(api: ApiContext, replacement: Decimal) -> None:
+    headers = await _cashier_headers(api)
+    resources = await seeded_resources(api, headers)
+    shift = await _open(api, headers)
+    order = await _create_burger_order(
+        api,
+        headers,
+        table_id=resources["tables"][11]["id"],
+        product_id=resources["burger"]["id"],
+        key="card-refund-order-0001",
+    )
+    paid = await api.client.post(
+        f"/api/v1/orders/{order['id']}/payments",
+        headers=headers,
+        json={
+            "method": "CARD",
+            "amount": order["total"],
+            "idempotency_key": "card-refund-payment-0001",
+        },
+    )
+    assert paid.status_code == 201, paid.text
+    for _ in range(2):
+        refunded = await api.client.post(
+            f"/api/v1/orders/{order['id']}/payments/{paid.json()['id']}/refund",
+            headers=headers,
+            json={"reason": "POS ödeme düzeltmesi"},
+        )
+        assert refunded.status_code == 200, refunded.text
+    if replacement:
+        corrected = await api.client.post(
+            f"/api/v1/orders/{order['id']}/payments",
+            headers=headers,
+            json={
+                "method": "CARD",
+                "amount": str(replacement),
+                "idempotency_key": "card-refund-replacement-0001",
+            },
+        )
+        assert corrected.status_code == 201, corrected.text
+    closed = await _close(api, headers, shift["id"], "0.00", str(replacement))
+    assert Decimal(closed["card_sales"]) == Decimal("360.00") + replacement
+    assert Decimal(closed["card_refunds"]) == Decimal("360.00")
+    assert Decimal(closed["card_variance"]) == Decimal("0.00")
+    assert Decimal(closed["cash_variance"]) == Decimal("0.00")
+
+
+async def test_prior_day_card_refund_allows_negative_net_pos_close(api: ApiContext) -> None:
+    await _manager_pin(api)
+    headers = await _cashier_headers(api)
+    resources = await seeded_resources(api, headers)
+    previous = await _open(api, headers)
+    order = await _create_burger_order(
+        api,
+        headers,
+        table_id=resources["tables"][11]["id"],
+        product_id=resources["burger"]["id"],
+        key="prior-day-refund-order-0001",
+    )
+    paid = await api.client.post(
+        f"/api/v1/orders/{order['id']}/payments",
+        headers=headers,
+        json={
+            "method": "CARD",
+            "amount": order["total"],
+            "idempotency_key": "prior-day-refund-card-0001",
+        },
+    )
+    assert paid.status_code == 201, paid.text
+    await _close(api, headers, previous["id"], "0.00", "360.00")
+    async with api.database.session_factory() as db:
+        payment = await db.get(Payment, UUID(paid.json()["id"]))
+        old_shift = await db.get(CashierShift, UUID(previous["id"]))
+        assert payment is not None and old_shift is not None
+        payment.created_at -= timedelta(days=1)
+        old_shift.business_date -= timedelta(days=1)
+        await db.commit()
+    current = await _open(api, headers)
+    refunded = await api.client.post(
+        f"/api/v1/orders/{order['id']}/payments/{paid.json()['id']}/refund",
+        headers=headers,
+        json={"reason": "Önceki günün kart iadesi"},
+    )
+    assert refunded.status_code == 200, refunded.text
+    closed = await _close(api, headers, current["id"], "0.00", "-360.00")
+    assert closed["card_variance"] == "0.00"
+    manager = auth_headers(await login(api, username="manager@dixora.test"))
+    day = await api.client.post(
+        "/api/v1/shifts/business-day-close",
+        headers=manager,
+        json={
+            "username": "manager@dixora.test",
+            "pin": "8642",
+            "counted_cash": "0.00",
+            "reported_card_total": "-360.00",
+        },
+    )
+    assert day.status_code == 201, day.text
+    assert day.json()["system_card_total"] == "-360.00"
+    assert day.json()["card_difference"] == "0.00"
 
 
 async def test_handoff_requires_both_employees_and_explicit_opening_cash(api: ApiContext) -> None:

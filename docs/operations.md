@@ -126,6 +126,13 @@ The validation MinIO image builds the production release's immutable official
 source commit (`0d7408f`) because its legacy community registry tag is no longer
 available to clean runners. See the upstream [source distribution instructions](https://github.com/minio/minio#source-only-distribution).
 
+POS reconciliation uses card sales minus card refunds. Shift and business-day
+closures accept negative net POS totals when refunds exceed that period's sales;
+gross sales and refund amounts remain separate in reports. The HTTP drill also
+refunds a fully paid card payment, repeats the refund, and records a corrected
+payment before checking the net POS closing amount. Refund initiation is currently
+available through the API; the cashier interface has no refund action.
+
 ## Subscription billing
 
 Invoices are issued by a command, not by a timer inside the API. With several
