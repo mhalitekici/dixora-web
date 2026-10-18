@@ -1,7 +1,8 @@
 "use client"
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
-import { Megaphone, Pencil, Plus, Power } from "lucide-react"
+import Link from "next/link"
+import { Mail, Megaphone, Pencil, Plus, Power } from "lucide-react"
 import { useState } from "react"
 import { toast } from "sonner"
 
@@ -9,14 +10,25 @@ import {
   AUDIENCE_LABELS,
   REWARD_KIND_LABELS,
   type Campaign,
+  type CampaignNotificationStatus,
   campaignApi,
   campaignKeys,
 } from "@/components/campaigns/campaign-api"
 import { CampaignFormDialog } from "@/components/campaigns/campaign-form-dialog"
+import { ErrorState } from "@/components/admin/admin-utils"
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+
+const notificationLabels: Record<CampaignNotificationStatus, string> = {
+  NOT_REQUESTED: "E-posta duyurusu kapalı",
+  NO_RECIPIENTS: "E-posta izni veren uygun üye yok",
+  PENDING: "E-posta duyurusu gönderiliyor",
+  SENT: "E-posta duyurusu gönderildi",
+  FAILED: "E-posta gönderiminde hata oluştu",
+  CANCELLED: "E-posta duyurusu iptal edildi",
+}
 
 export function CampaignDashboard() {
   const queryClient = useQueryClient()
@@ -26,6 +38,12 @@ export function CampaignDashboard() {
   const campaignsQuery = useQuery({
     queryKey: campaignKeys.list(),
     queryFn: ({ signal }) => campaignApi.list(signal),
+    refetchInterval: (query) =>
+      query.state.data?.some((item) =>
+        ["PENDING", "FAILED"].includes(item.email_notification_status),
+      )
+        ? 10_000
+        : false,
   })
 
   const deactivateMutation = useMutation({
@@ -35,7 +53,9 @@ export function CampaignDashboard() {
       await queryClient.invalidateQueries({ queryKey: campaignKeys.root })
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Kampanya durdurulamadı."),
+      toast.error(
+        error instanceof Error ? error.message : "Kampanya durdurulamadı.",
+      ),
   })
 
   const campaigns = campaignsQuery.data ?? []
@@ -53,9 +73,9 @@ export function CampaignDashboard() {
   return (
     <div className="min-h-full bg-muted/20 p-4 sm:p-6">
       <PageHeader
-        eyebrow="Pazarlama"
+        eyebrow="Kampanyalar ve Sadakat"
         title="Kampanyalar"
-        description="Şunu alana şunu ver kurgusunda teklifler. Sadakat programından bağımsızdır; aynı anda birden fazla kampanya çalışabilir."
+        description="Üyelerinize özel teklifler oluşturun. Yayınladığınız kampanyalar e-posta izni veren üyelere otomatik duyurulur."
         icon={Megaphone}
         actions={
           <Button size="lg" onClick={openNew}>
@@ -86,6 +106,11 @@ export function CampaignDashboard() {
             />
           ))}
         </div>
+      ) : campaignsQuery.isError ? (
+        <ErrorState
+          error={campaignsQuery.error}
+          onRetry={() => void campaignsQuery.refetch()}
+        />
       ) : campaigns.length === 0 ? (
         <EmptyState
           title="Henüz kampanya yok"
@@ -138,6 +163,19 @@ export function CampaignDashboard() {
                   {campaign.branch_ids.length} şube
                 </span>
               </div>
+
+              <Link
+                href="/admin/notifications"
+                className="mt-3 flex items-start gap-2 rounded-lg border px-3 py-2 text-xs text-muted-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-ring"
+              >
+                <Mail className="mt-0.5 size-3.5 shrink-0" aria-hidden="true" />
+                <span>
+                  {notificationLabels[campaign.email_notification_status]}
+                  {campaign.email_notification_recipients > 0
+                    ? ` · ${campaign.email_notification_recipients} üye`
+                    : ""}
+                </span>
+              </Link>
 
               <div className="mt-3 flex gap-2">
                 <Button

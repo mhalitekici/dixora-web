@@ -204,7 +204,7 @@ async def _program_output(db: DbSession, program: LoyaltyProgram) -> LoyaltyProg
 
 
 @router.get("/program", response_model=LoyaltyProgramOut | None)
-async def get_program(identity: LoyaltyManager, db: DbSession) -> LoyaltyProgramOut | None:
+async def get_program(identity: LoyaltyReader, db: DbSession) -> LoyaltyProgramOut | None:
     program = (
         await db.execute(
             select(LoyaltyProgram)
@@ -395,9 +395,7 @@ def _rule_values(payload: LoyaltyProgramUpsert) -> dict[str, object]:
     }
 
 
-def _program_audit_value(
-    program: LoyaltyProgram, *, branch_ids: list[UUID]
-) -> dict[str, object]:
+def _program_audit_value(program: LoyaltyProgram, *, branch_ids: list[UUID]) -> dict[str, object]:
     rule = program.rule
     return {
         "name": program.name,
@@ -422,14 +420,10 @@ def _program_audit_value(
                     else None
                 ),
                 "reward_product_id": (
-                    str(rule.reward_product_id)
-                    if rule.reward_product_id is not None
-                    else None
+                    str(rule.reward_product_id) if rule.reward_product_id is not None else None
                 ),
                 "reward_category_id": (
-                    str(rule.reward_category_id)
-                    if rule.reward_category_id is not None
-                    else None
+                    str(rule.reward_category_id) if rule.reward_category_id is not None else None
                 ),
                 "minimum_order_amount": str(rule.minimum_order_amount),
                 "allow_multiple_same_day": rule.allow_multiple_same_day,
@@ -470,7 +464,7 @@ async def _validate_catalog_references(
 
 @router.get("/customers", response_model=list[LoyaltyCustomerOut])
 async def list_customers(
-    identity: LoyaltyManager,
+    identity: LoyaltyReader,
     db: DbSession,
     limit: int = Query(default=100, ge=1, le=250),
 ) -> list[LoyaltyCustomerOut]:
@@ -520,7 +514,14 @@ async def list_customers(
                 reward_totals,
                 reward_totals.c.membership_id == LoyaltyMembership.id,
             )
-            .where(LoyaltyMembership.tenant_id == tenant_id)
+            .where(
+                LoyaltyMembership.tenant_id == tenant_id,
+                *(
+                    [LoyaltyMembership.branch_id.in_(identity.accessible_branch_ids)]
+                    if not identity.has_all_branch_access
+                    else []
+                ),
+            )
             .order_by(LoyaltyMembership.created_at.desc())
             .limit(limit)
         )
@@ -548,7 +549,7 @@ async def list_customers(
 
 @router.get("/rewards", response_model=list[LoyaltyAdminRewardOut])
 async def list_rewards(
-    identity: LoyaltyManager,
+    identity: LoyaltyReader,
     db: DbSession,
     limit: int = Query(default=100, ge=1, le=250),
 ) -> list[LoyaltyAdminRewardOut]:
@@ -558,7 +559,14 @@ async def list_rewards(
             select(LoyaltyReward, LoyaltyMembership, LoyaltyProgram)
             .join(LoyaltyMembership, LoyaltyMembership.id == LoyaltyReward.membership_id)
             .join(LoyaltyProgram, LoyaltyProgram.id == LoyaltyReward.program_id)
-            .where(LoyaltyReward.tenant_id == tenant_id)
+            .where(
+                LoyaltyReward.tenant_id == tenant_id,
+                *(
+                    [LoyaltyReward.branch_id.in_(identity.accessible_branch_ids)]
+                    if not identity.has_all_branch_access
+                    else []
+                ),
+            )
             .order_by(LoyaltyReward.issued_at.desc())
             .limit(limit)
         )
@@ -644,9 +652,7 @@ async def start_verification(
     if program is None:
         raise DomainError("loyalty_not_found", "Sadakat programı bulunamadı.", status_code=404)
     phone = normalize_phone(payload.phone)
-    rate_limit_key = verification_rate_limit_key(
-        settings, tenant_id=tenant.id, phone=phone
-    )
+    rate_limit_key = verification_rate_limit_key(settings, tenant_id=tenant.id, phone=phone)
     window_seconds = settings.loyalty_verification_rate_limit_window_minutes * 60
     ip_address = request.client.host if request.client else None
     await consume_verification_rate_limit(
@@ -753,9 +759,7 @@ async def enroll(
         )
     phone = normalize_phone(payload.phone)
     verification_provider = phone_verification_provider(settings)
-    rate_limit_key = verification_rate_limit_key(
-        settings, tenant_id=tenant.id, phone=phone
-    )
+    rate_limit_key = verification_rate_limit_key(settings, tenant_id=tenant.id, phone=phone)
     window_seconds = settings.loyalty_verification_rate_limit_window_minutes * 60
     ip_address = request.client.host if request.client else None
     await consume_verification_rate_limit(
@@ -793,9 +797,7 @@ async def enroll(
         )
     ).scalar_one_or_none()
     if challenge is None:
-        raise DomainError(
-            "verification_invalid", "Doğrulama isteği geçersiz.", status_code=401
-        )
+        raise DomainError("verification_invalid", "Doğrulama isteği geçersiz.", status_code=401)
     if challenge.consumed_at is not None:
         add_audit_log(
             db,
@@ -823,9 +825,7 @@ async def enroll(
     if not hmac.compare_digest(challenge.phone_hash, expected_phone_hash):
         challenge.failed_attempts += 1
         await db.commit()
-        raise DomainError(
-            "verification_invalid", "Doğrulama kodu geçersiz.", status_code=401
-        )
+        raise DomainError("verification_invalid", "Doğrulama kodu geçersiz.", status_code=401)
     if challenge.failed_attempts >= settings.loyalty_verification_rate_limit_attempts:
         raise DomainError(
             "loyalty_verification_rate_limited",
@@ -910,9 +910,7 @@ async def public_status(
     tenant, branch = await _public_context(db, business_slug, branch_slug)
     if not loyalty_token:
         raise DomainError("loyalty_session_required", "Sadakat oturumu gerekli.", status_code=401)
-    membership = await membership_from_token(
-        db, tenant_id=tenant.id, raw_token=loyalty_token
-    )
+    membership = await membership_from_token(db, tenant_id=tenant.id, raw_token=loyalty_token)
     if membership is None:
         raise DomainError("loyalty_session_invalid", "Sadakat oturumu geçersiz.", status_code=401)
     program = (
@@ -1000,9 +998,7 @@ async def attach_membership(
     tenant_id = require_tenant(identity)
     order = await load_order(db, tenant_id, order_id, lock=True)
     _ensure_order_branch(identity, order.branch_id)
-    membership = await membership_from_code(
-        db, tenant_id=tenant_id, code=payload.membership_code
-    )
+    membership = await membership_from_code(db, tenant_id=tenant_id, code=payload.membership_code)
     if membership is None:
         raise DomainError("membership_not_found", "Üyelik bulunamadı.", status_code=404)
     await attach_membership_to_order(db, order=order, membership=membership)
@@ -1119,11 +1115,7 @@ async def apply_member_code(
             + campaign_outcome.total_discount
         ),
         order_total=order.total,
-        unapplied_reason=(
-            None
-            if campaign_outcome.granted
-            else result.unapplied_reason
-        ),
+        unapplied_reason=(None if campaign_outcome.granted else result.unapplied_reason),
     )
 
 
@@ -1196,20 +1188,24 @@ async def get_order_loyalty_context(
         )
 
     rewards = (
-        await db.execute(
-            select(LoyaltyReward)
-            .where(
-                LoyaltyReward.tenant_id == tenant_id,
-                LoyaltyReward.membership_id == membership.id,
-                LoyaltyReward.status == LoyaltyRewardStatus.AVAILABLE,
-                or_(
-                    LoyaltyReward.expires_at.is_(None),
-                    LoyaltyReward.expires_at > utcnow(),
-                ),
+        (
+            await db.execute(
+                select(LoyaltyReward)
+                .where(
+                    LoyaltyReward.tenant_id == tenant_id,
+                    LoyaltyReward.membership_id == membership.id,
+                    LoyaltyReward.status == LoyaltyRewardStatus.AVAILABLE,
+                    or_(
+                        LoyaltyReward.expires_at.is_(None),
+                        LoyaltyReward.expires_at > utcnow(),
+                    ),
+                )
+                .order_by(LoyaltyReward.issued_at)
             )
-            .order_by(LoyaltyReward.issued_at)
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     product_category_rows = (
         await db.execute(
             select(Product.id, Product.category_id).where(
@@ -1227,10 +1223,7 @@ async def get_order_loyalty_context(
             item.id
             for item in order.items
             if item.status.value not in {"CANCELLED", "VOIDED"}
-            and (
-                reward.reward_product_id is None
-                or item.product_id == reward.reward_product_id
-            )
+            and (reward.reward_product_id is None or item.product_id == reward.reward_product_id)
             and (
                 reward.reward_category_id is None
                 or product_categories.get(item.product_id) == reward.reward_category_id

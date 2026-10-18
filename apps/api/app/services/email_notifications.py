@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -10,6 +11,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import Settings
+from app.db import Database
 from app.models import (
     Branch,
     Campaign,
@@ -22,8 +24,8 @@ from app.models import (
     Product,
     Tenant,
 )
-from app.models.enums import CampaignRewardKind
-from app.security import utcnow
+from app.models.enums import LoyaltyRewardStatus
+from app.security import as_utc, utcnow
 from app.services.campaigns import campaign_summary
 from app.services.email import OutgoingEmail, get_email_sender
 from app.services.email_templates import (
@@ -43,7 +45,7 @@ def reward_verification_code(settings: Settings, *, tenant_id: UUID, reward_id: 
 
     digest = hmac.new(
         settings.jwt_secret.get_secret_value().encode("utf-8"),
-        f"loyalty-reward:{tenant_id}:{reward_id}".encode("utf-8"),
+        f"loyalty-reward:{tenant_id}:{reward_id}".encode(),
         hashlib.sha256,
     ).digest()
     return f"{int.from_bytes(digest[:8], 'big') % 1_000_000:06d}"
@@ -107,8 +109,25 @@ async def queue_campaign_announcements(
     )
     offer = await campaign_summary(db, tenant_id=campaign.tenant_id, campaign=campaign)
     details = _campaign_details(campaign, branch_names)
+    existing_keys = set(
+        (
+            await db.execute(
+                select(EmailNotification.idempotency_key).where(
+                    EmailNotification.tenant_id == campaign.tenant_id,
+                    EmailNotification.campaign_id == campaign.id,
+                )
+            )
+        ).scalars()
+    )
+    queued = 0
     for customer in rows:
         assert customer.email_normalized is not None
+        key = (
+            f"campaign:{campaign.id}:customer:{customer.id}:"
+            f"activation:{campaign.activation_version}"
+        )
+        if key in existing_keys:
+            continue
         db.add(
             EmailNotification(
                 tenant_id=campaign.tenant_id,
@@ -116,10 +135,7 @@ async def queue_campaign_announcements(
                 customer_id=customer.id,
                 campaign_id=campaign.id,
                 recipient_email=customer.email_normalized,
-                idempotency_key=(
-                    f"campaign:{campaign.id}:customer:{customer.id}:"
-                    f"activation:{campaign.activation_version}"
-                ),
+                idempotency_key=key,
                 payload={
                     "greeting_name": customer.first_name or "",
                     "business_name": tenant.name,
@@ -129,13 +145,22 @@ async def queue_campaign_announcements(
                 },
             )
         )
+        queued += 1
     await db.flush()
-    return len(rows)
+    return queued
 
 
 async def queue_reward_notification(
     db: AsyncSession, *, reward: LoyaltyReward
 ) -> bool:
+    existing = await db.scalar(
+        select(EmailNotification.id).where(
+            EmailNotification.tenant_id == reward.tenant_id,
+            EmailNotification.idempotency_key == f"loyalty-reward:{reward.id}:available",
+        )
+    )
+    if existing is not None:
+        return False
     membership = (
         await db.execute(
             select(LoyaltyMembership).where(
@@ -169,7 +194,7 @@ async def queue_reward_notification(
                 )
             )
         ).scalar_one_or_none() or "Seçili ürün"
-        description = f"1 x {target} — Ücretsiz"
+        description = f"1 ücretsiz {target}"
     else:
         target = (
             await db.execute(
@@ -179,7 +204,7 @@ async def queue_reward_notification(
                 )
             )
         ).scalar_one_or_none() or "Seçili kategori"
-        description = f"{target} kategorisinden 1 ürün ücretsiz."
+        description = f"{target} kategorisinden 1 ücretsiz ürün"
     db.add(
         EmailNotification(
             tenant_id=reward.tenant_id,
@@ -211,7 +236,8 @@ def _message(notification: EmailNotification, settings: Settings) -> OutgoingEma
             to=notification.recipient_email,
             subject=f"{business}’de yeni kampanya: {campaign_name}",
             text_body=(
-                f"Merhaba {greeting or 'Değerli üyemiz'},\n\n{business}’de yeni bir kampanya başladı.\n\n"
+                f"Merhaba {greeting or 'Değerli üyemiz'},\n\n"
+                f"{business} sizi yeni bir kampanyaya davet ediyor.\n\n"
                 f"Kampanya:\n{offer}\n\n{details or ''}\n\n"
                 f"Sizi tekrar aramızda görmekten mutluluk duyarız.\n\n{business}"
             ),
@@ -222,6 +248,7 @@ def _message(notification: EmailNotification, settings: Settings) -> OutgoingEma
                 offer=offer,
                 details=details,
             ),
+            idempotency_key=f"email-notification:{notification.id}",
         )
     if notification.notification_type != LOYALTY_REWARD_AVAILABLE or notification.reward_id is None:
         raise ValueError("Unsupported email notification type")
@@ -231,10 +258,11 @@ def _message(notification: EmailNotification, settings: Settings) -> OutgoingEma
     description = str(payload["reward_description"])
     return OutgoingEmail(
         to=notification.recipient_email,
-        subject=f"{greeting or 'Tebrikler'}, {description} ödülünüz hazır!",
+        subject=f"{business}: {description} sizi bekliyor!",
         text_body=(
             f"Merhaba {greeting or 'Değerli üyemiz'},\n\nTebrikler!\n\n"
-            f"{business} sadakat programında ödül kazandınız.\n\n"
+            f"{business} işletmesinde {description} hakkınız var.\n\n"
+            "İkramınızı almayı unutmayın. Sizi yeniden bekliyoruz!\n\n"
             f"Ödülünüz:\n{description}\n\nDoğrulama kodu: {code}\n\n"
             "Bu kod yalnızca bu ödül için ve bir kez kullanılabilir.\n\n"
             f"{business}"
@@ -245,7 +273,80 @@ def _message(notification: EmailNotification, settings: Settings) -> OutgoingEma
             reward_description=description,
             code=code,
         ),
+        idempotency_key=f"email-notification:{notification.id}",
     )
+
+
+async def _cancellation_reason(
+    db: AsyncSession, notification: EmailNotification
+) -> str | None:
+    """Recheck eligibility: consent, campaigns and rewards can change while queued."""
+    customer = await db.scalar(
+        select(LoyaltyCustomer).where(
+            LoyaltyCustomer.id == notification.customer_id,
+            LoyaltyCustomer.tenant_id == notification.tenant_id,
+        )
+    )
+    if customer is None or not customer.is_active:
+        return "customer_inactive"
+    if customer.email_normalized != notification.recipient_email:
+        return "customer_email_changed"
+    if notification.notification_type == CAMPAIGN_ANNOUNCEMENT:
+        if not customer.marketing_email_consent:
+            return "marketing_consent_withdrawn"
+        campaign = await db.scalar(
+            select(Campaign).where(
+                Campaign.id == notification.campaign_id,
+                Campaign.tenant_id == notification.tenant_id,
+            )
+        )
+        if campaign is None or not campaign.is_active or not campaign.notify_loyalty_members:
+            return "campaign_inactive"
+        if not notification.idempotency_key.endswith(
+            f":activation:{campaign.activation_version}"
+        ):
+            return "campaign_activation_changed"
+        if campaign.ends_at is not None and as_utc(campaign.ends_at) <= utcnow():
+            return "campaign_expired"
+        membership = await db.scalar(
+            select(LoyaltyMembership.id)
+            .join(
+                CampaignBranch,
+                CampaignBranch.branch_id == LoyaltyMembership.branch_id,
+            )
+            .where(
+                LoyaltyMembership.tenant_id == notification.tenant_id,
+                LoyaltyMembership.customer_id == notification.customer_id,
+                LoyaltyMembership.is_active.is_(True),
+                CampaignBranch.tenant_id == notification.tenant_id,
+                CampaignBranch.campaign_id == campaign.id,
+            )
+            .limit(1)
+        )
+        if membership is None:
+            return "membership_inactive"
+    elif notification.notification_type == LOYALTY_REWARD_AVAILABLE:
+        reward = await db.scalar(
+            select(LoyaltyReward).where(
+                LoyaltyReward.id == notification.reward_id,
+                LoyaltyReward.tenant_id == notification.tenant_id,
+            )
+        )
+        if reward is None or reward.status != LoyaltyRewardStatus.AVAILABLE:
+            return "reward_unavailable"
+        if reward.expires_at is not None and as_utc(reward.expires_at) <= utcnow():
+            return "reward_expired"
+        membership = await db.scalar(
+            select(LoyaltyMembership.id).where(
+                LoyaltyMembership.id == reward.membership_id,
+                LoyaltyMembership.tenant_id == notification.tenant_id,
+                LoyaltyMembership.customer_id == notification.customer_id,
+                LoyaltyMembership.is_active.is_(True),
+            )
+        )
+        if membership is None:
+            return "membership_inactive"
+    return None
 
 
 async def process_email_notifications(
@@ -273,6 +374,13 @@ async def process_email_notifications(
         ).scalar_one_or_none()
         if notification is None:
             break
+        reason = await _cancellation_reason(db, notification)
+        if reason is not None:
+            notification.status = "CANCELLED"
+            notification.last_error = reason
+            notification.next_attempt_at = None
+            await db.commit()
+            continue
         notification.attempts += 1
         try:
             await sender.send(_message(notification, settings))
@@ -280,8 +388,10 @@ async def process_email_notifications(
             failed += 1
             notification.status = "FAILED"
             notification.last_error = type(exc).__name__
-            notification.next_attempt_at = now + timedelta(
-                minutes=min(60, 2 ** notification.attempts)
+            notification.next_attempt_at = (
+                now + timedelta(minutes=min(60, 2 ** notification.attempts))
+                if notification.attempts < MAX_DELIVERY_ATTEMPTS
+                else None
             )
             logger.warning(
                 "email.notification_failed id=%s type=%s attempt=%s",
@@ -298,6 +408,21 @@ async def process_email_notifications(
             notification.next_attempt_at = None
         await db.commit()
     return sent, failed
+
+
+async def run_email_notification_worker(database: Database, settings: Settings) -> None:
+    """Each API process polls the durable outbox; row locks coordinate workers."""
+    logger.info("email.notification_worker_started")
+    while True:
+        try:
+            async with database.session_factory() as db:
+                sent, failed = await process_email_notifications(db, settings, limit=1)
+        except Exception:
+            logger.exception("email.notification_worker_failed")
+            await asyncio.sleep(5)
+        else:
+            # Pace provider requests and release the database session between sends.
+            await asyncio.sleep(0.6 if sent or failed else 5)
 
 
 async def campaign_notification_status(
@@ -321,9 +446,11 @@ async def campaign_notification_status(
     counts = {status: int(count) for status, count in rows}
     total = sum(counts.values())
     if total == 0:
-        return "PENDING", 0
+        return "NO_RECIPIENTS", 0
     if counts.get("FAILED"):
         return "FAILED", total
     if counts.get("PENDING"):
         return "PENDING", total
+    if counts.get("CANCELLED"):
+        return "CANCELLED", total
     return "SENT", total

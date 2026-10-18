@@ -14,6 +14,7 @@ from app.dependencies import (
     DbSession,
     Identity,
     get_app_settings,
+    require_any_permissions,
     require_branch,
     require_permissions,
     require_tenant,
@@ -41,6 +42,9 @@ router = APIRouter(prefix="/shifts", tags=["cashier-shifts"])
 ShiftOperator = Annotated[Identity, Depends(require_permissions("cashier.shift.manage"))]
 DayCloser = Annotated[Identity, Depends(require_permissions("cashier.day.close"))]
 ReportReader = Annotated[Identity, Depends(require_permissions("reports.read"))]
+ShiftReader = Annotated[
+    Identity, Depends(require_any_permissions("cashier.shift.manage", "reports.read"))
+]
 
 
 async def _branch(db: DbSession, identity: Identity, requested: UUID | None = None) -> Branch:
@@ -135,7 +139,7 @@ async def current_shift(identity: ShiftOperator, db: DbSession) -> ShiftOut | No
 
 @router.get("/history", response_model=list[ShiftOut])
 async def shift_history(
-    identity: ShiftOperator,
+    identity: ShiftReader,
     db: DbSession,
     user_id: UUID | None = None,
     branch_id: UUID | None = None,
@@ -660,7 +664,7 @@ async def day_detail(close_id: UUID, identity: ReportReader, db: DbSession) -> B
 
 
 @router.get("/{shift_id}", response_model=ShiftOut)
-async def shift_detail(shift_id: UUID, identity: ShiftOperator, db: DbSession) -> ShiftOut:
+async def shift_detail(shift_id: UUID, identity: ShiftReader, db: DbSession) -> ShiftOut:
     shift = (
         await db.execute(
             select(CashierShift).where(

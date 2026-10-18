@@ -53,6 +53,7 @@ export function StaffLoyaltyPanel({
   const [membershipCode, setMembershipCode] = useState("")
   const [enrollOpen, setEnrollOpen] = useState(false)
   const [rewardCode, setRewardCode] = useState("")
+  const [verificationCode, setVerificationCode] = useState("")
   const [orderItemId, setOrderItemId] = useState("")
 
   const selectedReward = useMemo(
@@ -66,13 +67,17 @@ export function StaffLoyaltyPanel({
     const eligibleIds = new Set(selectedReward?.eligible_order_item_ids ?? [])
     return items.filter((item) => eligibleIds.has(item.id))
   }, [items, selectedReward?.eligible_order_item_ids])
-  const validOrderItemId = selectedReward?.eligible_order_item_ids.includes(orderItemId)
+  const validOrderItemId = selectedReward?.eligible_order_item_ids.includes(
+    orderItemId,
+  )
     ? orderItemId
     : ""
 
   async function refresh() {
     if (orderId) {
-      await queryClient.invalidateQueries({ queryKey: loyaltyKeys.order(orderId) })
+      await queryClient.invalidateQueries({
+        queryKey: loyaltyKeys.order(orderId),
+      })
     }
     await queryClient.invalidateQueries({ queryKey: loyaltyKeys.rewards })
     onChanged?.()
@@ -94,11 +99,12 @@ export function StaffLoyaltyPanel({
     },
     onSuccess: async (result) => {
       setMembershipCode("")
-      if (result.applied.length > 0) {
+      const granted = [...result.applied, ...(result.campaigns ?? [])]
+      if (granted.length > 0) {
         toast.success(
-          result.applied.length === 1
-            ? `${result.applied[0].product_name} ikram edildi`
-            : `${result.applied.length} kampanya uygulandı`,
+          granted.length === 1
+            ? `${granted[0].product_name} ikram edildi`
+            : `${granted.length} kampanya uygulandı`,
           {
             description: `${result.program_name} · ${money.format(
               Number(result.total_discount),
@@ -123,10 +129,14 @@ export function StaffLoyaltyPanel({
       if (!orderId || !selectedReward || !validOrderItemId) {
         throw new Error("Ödül ve uygun sipariş kalemini seçin.")
       }
+      if (!/^\d{6}$/.test(verificationCode)) {
+        throw new Error("Müşterinin e-postasındaki 6 haneli ödül kodunu girin.")
+      }
       return loyaltyApi.redeemReward(selectedReward.redemption_code, {
         order_id: orderId,
         order_item_id: validOrderItemId,
         idempotency_key: `staff-reward:${orderId}:${selectedReward.redemption_code}:${validOrderItemId}`,
+        verification_code: verificationCode,
       })
     },
     onSuccess: async (result) => {
@@ -134,24 +144,33 @@ export function StaffLoyaltyPanel({
         description: `${result.redemption_code} · ₺${Number(result.amount).toLocaleString("tr-TR", { minimumFractionDigits: 2 })}`,
       })
       setRewardCode("")
+      setVerificationCode("")
       setOrderItemId("")
       await refresh()
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Ödül uygulanamadı."),
+      toast.error(
+        error instanceof Error ? error.message : "Ödül uygulanamadı.",
+      ),
   })
 
   const context = contextQuery.data
   const busy = applyMutation.isPending || redeemMutation.isPending
 
   return (
-    <section className="rounded-2xl border bg-card p-3" aria-labelledby={`loyalty-${orderId ?? "empty"}`}>
+    <section
+      className="rounded-2xl border bg-card p-3"
+      aria-labelledby={`loyalty-${orderId ?? "empty"}`}
+    >
       <div className="flex items-start gap-2.5">
         <span className="flex size-8 shrink-0 items-center justify-center rounded-xl bg-brand-soft text-brand">
           <HeartHandshake className="size-4" />
         </span>
         <div className="min-w-0 flex-1">
-          <h3 id={`loyalty-${orderId ?? "empty"}`} className="text-xs font-semibold">
+          <h3
+            id={`loyalty-${orderId ?? "empty"}`}
+            className="text-xs font-semibold"
+          >
             Sadakat ve kampanya
           </h3>
           <p className="mt-0.5 text-[0.65rem] leading-4 text-muted-foreground">
@@ -160,7 +179,9 @@ export function StaffLoyaltyPanel({
               : "Müşterinin kodunu girin; kazandığı kampanyalar otomatik uygulanır."}
           </p>
         </div>
-        {contextQuery.isFetching ? <Loader2 className="size-4 animate-spin text-muted-foreground" /> : null}
+        {contextQuery.isFetching ? (
+          <Loader2 className="size-4 animate-spin text-muted-foreground" />
+        ) : null}
       </div>
 
       {!orderId ? (
@@ -201,7 +222,9 @@ export function StaffLoyaltyPanel({
             <Input
               id={`membership-code-${orderId}`}
               value={membershipCode}
-              onChange={(event) => setMembershipCode(event.target.value.toUpperCase())}
+              onChange={(event) =>
+                setMembershipCode(event.target.value.toUpperCase())
+              }
               autoComplete="off"
               maxLength={32}
               placeholder="Üyelik / kampanya kodu"
@@ -214,10 +237,16 @@ export function StaffLoyaltyPanel({
             size="sm"
             className="rounded-xl"
             disabled={
-              disabled || busy || membershipCode.trim().length < MIN_MEMBER_CODE_LENGTH
+              disabled ||
+              busy ||
+              membershipCode.trim().length < MIN_MEMBER_CODE_LENGTH
             }
           >
-            {applyMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
+            {applyMutation.isPending ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <Check />
+            )}
             Uygula
           </Button>
           <Button
@@ -248,16 +277,23 @@ export function StaffLoyaltyPanel({
                 value={selectedReward?.redemption_code ?? ""}
                 onValueChange={(value) => {
                   setRewardCode(value ?? "")
+                  setVerificationCode("")
                   setOrderItemId("")
                 }}
                 disabled={disabled || busy}
               >
-                <SelectTrigger id={`reward-${orderId}`} className="w-full rounded-xl">
+                <SelectTrigger
+                  id={`reward-${orderId}`}
+                  className="w-full rounded-xl"
+                >
                   <SelectValue placeholder="Ödül seçin" />
                 </SelectTrigger>
                 <SelectContent>
                   {context.available_rewards.map((reward) => (
-                    <SelectItem key={reward.redemption_code} value={reward.redemption_code}>
+                    <SelectItem
+                      key={reward.redemption_code}
+                      value={reward.redemption_code}
+                    >
                       {reward.description} · {reward.redemption_code}
                     </SelectItem>
                   ))}
@@ -265,16 +301,28 @@ export function StaffLoyaltyPanel({
               </Select>
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor={`reward-item-${orderId}`} className="text-[0.65rem]">
+              <Label
+                htmlFor={`reward-item-${orderId}`}
+                className="text-[0.65rem]"
+              >
                 Uygulanacak ürün
               </Label>
               <Select
                 value={validOrderItemId}
                 onValueChange={(value) => setOrderItemId(value ?? "")}
-                disabled={disabled || busy || !rewardCode || eligibleItems.length === 0}
+                disabled={
+                  disabled || busy || !rewardCode || eligibleItems.length === 0
+                }
               >
-                <SelectTrigger id={`reward-item-${orderId}`} className="w-full rounded-xl">
-                  <SelectValue placeholder={rewardCode ? "Uygun ürün seçin" : "Önce ödül seçin"} />
+                <SelectTrigger
+                  id={`reward-item-${orderId}`}
+                  className="w-full rounded-xl"
+                >
+                  <SelectValue
+                    placeholder={
+                      rewardCode ? "Uygun ürün seçin" : "Önce ödül seçin"
+                    }
+                  />
                 </SelectTrigger>
                 <SelectContent>
                   {eligibleItems.map((item) => (
@@ -288,17 +336,54 @@ export function StaffLoyaltyPanel({
           </div>
           {selectedReward && eligibleItems.length === 0 ? (
             <p className="text-[0.65rem] leading-4 text-amber-700 dark:text-amber-300">
-              Bu ödüle uygun ürün siparişte bulunmuyor. Önce ilgili ürünü ekleyin.
+              Bu ödüle uygun ürün siparişte bulunmuyor. Önce ilgili ürünü
+              ekleyin.
             </p>
           ) : null}
+          <div className="space-y-1.5">
+            <Label htmlFor={`reward-verification-${orderId}`}>
+              E-postadaki ödül doğrulama kodu
+            </Label>
+            <Input
+              id={`reward-verification-${orderId}`}
+              value={verificationCode}
+              onChange={(event) =>
+                setVerificationCode(event.target.value.replace(/\D/g, ""))
+              }
+              inputMode="numeric"
+              autoComplete="one-time-code"
+              maxLength={6}
+              placeholder="000000"
+              disabled={disabled || busy || !selectedReward}
+              aria-describedby={`reward-verification-help-${orderId}`}
+              className="h-11 rounded-xl"
+            />
+            <p
+              id={`reward-verification-help-${orderId}`}
+              className="text-xs text-muted-foreground"
+            >
+              Müşteri, kazandığı ödülün e-postasındaki 6 haneli kodu
+              paylaşmalıdır.
+            </p>
+          </div>
           <Button
             type="button"
             variant="outline"
             className="h-9 w-full rounded-xl"
-            disabled={disabled || busy || !selectedReward || !validOrderItemId}
+            disabled={
+              disabled ||
+              busy ||
+              !selectedReward ||
+              !validOrderItemId ||
+              !/^\d{6}$/.test(verificationCode)
+            }
             onClick={() => redeemMutation.mutate()}
           >
-            {redeemMutation.isPending ? <Loader2 className="animate-spin" /> : <Gift />}
+            {redeemMutation.isPending ? (
+              <Loader2 className="animate-spin" />
+            ) : (
+              <Gift />
+            )}
             Ödülü siparişe uygula
           </Button>
         </div>

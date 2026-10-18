@@ -1,11 +1,11 @@
-"use client";
+"use client"
 
-import { Filter, Search, SlidersHorizontal } from "lucide-react";
-import type { ReactNode } from "react";
+import { Search, X } from "lucide-react"
+import type { ReactNode } from "react"
 
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { cn } from "@/lib/utils";
+import { Button } from "@/components/ui/button"
+import { Input } from "@/components/ui/input"
+import { cn } from "@/lib/utils"
 
 export function DataToolbar({
   value,
@@ -15,12 +15,12 @@ export function DataToolbar({
   actions,
   className,
 }: {
-  value?: string;
-  onValueChange?: (value: string) => void;
-  placeholder?: string;
-  filters?: ReactNode;
-  actions?: ReactNode;
-  className?: string;
+  value?: string
+  onValueChange?: (value: string) => void
+  placeholder?: string
+  filters?: ReactNode
+  actions?: ReactNode
+  className?: string
 }) {
   return (
     <div
@@ -38,34 +38,25 @@ export function DataToolbar({
           value={value}
           onChange={(event) => onValueChange?.(event.target.value)}
           placeholder={placeholder}
-          className="h-10 rounded-xl pl-9"
+          className="h-10 rounded-xl pl-9 pr-10"
         />
+        {value && onValueChange ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="absolute right-1 top-1/2 -translate-y-1/2"
+            aria-label="Aramayı temizle"
+            onClick={() => onValueChange("")}
+          >
+            <X aria-hidden="true" />
+          </Button>
+        ) : null}
       </div>
       <div className="flex flex-wrap items-center gap-2">
         {filters}
-        {!filters ? (
-          <Button
-            variant="outline"
-            className="h-10 rounded-xl"
-            disabled
-            title="Bu görünüm için ek filtre bulunmuyor"
-          >
-            <Filter />
-            Filtrele
-          </Button>
-        ) : null}
-        <Button
-          variant="ghost"
-          size="icon"
-          className="size-10 rounded-xl"
-          aria-label="Görünüm ayarları yakında"
-          title="Görünüm ayarları yakında"
-          disabled
-        >
-          <SlidersHorizontal />
-        </Button>
         {actions}
       </div>
     </div>
-  );
+  )
 }

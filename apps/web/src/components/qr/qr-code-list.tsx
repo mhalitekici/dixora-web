@@ -10,14 +10,11 @@ import {
   Search,
 } from "lucide-react"
 import { QRCodeCanvas, QRCodeSVG } from "qrcode.react"
-import { useMemo, useRef, useState } from "react"
+import { useMemo, useRef, useState, useSyncExternalStore } from "react"
 import { toast } from "sonner"
 
 import { QrAdminNav } from "@/components/qr/qr-admin-nav"
-import {
-  useQrTables,
-  useRegenerateTableToken,
-} from "@/components/qr/qr-hooks"
+import { useQrTables, useRegenerateTableToken } from "@/components/qr/qr-hooks"
 import type { DiningTableDto } from "@/components/qr/types"
 import { safeFileName } from "@/components/qr/qr-utils"
 import { PageHeader } from "@/components/shared/page-header"
@@ -42,10 +39,8 @@ import { Label } from "@/components/ui/label"
 import { Skeleton } from "@/components/ui/skeleton"
 
 const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL
-const defaultBusinessSlug =
-  process.env.NEXT_PUBLIC_QR_BUSINESS_SLUG ?? ""
-const defaultBranchSlug =
-  process.env.NEXT_PUBLIC_QR_BRANCH_SLUG ?? "merkez"
+const defaultBusinessSlug = process.env.NEXT_PUBLIC_QR_BUSINESS_SLUG ?? ""
+const defaultBranchSlug = process.env.NEXT_PUBLIC_QR_BRANCH_SLUG ?? "merkez"
 
 export function QrCodeList() {
   const currentUser = useCurrentUser()
@@ -54,7 +49,15 @@ export function QrCodeList() {
   const [search, setSearch] = useState("")
   const [businessSlug, setBusinessSlug] = useState(defaultBusinessSlug)
   const [branchSlug, setBranchSlug] = useState("")
-  const appUrl = resolveAppUrl(configuredAppUrl)
+  const browserOrigin = useSyncExternalStore<string | undefined>(
+    () => () => {},
+    () => window.location.origin,
+    () => undefined,
+  )
+  const appUrl = resolveAppUrl(configuredAppUrl, browserOrigin)
+  const localUrl = ["localhost", "127.0.0.1", "[::1]"].includes(
+    new URL(appUrl).hostname,
+  )
   const normalizedSearch = search.trim().toLocaleLowerCase("tr-TR")
 
   const effectiveBusinessSlug =
@@ -107,38 +110,44 @@ export function QrCodeList() {
         data-print-hidden="true"
       >
         <div className="space-y-2">
-          <Label htmlFor="qr-business-slug">İşletme slug</Label>
+          <Label htmlFor="qr-business-slug">İşletme kodu</Label>
           <Input
             id="qr-business-slug"
             value={effectiveBusinessSlug}
+            readOnly={Boolean(currentUser.data?.tenant?.slug)}
             onChange={(event) => setBusinessSlug(event.target.value)}
             className="h-10 rounded-xl"
             autoCapitalize="none"
           />
         </div>
         <div className="space-y-2">
-          <Label htmlFor="qr-branch-slug">Şube slug</Label>
+          <Label htmlFor="qr-branch-slug">Şube kodu</Label>
           <Input
             id="qr-branch-slug"
             value={effectiveBranchSlug}
+            readOnly={Boolean(currentUser.data?.branch?.slug)}
             onChange={(event) => setBranchSlug(event.target.value)}
             className="h-10 rounded-xl"
             autoCapitalize="none"
           />
         </div>
         <div className="flex items-end">
-          {!configuredAppUrl ? (
-            <Badge variant="outline" className="h-10 rounded-xl px-3 text-amber-700">
-              Geliştirme URL’si
+          {localUrl ? (
+            <Badge
+              variant="outline"
+              className="h-10 rounded-xl px-3 text-amber-700"
+            >
+              Yerel adres
             </Badge>
           ) : (
-            <StatusBadge tone="success">Canlı URL</StatusBadge>
+            <StatusBadge tone="info">Paylaşım adresi</StatusBadge>
           )}
         </div>
         <p className="text-xs leading-5 text-muted-foreground sm:col-span-2 lg:col-span-3">
-          Backend mevcut oturum yanıtında slug bilgisi döndürmediği için bu iki
-          alan ortam değişkenlerinden alınır ve gerektiğinde burada
-          düzenlenebilir. Üretilen QR tokenları gerçek masa API verisidir.
+          İşletme ve şube bilgileri aktif oturumunuzdan alınır. Başka bir
+          şubenin kodlarını hazırlamak için üst menüden şubeyi değiştirin.
+          Baskıdan önce QR kodunu müşterinin kullanacağı telefonla açıp kontrol
+          edin.
         </p>
       </section>
 
@@ -303,7 +312,9 @@ function QrCodeCard({
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h2 className="truncate font-semibold">{name}</h2>
-          <p className="mt-1 truncate text-xs text-muted-foreground">{detail}</p>
+          <p className="mt-1 truncate text-xs text-muted-foreground">
+            {detail}
+          </p>
         </div>
         <StatusBadge tone={active ? "success" : "neutral"}>
           {active ? "Aktif" : "Pasif"}
@@ -335,10 +346,7 @@ function QrCodeCard({
         {url}
       </p>
 
-      <div
-        className="mt-4 grid grid-cols-4 gap-1.5"
-        data-print-hidden="true"
-      >
+      <div className="mt-4 grid grid-cols-4 gap-1.5" data-print-hidden="true">
         <Button
           type="button"
           variant="outline"
@@ -414,10 +422,7 @@ function QrCodeCard({
             </AlertDialogHeader>
             <AlertDialogFooter>
               <AlertDialogCancel>Vazgeç</AlertDialogCancel>
-              <AlertDialogAction
-                variant="destructive"
-                onClick={onRegenerate}
-              >
+              <AlertDialogAction variant="destructive" onClick={onRegenerate}>
                 Tokenı yenile
               </AlertDialogAction>
             </AlertDialogFooter>
@@ -439,8 +444,28 @@ function QrCodeCard({
  * An empty string counts as absent: compose renders an unset variable as one,
  * and treating it as configured would produce a scheme-less "/m/..." link.
  */
-export function resolveAppUrl(configured: string | undefined): string {
-  return (configured || "http://localhost:3000").replace(/\/+$/, "")
+export function resolveAppUrl(
+  configured: string | undefined,
+  browserOrigin?: string,
+): string {
+  const fallback = browserOrigin || "http://localhost:3000"
+  const candidate = (configured?.trim() || fallback).replace(/\/+$/, "")
+  try {
+    const url = new URL(candidate)
+    if (!["http:", "https:"].includes(url.protocol)) return fallback
+    if (
+      browserOrigin &&
+      ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) &&
+      !["localhost", "127.0.0.1", "[::1]"].includes(
+        new URL(browserOrigin).hostname,
+      )
+    ) {
+      return browserOrigin.replace(/\/+$/, "")
+    }
+    return candidate
+  } catch {
+    return fallback
+  }
 }
 
 export function buildMenuUrl(
@@ -452,9 +477,7 @@ export function buildMenuUrl(
   const base = `${appUrl}/m/${encodeURIComponent(
     businessSlug.trim(),
   )}/${encodeURIComponent(branchSlug.trim())}`
-  return tableToken
-    ? `${base}/table/${encodeURIComponent(tableToken)}`
-    : base
+  return tableToken ? `${base}/table/${encodeURIComponent(tableToken)}` : base
 }
 
 function downloadUrl(url: string, fileName: string) {

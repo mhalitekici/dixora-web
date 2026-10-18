@@ -5,6 +5,7 @@ import {
   BadgePercent,
   BarChart3,
   BedDouble,
+  Bell,
   Bike,
   Blocks,
   Boxes,
@@ -37,30 +38,44 @@ import {
   UtensilsCrossed,
   WalletCards,
   type LucideIcon,
-} from "lucide-react";
+} from "lucide-react"
 
 export type NavItem = {
-  label: string;
-  href: string;
-  icon: LucideIcon;
-  badge?: string;
-  exact?: boolean;
-};
+  label: string
+  href: string
+  icon: LucideIcon
+  badge?: string
+  exact?: boolean
+}
 
 export type NavGroup = {
-  label: string;
-  items: NavItem[];
-};
+  label: string
+  items: NavItem[]
+}
 
 export const adminNavigation: NavGroup[] = [
   {
     label: "Genel Bakış",
     items: [
-      { label: "Kontrol Merkezi", href: "/admin", icon: LayoutDashboard, exact: true },
-      { label: "Canlı Operasyon", href: "/admin/live", icon: Activity, badge: "canlı" },
+      {
+        label: "Kontrol Merkezi",
+        href: "/admin",
+        icon: LayoutDashboard,
+        exact: true,
+      },
+      {
+        label: "Canlı Operasyon",
+        href: "/admin/live",
+        icon: Activity,
+        badge: "canlı",
+      },
       { label: "Onaylar", href: "/admin/approvals", icon: ClipboardCheck },
       { label: "Masalar", href: "/admin/tables", icon: Grid2X2 },
-      { label: "Sipariş Hareketleri", href: "/admin/order-activity", icon: ScrollText },
+      {
+        label: "Sipariş Hareketleri",
+        href: "/admin/order-activity",
+        icon: ScrollText,
+      },
       { label: "Vardiya Kayıtları", href: "/admin/shifts", icon: MonitorDot },
       { label: "Otel Odaları", href: "/admin/hotel-rooms", icon: BedDouble },
     ],
@@ -70,11 +85,32 @@ export const adminNavigation: NavGroup[] = [
     items: [
       { label: "Ürünler", href: "/admin/products", icon: ShoppingBasket },
       { label: "Kategoriler", href: "/admin/categories", icon: Tags },
-      { label: "Modifiyerler", href: "/admin/modifiers", icon: SlidersHorizontal },
+      {
+        label: "Modifiyerler",
+        href: "/admin/modifiers",
+        icon: SlidersHorizontal,
+      },
       { label: "Envanter", href: "/admin/inventory", icon: Boxes },
       { label: "QR Menü", href: "/admin/qr-menu", icon: QrCode },
+    ],
+  },
+  {
+    label: "Servis ve Kasa",
+    items: [
+      { label: "Garson Paneli", href: "/waiter/tables", icon: HandPlatter },
+      { label: "Kasiyer Paneli", href: "/cashier", icon: WalletCards },
+    ],
+  },
+  {
+    label: "Kampanyalar ve Sadakat",
+    items: [
       { label: "Kampanyalar", href: "/admin/campaigns", icon: Megaphone },
-      { label: "Sadakat Programı", href: "/admin/loyalty", icon: HeartHandshake },
+      {
+        label: "Sadakat Programı",
+        href: "/admin/loyalty",
+        icon: HeartHandshake,
+      },
+      { label: "Bildirimler", href: "/admin/notifications", icon: Bell },
     ],
   },
   {
@@ -84,7 +120,11 @@ export const adminNavigation: NavGroup[] = [
       { label: "Çalışanlar", href: "/admin/employees", icon: UsersRound },
       { label: "Roller ve Yetkiler", href: "/admin/roles", icon: ShieldCheck },
       { label: "Raporlar", href: "/admin/reports", icon: BarChart3 },
-      { label: "Denetim Kayıtları", href: "/admin/audit-logs", icon: FileClock },
+      {
+        label: "Denetim Kayıtları",
+        href: "/admin/audit-logs",
+        icon: FileClock,
+      },
     ],
   },
   {
@@ -92,40 +132,65 @@ export const adminNavigation: NavGroup[] = [
     items: [
       { label: "İşletme Ayarları", href: "/admin/settings", icon: Settings2 },
       { label: "Şube Ayarları", href: "/admin/branch-settings", icon: Store },
-      { label: "Üyelik ve Ödeme", href: "/admin/subscription", icon: CreditCard },
+      {
+        label: "Üyelik ve Ödeme",
+        href: "/admin/subscription",
+        icon: CreditCard,
+      },
     ],
   },
-];
+]
 
 export const superAdminNavigation: NavGroup[] = [
   {
     label: "Dixora Platformu",
     items: [
       { label: "İşletmeler", href: "/super-admin/businesses", icon: Building2 },
-      { label: "Abonelikler", href: "/super-admin/subscriptions", icon: CreditCard },
+      {
+        label: "Abonelikler",
+        href: "/super-admin/subscriptions",
+        icon: CreditCard,
+      },
       { label: "Faturalar", href: "/super-admin/invoices", icon: Receipt },
       { label: "Sistem durumu", href: "/super-admin/system", icon: HeartPulse },
-      { label: "Audit kayıtları", href: "/super-admin/audit-logs", icon: FileClock },
+      {
+        label: "Denetim kayıtları",
+        href: "/super-admin/audit-logs",
+        icon: FileClock,
+      },
     ],
   },
-];
+]
 
 export const qrNavigation: NavGroup[] = [
   {
     label: "QR Menü",
     items: [
-      { label: "Genel Bakış", href: "/admin/qr-menu", icon: QrCode, exact: true },
-      { label: "Görünüm ve Kurallar", href: "/admin/qr-menu/settings", icon: SlidersHorizontal },
+      {
+        label: "Genel Bakış",
+        href: "/admin/qr-menu",
+        icon: QrCode,
+        exact: true,
+      },
+      {
+        label: "Görünüm ve Kurallar",
+        href: "/admin/qr-menu/settings",
+        icon: SlidersHorizontal,
+      },
       { label: "QR Kodları", href: "/admin/qr-menu/codes", icon: Blocks },
-      { label: "Müşteri Talepleri", href: "/admin/qr-menu/orders", icon: ClipboardList },
+      {
+        label: "Müşteri Talepleri",
+        href: "/admin/qr-menu/orders",
+        icon: ClipboardList,
+      },
     ],
   },
-];
+]
 
 export const operationalLinks = {
   waiter: [
     { label: "Masalar", href: "/waiter/tables", icon: Map },
-    { label: "Aktif Sipariş", href: "/waiter", icon: HandPlatter },
+    { label: "Siparişler", href: "/waiter/orders", icon: HandPlatter },
     { label: "Bildirimler", href: "/waiter/notifications", icon: ListChecks },
   ],
   cashier: [
@@ -134,11 +199,11 @@ export const operationalLinks = {
     { label: "Kapananlar", href: "/cashier/closed-orders", icon: ReceiptText },
     { label: "Vardiya", href: "/cashier/shift", icon: MonitorDot },
   ],
-};
+}
 
 export const placeholderIconMap = {
   tables: TableProperties,
   products: PackageSearch,
   menu: UtensilsCrossed,
   discounts: BadgePercent,
-};
+}

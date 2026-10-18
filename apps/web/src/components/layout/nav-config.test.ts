@@ -45,4 +45,22 @@ describe("navigation config", () => {
       expect(item.label.trim().length).toBeGreaterThan(0)
     }
   })
+
+  it("groups campaigns, loyalty and customer notifications together", () => {
+    const group = adminNavigation.find(
+      (item) => item.label === "Kampanyalar ve Sadakat",
+    )
+    expect(group?.items.map((item) => item.href)).toEqual([
+      "/admin/campaigns",
+      "/admin/loyalty",
+      "/admin/notifications",
+    ])
+    expect(
+      adminNavigation.find((item) => item.label === "Menü ve Stok")?.items,
+    ).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ href: "/admin/campaigns" }),
+      ]),
+    )
+  })
 })

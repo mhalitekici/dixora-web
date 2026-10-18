@@ -1,6 +1,6 @@
-"use client";
+"use client"
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query"
 import {
   AlertTriangle,
   ArrowDownLeft,
@@ -17,16 +17,16 @@ import {
   SearchX,
   Trash2,
   UtensilsCrossed,
-} from "lucide-react";
-import { useMemo, useState } from "react";
-import { toast } from "sonner";
+} from "lucide-react"
+import { useMemo, useState } from "react"
+import { toast } from "sonner"
 
-import { DataToolbar } from "@/components/shared/data-toolbar";
-import { EmptyState } from "@/components/shared/empty-state";
-import { PageHeader } from "@/components/shared/page-header";
-import { StatCard } from "@/components/shared/stat-card";
-import { StatusBadge } from "@/components/shared/status-badge";
-import { Button } from "@/components/ui/button";
+import { DataToolbar } from "@/components/shared/data-toolbar"
+import { EmptyState } from "@/components/shared/empty-state"
+import { PageHeader } from "@/components/shared/page-header"
+import { StatCard } from "@/components/shared/stat-card"
+import { StatusBadge } from "@/components/shared/status-badge"
+import { Button } from "@/components/ui/button"
 import {
   Dialog,
   DialogContent,
@@ -34,16 +34,16 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-} from "@/components/ui/dialog";
-import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+} from "@/components/ui/dialog"
+import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select";
+} from "@/components/ui/select"
 import {
   Table,
   TableBody,
@@ -51,150 +51,151 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { Textarea } from "@/components/ui/textarea";
-import { cn } from "@/lib/utils";
-import { useAccessibleBranches } from "@/hooks/use-auth";
-import { RecipeCopyDialog } from "@/components/inventory/recipe-copy-dialog";
+} from "@/components/ui/table"
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
+import { Textarea } from "@/components/ui/textarea"
+import { cn } from "@/lib/utils"
+import { useAccessibleBranches, useCurrentUser } from "@/hooks/use-auth"
+import { hasPermission } from "@/lib/permissions"
+import { RecipeCopyDialog } from "@/components/inventory/recipe-copy-dialog"
 
-type Unit = "piece" | "g" | "kg" | "ml" | "l";
+type Unit = "piece" | "g" | "kg" | "ml" | "l"
 type InventoryItem = {
-  id: string;
-  name: string;
-  sku?: string | null;
-  unit: Unit | string;
-  current_quantity: string | number;
-  minimum_quantity: string | number;
-  location_name?: string | null;
-  average_cost?: string | number | null;
-  is_active: boolean;
-};
+  id: string
+  name: string
+  sku?: string | null
+  unit: Unit | string
+  current_quantity: string | number
+  minimum_quantity: string | number
+  location_name?: string | null
+  average_cost?: string | number | null
+  is_active: boolean
+}
 type InventoryItemResponse = {
-  id: string;
-  name: string;
-  sku?: string | null;
-  unit: string;
-  current_stock: string | number | null;
-  minimum_stock: string | number;
-  average_cost?: string | number | null;
-  is_active: boolean;
-};
+  id: string
+  name: string
+  sku?: string | null
+  unit: string
+  current_stock: string | number | null
+  minimum_stock: string | number
+  average_cost?: string | number | null
+  is_active: boolean
+}
 type StockMovement = {
-  id: string;
-  item_id: string;
-  item_name?: string;
-  movement_type: string;
-  quantity: string | number;
-  balance_after?: string | number | null;
-  reason?: string | null;
-  actor_name?: string | null;
-  created_at: string;
-};
+  id: string
+  item_id: string
+  item_name?: string
+  movement_type: string
+  quantity: string | number
+  balance_after?: string | number | null
+  reason?: string | null
+  actor_name?: string | null
+  created_at: string
+}
 type StockMovementResponse = {
-  id: string;
-  inventory_item_id: string;
-  item_name?: string;
-  type: string;
-  quantity_delta: string | number;
-  balance_after?: string | number | null;
-  reason?: string | null;
-  actor_user_id?: string | null;
-  created_at: string;
-};
+  id: string
+  inventory_item_id: string
+  item_name?: string
+  type: string
+  quantity_delta: string | number
+  balance_after?: string | number | null
+  reason?: string | null
+  actor_user_id?: string | null
+  created_at: string
+}
 type Recipe = {
-  id: string;
-  product_id: string;
-  product_name: string;
-  yield_quantity: string | number;
+  id: string
+  product_id: string
+  product_name: string
+  yield_quantity: string | number
   ingredients: Array<{
-    inventory_item_id: string;
-    name: string;
-    quantity: string | number;
-    unit: string;
-  }>;
-};
+    inventory_item_id: string
+    name: string
+    quantity: string | number
+    unit: string
+  }>
+}
 type CatalogProduct = {
-  id: string;
-  name: string;
-  is_active?: boolean;
-};
+  id: string
+  name: string
+  is_active?: boolean
+}
 type RecipeIngredientDraft = {
-  key: string;
-  inventory_item_id: string;
-  quantity: string;
-  unit: string;
-  fallback_name?: string;
-  fallback_unit?: string;
-};
+  key: string
+  inventory_item_id: string
+  quantity: string
+  unit: string
+  fallback_name?: string
+  fallback_unit?: string
+}
 type RecipePayload = {
-  productId: string;
-  yieldQuantity: string;
-  items: Array<{ inventory_item_id: string; quantity: string; unit: string }>;
-};
+  productId: string
+  yieldQuantity: string
+  items: Array<{ inventory_item_id: string; quantity: string; unit: string }>
+}
 type BrandStockOverview = {
-  branches: Array<{ id: string; name: string }>;
+  branches: Array<{ id: string; name: string }>
   items: Array<{
-    key: string;
-    name: string;
-    sku?: string | null;
-    category?: string | null;
-    unit: string;
+    key: string
+    name: string
+    sku?: string | null
+    category?: string | null
+    unit: string
     branches: Array<{
-      branch_id: string;
-      branch_name: string;
-      inventory_item_id: string;
-      quantity: string | number;
-      minimum_stock: string | number;
-      target_stock: string | number;
-      status: "NORMAL" | "LOW" | "OUT_OF_STOCK";
-    }>;
-  }>;
-  total_items: number;
-  low_count: number;
-  out_of_stock_count: number;
-};
+      branch_id: string
+      branch_name: string
+      inventory_item_id: string
+      quantity: string | number
+      minimum_stock: string | number
+      target_stock: string | number
+      status: "NORMAL" | "LOW" | "OUT_OF_STOCK"
+    }>
+  }>
+  total_items: number
+  low_count: number
+  out_of_stock_count: number
+}
 
 type InventoryItemDraft = {
-  name: string;
-  sku: string;
-  category: string;
-  unit: "piece" | "gram" | "kilogram" | "milliliter" | "liter";
-  minimum_stock: string;
-  target_stock: string;
-  opening_quantity: string;
-};
+  name: string
+  sku: string
+  category: string
+  unit: "piece" | "gram" | "kilogram" | "milliliter" | "liter"
+  minimum_stock: string
+  target_stock: string
+  opening_quantity: string
+}
 
-const EMPTY_ITEMS: InventoryItem[] = [];
-const EMPTY_PRODUCTS: CatalogProduct[] = [];
-const EMPTY_RECIPES: Recipe[] = [];
+const EMPTY_ITEMS: InventoryItem[] = []
+const EMPTY_PRODUCTS: CatalogProduct[] = []
+const EMPTY_RECIPES: Recipe[] = []
 
 function unwrap<T>(value: unknown): T[] {
-  if (Array.isArray(value)) return value as T[];
+  if (Array.isArray(value)) return value as T[]
   if (
     value &&
     typeof value === "object" &&
     Array.isArray((value as { items?: unknown }).items)
   ) {
-    return (value as { items: T[] }).items;
+    return (value as { items: T[] }).items
   }
-  return [];
+  return []
 }
 
 async function getList<T>(path: string): Promise<T[]> {
-  const response = await fetch(`/api/backend${path}`);
-  if (!response.ok) throw new Error("Veri alınamadı.");
-  return unwrap<T>(await response.json());
+  const response = await fetch(`/api/backend${path}`)
+  if (!response.ok) throw new Error("Veri alınamadı.")
+  return unwrap<T>(await response.json())
 }
 
 async function getJson<T>(path: string): Promise<T> {
-  const response = await fetch(`/api/backend${path}`);
-  if (!response.ok) throw new Error("Veri alınamadı.");
-  return response.json() as Promise<T>;
+  const response = await fetch(`/api/backend${path}`)
+  if (!response.ok) throw new Error("Veri alınamadı.")
+  return response.json() as Promise<T>
 }
 
 function normalizeDecimal(value: string) {
-  return value.trim().replace(",", ".");
+  return value.trim().replace(",", ".")
 }
 
 function newIngredientDraft(
@@ -211,17 +212,17 @@ function newIngredientDraft(
     unit,
     fallback_name: fallbackName,
     fallback_unit: fallbackUnit,
-  };
+  }
 }
 
 const quantityFormatter = new Intl.NumberFormat("tr-TR", {
   maximumFractionDigits: 3,
-});
+})
 const currency = new Intl.NumberFormat("tr-TR", {
   style: "currency",
   currency: "TRY",
   maximumFractionDigits: 2,
-});
+})
 
 const unitLabel: Record<string, string> = {
   piece: "adet",
@@ -233,7 +234,7 @@ const unitLabel: Record<string, string> = {
   kg: "kg",
   ml: "ml",
   l: "L",
-};
+}
 
 const compatibleRecipeUnits: Record<string, string[]> = {
   piece: ["piece"],
@@ -241,20 +242,20 @@ const compatibleRecipeUnits: Record<string, string[]> = {
   kilogram: ["gram", "kilogram"],
   milliliter: ["milliliter", "liter"],
   liter: ["milliliter", "liter"],
-};
+}
 
 function defaultRecipeUnit(stockUnit: string) {
-  if (stockUnit === "kilogram") return "gram";
-  if (stockUnit === "liter") return "milliliter";
-  return stockUnit;
+  if (stockUnit === "kilogram") return "gram"
+  if (stockUnit === "liter") return "milliliter"
+  return stockUnit
 }
 
 const movementMeta: Record<
   string,
   {
-    label: string;
-    tone: Parameters<typeof StatusBadge>[0]["tone"];
-    icon: typeof ArrowDownLeft;
+    label: string
+    tone: Parameters<typeof StatusBadge>[0]["tone"]
+    icon: typeof ArrowDownLeft
   }
 > = {
   PURCHASE: { label: "Satın alma", tone: "success", icon: ArrowDownLeft },
@@ -273,22 +274,25 @@ const movementMeta: Record<
     tone: "warning",
     icon: ClipboardCheck,
   },
-};
+}
 
 export function InventoryManagement() {
-  const queryClient = useQueryClient();
-  const accessibleBranches = useAccessibleBranches();
-  const [search, setSearch] = useState("");
-  const [stockFilter, setStockFilter] = useState("all");
-  const [branchFilter, setBranchFilter] = useState("all");
-  const [categoryFilter, setCategoryFilter] = useState("all");
-  const [dialogOpen, setDialogOpen] = useState(false);
-  const [itemDialogOpen, setItemDialogOpen] = useState(false);
-  const [transferDialogOpen, setTransferDialogOpen] = useState(false);
-  const [transferSource, setTransferSource] = useState("");
-  const [transferTarget, setTransferTarget] = useState("");
-  const [transferQuantity, setTransferQuantity] = useState("");
-  const [transferReason, setTransferReason] = useState("");
+  const currentUser = useCurrentUser()
+  const canManage = hasPermission(currentUser.data, "inventory.manage")
+  const canReadCatalog = hasPermission(currentUser.data, "catalog.read")
+  const queryClient = useQueryClient()
+  const accessibleBranches = useAccessibleBranches()
+  const [search, setSearch] = useState("")
+  const [stockFilter, setStockFilter] = useState("all")
+  const [branchFilter, setBranchFilter] = useState("all")
+  const [categoryFilter, setCategoryFilter] = useState("all")
+  const [dialogOpen, setDialogOpen] = useState(false)
+  const [itemDialogOpen, setItemDialogOpen] = useState(false)
+  const [transferDialogOpen, setTransferDialogOpen] = useState(false)
+  const [transferSource, setTransferSource] = useState("")
+  const [transferTarget, setTransferTarget] = useState("")
+  const [transferQuantity, setTransferQuantity] = useState("")
+  const [transferReason, setTransferReason] = useState("")
   const [inventoryItemDraft, setInventoryItemDraft] =
     useState<InventoryItemDraft>({
       name: "",
@@ -298,25 +302,25 @@ export function InventoryManagement() {
       minimum_stock: "0",
       target_stock: "0",
       opening_quantity: "0",
-    });
-  const [selectedItem, setSelectedItem] = useState("");
-  const [movementType, setMovementType] = useState("ADJUSTMENT");
-  const [quantity, setQuantity] = useState("");
-  const [reason, setReason] = useState("");
-  const [recipeDialogOpen, setRecipeDialogOpen] = useState(false);
-  const [recipeCopyDialogOpen, setRecipeCopyDialogOpen] = useState(false);
-  const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null);
-  const [recipeProductId, setRecipeProductId] = useState("");
-  const [recipeYield, setRecipeYield] = useState("1");
+    })
+  const [selectedItem, setSelectedItem] = useState("")
+  const [movementType, setMovementType] = useState("ADJUSTMENT")
+  const [quantity, setQuantity] = useState("")
+  const [reason, setReason] = useState("")
+  const [recipeDialogOpen, setRecipeDialogOpen] = useState(false)
+  const [recipeCopyDialogOpen, setRecipeCopyDialogOpen] = useState(false)
+  const [editingRecipe, setEditingRecipe] = useState<Recipe | null>(null)
+  const [recipeProductId, setRecipeProductId] = useState("")
+  const [recipeYield, setRecipeYield] = useState("1")
   const [recipeIngredients, setRecipeIngredients] = useState<
     RecipeIngredientDraft[]
-  >([]);
-  const [recipeFormError, setRecipeFormError] = useState<string | null>(null);
+  >([])
+  const [recipeFormError, setRecipeFormError] = useState<string | null>(null)
 
   const itemsQuery = useQuery({
     queryKey: ["inventory", "items"],
     queryFn: async () => {
-      const values = await getList<InventoryItemResponse>("/inventory/items");
+      const values = await getList<InventoryItemResponse>("/inventory/items")
       return values.map((item) => ({
         id: item.id,
         name: item.name,
@@ -327,15 +331,15 @@ export function InventoryManagement() {
         average_cost: item.average_cost,
         location_name: null,
         is_active: item.is_active,
-      }));
+      }))
     },
-  });
+  })
   const movementsQuery = useQuery<StockMovement[]>({
     queryKey: ["inventory", "movements"],
     queryFn: async () => {
       const values = await getList<StockMovementResponse>(
         "/inventory/movements?limit=50",
-      );
+      )
       return values.map((movement) => ({
         id: movement.id,
         item_id: movement.inventory_item_id,
@@ -348,53 +352,54 @@ export function InventoryManagement() {
           ? `Kullanıcı ${movement.actor_user_id.slice(0, 8)}`
           : "Sistem",
         created_at: movement.created_at,
-      }));
+      }))
     },
-  });
+  })
   const overviewQuery = useQuery({
     queryKey: ["inventory", "overview"],
     queryFn: () => getJson<BrandStockOverview>("/inventory/overview"),
-  });
+  })
   const transferOptions = (overviewQuery.data?.items ?? []).flatMap((item) =>
     item.branches.map((cell) => ({ item, cell })),
-  );
+  )
   const selectedTransferSource = transferOptions.find(
     ({ cell }) => cell.inventory_item_id === transferSource,
-  );
+  )
   const compatibleTransferTargets = selectedTransferSource
     ? selectedTransferSource.item.branches.filter(
         (cell) => cell.branch_id !== selectedTransferSource.cell.branch_id,
       )
-    : [];
+    : []
   const overviewCategories = Array.from(
     new Set(
       (overviewQuery.data?.items ?? [])
         .map((item) => item.category)
         .filter((category): category is string => Boolean(category)),
     ),
-  ).sort((left, right) => left.localeCompare(right, "tr"));
+  ).sort((left, right) => left.localeCompare(right, "tr"))
   const visibleOverviewBranches = (overviewQuery.data?.branches ?? []).filter(
     (branch) => branchFilter === "all" || branch.id === branchFilter,
-  );
+  )
   const productsQuery = useQuery({
     queryKey: ["catalog", "products"],
     queryFn: () => getList<CatalogProduct>("/catalog/products?limit=250"),
     staleTime: 30_000,
-  });
+    enabled: canReadCatalog,
+  })
   const recipesQuery = useQuery({
     queryKey: ["inventory", "recipes"],
     queryFn: () => getList<Recipe>("/inventory/recipes"),
     staleTime: 15_000,
-  });
+  })
 
-  const items = itemsQuery.data ?? EMPTY_ITEMS;
-  const movements = movementsQuery.data ?? [];
-  const products = productsQuery.data ?? EMPTY_PRODUCTS;
-  const recipes = recipesQuery.data ?? EMPTY_RECIPES;
+  const items = itemsQuery.data ?? EMPTY_ITEMS
+  const movements = movementsQuery.data ?? []
+  const products = productsQuery.data ?? EMPTY_PRODUCTS
+  const recipes = recipesQuery.data ?? EMPTY_RECIPES
   const recipeProductIds = useMemo(
     () => new Set(recipes.map((recipe) => recipe.product_id)),
     [recipes],
-  );
+  )
   const creatableProducts = useMemo(
     () =>
       products.filter(
@@ -402,55 +407,53 @@ export function InventoryManagement() {
           product.is_active !== false && !recipeProductIds.has(product.id),
       ),
     [products, recipeProductIds],
-  );
+  )
   const recipeDataLoading =
-    recipesQuery.isLoading || productsQuery.isLoading || itemsQuery.isLoading;
-  const recipeDataError = recipesQuery.error ?? productsQuery.error;
+    recipesQuery.isLoading || productsQuery.isLoading || itemsQuery.isLoading
+  const recipeDataError = recipesQuery.error ?? productsQuery.error
   const lowStockItems = items.filter(
     (item) => Number(item.current_quantity) <= Number(item.minimum_quantity),
-  );
+  )
   const filteredItems = useMemo(
     () =>
       items
         .filter((item) => {
           const text = `${item.name} ${item.sku ?? ""}`.toLocaleLowerCase(
             "tr-TR",
-          );
-          const matchesSearch = text.includes(
-            search.toLocaleLowerCase("tr-TR"),
-          );
+          )
+          const matchesSearch = text.includes(search.toLocaleLowerCase("tr-TR"))
           const matchesFilter =
             stockFilter === "all" ||
             (stockFilter === "low" &&
               Number(item.current_quantity) <= Number(item.minimum_quantity)) ||
             (stockFilter === "healthy" &&
-              Number(item.current_quantity) > Number(item.minimum_quantity));
-          return matchesSearch && matchesFilter;
+              Number(item.current_quantity) > Number(item.minimum_quantity))
+          return matchesSearch && matchesFilter
         })
         .sort((left, right) => {
           const statusRank = (item: InventoryItem) => {
-            const current = Number(item.current_quantity);
-            if (current <= 0) return 0;
-            if (current <= Number(item.minimum_quantity)) return 1;
-            return 2;
-          };
+            const current = Number(item.current_quantity)
+            if (current <= 0) return 0
+            if (current <= Number(item.minimum_quantity)) return 1
+            return 2
+          }
           return (
             statusRank(left) - statusRank(right) ||
             left.name.localeCompare(right.name, "tr")
-          );
+          )
         }),
     [items, search, stockFilter],
-  );
+  )
 
   const adjustmentMutation = useMutation({
     mutationFn: async () => {
-      const numericQuantity = Number(quantity);
+      const numericQuantity = Number(quantity)
       const quantityDelta =
         movementType === "WASTE"
           ? -Math.abs(numericQuantity)
           : movementType === "PURCHASE" || movementType === "RETURN"
             ? Math.abs(numericQuantity)
-            : numericQuantity;
+            : numericQuantity
       const response = await fetch("/api/backend/inventory/movements", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -461,33 +464,32 @@ export function InventoryManagement() {
           reason,
           idempotency_key: crypto.randomUUID(),
         }),
-      });
+      })
       const data = (await response.json().catch(() => null)) as {
-        detail?: string;
-      } | null;
+        detail?: string
+      } | null
       if (!response.ok)
-        throw new Error(data?.detail ?? "Stok hareketi kaydedilemedi.");
+        throw new Error(data?.detail ?? "Stok hareketi kaydedilemedi.")
     },
     onSuccess: () => {
       toast.success("Stok hareketi kaydedildi", {
         description: "Yeni bakiye ve denetim kaydı oluşturuldu.",
-      });
-      setDialogOpen(false);
-      setQuantity("");
-      setReason("");
-      void queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      })
+      setDialogOpen(false)
+      setQuantity("")
+      setReason("")
+      void queryClient.invalidateQueries({ queryKey: ["inventory"] })
     },
     onError: (error) =>
       toast.error(error instanceof Error ? error.message : "İşlem başarısız."),
-  });
+  })
   const transferMutation = useMutation({
     mutationFn: async () => {
-      if (!selectedTransferSource)
-        throw new Error("Kaynak stok kartını seçin.");
+      if (!selectedTransferSource) throw new Error("Kaynak stok kartını seçin.")
       const target = compatibleTransferTargets.find(
         (cell) => cell.inventory_item_id === transferTarget,
-      );
-      if (!target) throw new Error("Hedef şubeyi seçin.");
+      )
+      if (!target) throw new Error("Hedef şubeyi seçin.")
       const response = await fetch("/api/backend/inventory/transfers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -501,28 +503,28 @@ export function InventoryManagement() {
           reason: transferReason.trim(),
           idempotency_key: crypto.randomUUID(),
         }),
-      });
-      if (!response.ok) throw new Error("Stok transferi tamamlanamadı.");
-      return response.json();
+      })
+      if (!response.ok) throw new Error("Stok transferi tamamlanamadı.")
+      return response.json()
     },
     onSuccess: async () => {
-      toast.success("Stok transferi tamamlandı");
-      setTransferDialogOpen(false);
-      setTransferSource("");
-      setTransferTarget("");
-      setTransferQuantity("");
-      setTransferReason("");
+      toast.success("Stok transferi tamamlandı")
+      setTransferDialogOpen(false)
+      setTransferSource("")
+      setTransferTarget("")
+      setTransferQuantity("")
+      setTransferReason("")
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["inventory", "overview"] }),
         queryClient.invalidateQueries({ queryKey: ["inventory", "items"] }),
         queryClient.invalidateQueries({ queryKey: ["inventory", "movements"] }),
-      ]);
+      ])
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "Transfer yapılamadı.",
       ),
-  });
+  })
 
   const createItemMutation = useMutation({
     mutationFn: async (draft: InventoryItemDraft) => {
@@ -538,17 +540,17 @@ export function InventoryManagement() {
           target_stock: normalizeDecimal(draft.target_stock),
           opening_quantity: normalizeDecimal(draft.opening_quantity),
         }),
-      });
+      })
       const data = (await response.json().catch(() => null)) as {
-        detail?: string;
-      } | null;
+        detail?: string
+      } | null
       if (!response.ok) {
-        throw new Error(data?.detail ?? "Stok kartı oluşturulamadı.");
+        throw new Error(data?.detail ?? "Stok kartı oluşturulamadı.")
       }
     },
     onSuccess: () => {
-      toast.success("Stok kartı oluşturuldu.");
-      setItemDialogOpen(false);
+      toast.success("Stok kartı oluşturuldu.")
+      setItemDialogOpen(false)
       setInventoryItemDraft({
         name: "",
         sku: "",
@@ -557,14 +559,14 @@ export function InventoryManagement() {
         minimum_stock: "0",
         target_stock: "0",
         opening_quantity: "0",
-      });
-      void queryClient.invalidateQueries({ queryKey: ["inventory"] });
+      })
+      void queryClient.invalidateQueries({ queryKey: ["inventory"] })
     },
     onError: (error) =>
       toast.error(
         error instanceof Error ? error.message : "Stok kartı oluşturulamadı.",
       ),
-  });
+  })
 
   const recipeMutation = useMutation({
     mutationFn: async (payload: RecipePayload) => {
@@ -579,19 +581,19 @@ export function InventoryManagement() {
             items: payload.items,
           }),
         },
-      );
+      )
       if (!response.ok) {
         const data = (await response.json().catch(() => null)) as {
-          detail?: string;
-          message?: string;
-          error?: { message?: string };
-        } | null;
+          detail?: string
+          message?: string
+          error?: { message?: string }
+        } | null
         throw new Error(
           data?.error?.message ??
             data?.detail ??
             data?.message ??
             "Reçete kaydedilemedi.",
-        );
+        )
       }
     },
     onSuccess: async () => {
@@ -601,48 +603,48 @@ export function InventoryManagement() {
           description:
             "Ürün satışlarında kullanılacak stok düşüm bilgileri yenilendi.",
         },
-      );
-      setRecipeDialogOpen(false);
-      setEditingRecipe(null);
-      setRecipeFormError(null);
+      )
+      setRecipeDialogOpen(false)
+      setEditingRecipe(null)
+      setRecipeFormError(null)
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["inventory", "recipes"] }),
         queryClient.invalidateQueries({ queryKey: ["inventory", "items"] }),
         queryClient.invalidateQueries({ queryKey: ["catalog", "products"] }),
-      ]);
+      ])
     },
     onError: (error) => {
       const message =
-        error instanceof Error ? error.message : "Reçete kaydedilemedi.";
-      setRecipeFormError(message);
-      toast.error(message);
+        error instanceof Error ? error.message : "Reçete kaydedilemedi."
+      setRecipeFormError(message)
+      toast.error(message)
     },
-  });
+  })
 
   function openCreateRecipe() {
-    const product = creatableProducts[0];
+    const product = creatableProducts[0]
     if (!product) {
-      toast.info("Reçetesiz aktif ürün bulunmuyor.");
-      return;
+      toast.info("Reçetesiz aktif ürün bulunmuyor.")
+      return
     }
-    setEditingRecipe(null);
-    setRecipeProductId(product.id);
-    setRecipeYield("1");
+    setEditingRecipe(null)
+    setRecipeProductId(product.id)
+    setRecipeYield("1")
     setRecipeIngredients([
       newIngredientDraft(
         items[0]?.id ?? "",
         "",
         defaultRecipeUnit(items[0]?.unit ?? "piece"),
       ),
-    ]);
-    setRecipeFormError(null);
-    setRecipeDialogOpen(true);
+    ])
+    setRecipeFormError(null)
+    setRecipeDialogOpen(true)
   }
 
   function openEditRecipe(recipe: Recipe) {
-    setEditingRecipe(recipe);
-    setRecipeProductId(recipe.product_id);
-    setRecipeYield(String(recipe.yield_quantity));
+    setEditingRecipe(recipe)
+    setRecipeProductId(recipe.product_id)
+    setRecipeYield(String(recipe.yield_quantity))
     setRecipeIngredients(
       recipe.ingredients.length
         ? recipe.ingredients.map((ingredient) =>
@@ -661,9 +663,9 @@ export function InventoryManagement() {
               defaultRecipeUnit(items[0]?.unit ?? "piece"),
             ),
           ],
-    );
-    setRecipeFormError(null);
-    setRecipeDialogOpen(true);
+    )
+    setRecipeFormError(null)
+    setRecipeDialogOpen(true)
   }
 
   function updateRecipeIngredient(
@@ -675,15 +677,15 @@ export function InventoryManagement() {
       current.map((ingredient) =>
         ingredient.key === key ? { ...ingredient, [field]: value } : ingredient,
       ),
-    );
-    setRecipeFormError(null);
+    )
+    setRecipeFormError(null)
   }
 
   function addRecipeIngredient() {
     const selectedIds = new Set(
       recipeIngredients.map((ingredient) => ingredient.inventory_item_id),
-    );
-    const nextItem = items.find((item) => !selectedIds.has(item.id));
+    )
+    const nextItem = items.find((item) => !selectedIds.has(item.id))
     setRecipeIngredients((current) => [
       ...current,
       newIngredientDraft(
@@ -691,76 +693,74 @@ export function InventoryManagement() {
         "",
         defaultRecipeUnit(nextItem?.unit ?? "piece"),
       ),
-    ]);
-    setRecipeFormError(null);
+    ])
+    setRecipeFormError(null)
   }
 
   function removeRecipeIngredient(key: string) {
     setRecipeIngredients((current) =>
       current.filter((ingredient) => ingredient.key !== key),
-    );
-    setRecipeFormError(null);
+    )
+    setRecipeFormError(null)
   }
 
   function submitRecipe() {
-    const normalizedYield = normalizeDecimal(recipeYield);
+    const normalizedYield = normalizeDecimal(recipeYield)
     if (!recipeProductId) {
-      setRecipeFormError("Reçetenin bağlanacağı ürünü seçin.");
-      return;
+      setRecipeFormError("Reçetenin bağlanacağı ürünü seçin.")
+      return
     }
     if (
       !Number.isFinite(Number(normalizedYield)) ||
       Number(normalizedYield) <= 0
     ) {
-      setRecipeFormError("Porsiyon/verim miktarı sıfırdan büyük olmalı.");
-      return;
+      setRecipeFormError("Porsiyon/verim miktarı sıfırdan büyük olmalı.")
+      return
     }
     if (recipeIngredients.length === 0) {
-      setRecipeFormError("En az bir reçete bileşeni ekleyin.");
-      return;
+      setRecipeFormError("En az bir reçete bileşeni ekleyin.")
+      return
     }
 
     const itemIds = recipeIngredients.map(
       (ingredient) => ingredient.inventory_item_id,
-    );
+    )
     if (itemIds.some((id) => !id)) {
-      setRecipeFormError("Her satır için bir stok kartı seçin.");
-      return;
+      setRecipeFormError("Her satır için bir stok kartı seçin.")
+      return
     }
     if (new Set(itemIds).size !== itemIds.length) {
-      setRecipeFormError(
-        "Aynı stok kartı reçeteye birden fazla kez eklenemez.",
-      );
-      return;
+      setRecipeFormError("Aynı stok kartı reçeteye birden fazla kez eklenemez.")
+      return
     }
 
     const normalizedItems = recipeIngredients.map((ingredient) => ({
       inventory_item_id: ingredient.inventory_item_id,
       quantity: normalizeDecimal(ingredient.quantity),
       unit: ingredient.unit,
-    }));
+    }))
     if (
       normalizedItems.some(
         (item) =>
           !Number.isFinite(Number(item.quantity)) || Number(item.quantity) <= 0,
       )
     ) {
-      setRecipeFormError("Tüm bileşen miktarları sıfırdan büyük olmalı.");
-      return;
+      setRecipeFormError("Tüm bileşen miktarları sıfırdan büyük olmalı.")
+      return
     }
 
-    setRecipeFormError(null);
+    setRecipeFormError(null)
     recipeMutation.mutate({
       productId: recipeProductId,
       yieldQuantity: normalizedYield,
       items: normalizedItems,
-    });
+    })
   }
 
-  const inventoryDataLoading = itemsQuery.isLoading || movementsQuery.isLoading;
-  const inventoryDataError = itemsQuery.error ?? movementsQuery.error;
+  const inventoryDataLoading = itemsQuery.isLoading || movementsQuery.isLoading
+  const inventoryDataError = itemsQuery.error ?? movementsQuery.error
   const inventoryDataFetching =
-    itemsQuery.isFetching || movementsQuery.isFetching;
+    itemsQuery.isFetching || movementsQuery.isFetching
 
   if (inventoryDataLoading) {
     return (
@@ -779,7 +779,7 @@ export function InventoryManagement() {
           <span className="sr-only">Envanter yükleniyor</span>
         </div>
       </>
-    );
+    )
   }
 
   if (inventoryDataError) {
@@ -803,7 +803,7 @@ export function InventoryManagement() {
                 void Promise.all([
                   itemsQuery.refetch(),
                   movementsQuery.refetch(),
-                ]);
+                ])
               }}
             >
               {inventoryDataFetching ? (
@@ -816,7 +816,7 @@ export function InventoryManagement() {
           }
         />
       </>
-    );
+    )
   }
 
   return (
@@ -831,6 +831,7 @@ export function InventoryManagement() {
             <Button
               variant="outline"
               className="h-10 rounded-xl"
+              disabled={!canManage}
               onClick={() => setItemDialogOpen(true)}
             >
               <Plus />
@@ -839,7 +840,11 @@ export function InventoryManagement() {
             <Button
               variant="outline"
               className="h-10 rounded-xl"
-              disabled={items.length === 0 || creatableProducts.length === 0}
+              disabled={
+                !canManage ||
+                items.length === 0 ||
+                creatableProducts.length === 0
+              }
               onClick={openCreateRecipe}
             >
               <UtensilsCrossed />
@@ -848,6 +853,7 @@ export function InventoryManagement() {
             <Button
               className="h-10 rounded-xl"
               disabled={
+                !canManage ||
                 !accessibleBranches.data?.currentBranchId ||
                 (accessibleBranches.data?.branches.length ?? 0) < 2
               }
@@ -916,7 +922,7 @@ export function InventoryManagement() {
             <Button
               variant="outline"
               size="sm"
-              disabled={transferOptions.length < 2}
+              disabled={!canManage || transferOptions.length < 2}
               onClick={() => setTransferDialogOpen(true)}
             >
               <ArrowRightLeft />
@@ -1011,25 +1017,25 @@ export function InventoryManagement() {
                 <TableBody>
                   {(overviewQuery.data?.items ?? [])
                     .filter((item) => {
-                      const term = search.trim().toLocaleLowerCase("tr-TR");
+                      const term = search.trim().toLocaleLowerCase("tr-TR")
                       const matchesSearch =
                         !term ||
                         `${item.name} ${item.sku ?? ""} ${item.category ?? ""}`
                           .toLocaleLowerCase("tr-TR")
-                          .includes(term);
+                          .includes(term)
                       const hasCritical = item.branches.some(
                         (cell) =>
                           (branchFilter === "all" ||
                             cell.branch_id === branchFilter) &&
                           cell.status !== "NORMAL",
-                      );
+                      )
                       return (
                         matchesSearch &&
                         (categoryFilter === "all" ||
                           item.category === categoryFilter) &&
                         (stockFilter === "all" ||
                           (stockFilter === "low" ? hasCritical : !hasCritical))
-                      );
+                      )
                     })
                     .map((item) => (
                       <TableRow key={item.key}>
@@ -1042,7 +1048,7 @@ export function InventoryManagement() {
                         {visibleOverviewBranches.map((branch) => {
                           const cell = item.branches.find(
                             (candidate) => candidate.branch_id === branch.id,
-                          );
+                          )
                           return (
                             <TableCell key={branch.id}>
                               {cell ? (
@@ -1081,7 +1087,7 @@ export function InventoryManagement() {
                                 </span>
                               )}
                             </TableCell>
-                          );
+                          )
                         })}
                       </TableRow>
                     ))}
@@ -1136,14 +1142,14 @@ export function InventoryManagement() {
                 </TableHeader>
                 <TableBody>
                   {filteredItems.map((item) => {
-                    const current = Number(item.current_quantity);
-                    const minimum = Number(item.minimum_quantity);
-                    const isOut = current <= 0;
-                    const isLow = !isOut && current <= minimum;
+                    const current = Number(item.current_quantity)
+                    const minimum = Number(item.minimum_quantity)
+                    const isOut = current <= 0
+                    const isLow = !isOut && current <= minimum
                     const ratio =
                       minimum > 0
                         ? Math.min(100, (current / minimum) * 100)
-                        : 100;
+                        : 100
                     return (
                       <TableRow key={item.id}>
                         <TableCell>
@@ -1217,16 +1223,17 @@ export function InventoryManagement() {
                             variant="outline"
                             size="sm"
                             className="rounded-lg"
+                            disabled={!canManage}
                             onClick={() => {
-                              setSelectedItem(item.id);
-                              setDialogOpen(true);
+                              setSelectedItem(item.id)
+                              setDialogOpen(true)
                             }}
                           >
                             Düzelt
                           </Button>
                         </TableCell>
                       </TableRow>
-                    );
+                    )
                   })}
                 </TableBody>
               </Table>
@@ -1261,7 +1268,7 @@ export function InventoryManagement() {
                 {movements.map((movement) => {
                   const meta =
                     movementMeta[movement.movement_type] ??
-                    movementMeta.ADJUSTMENT;
+                    movementMeta.ADJUSTMENT
                   return (
                     <TableRow key={movement.id}>
                       <TableCell className="text-xs text-muted-foreground">
@@ -1301,7 +1308,7 @@ export function InventoryManagement() {
                         </p>
                       </TableCell>
                     </TableRow>
-                  );
+                  )
                 })}
                 {movements.length === 0 ? (
                   <TableRow>
@@ -1337,6 +1344,7 @@ export function InventoryManagement() {
               <Button
                 className="rounded-xl"
                 disabled={
+                  !canManage ||
                   recipeDataLoading ||
                   Boolean(recipeDataError) ||
                   items.length === 0 ||
@@ -1364,7 +1372,7 @@ export function InventoryManagement() {
               </p>
               <div className="flex flex-wrap gap-2">
                 {products.map((product) => {
-                  const hasRecipe = recipeProductIds.has(product.id);
+                  const hasRecipe = recipeProductIds.has(product.id)
                   return (
                     <div
                       key={product.id}
@@ -1377,7 +1385,7 @@ export function InventoryManagement() {
                         {hasRecipe ? "Reçete var" : "Reçete yok"}
                       </StatusBadge>
                     </div>
-                  );
+                  )
                 })}
               </div>
             </div>
@@ -1400,8 +1408,8 @@ export function InventoryManagement() {
                 <Button
                   variant="outline"
                   onClick={() => {
-                    void recipesQuery.refetch();
-                    void productsQuery.refetch();
+                    void recipesQuery.refetch()
+                    void productsQuery.refetch()
                   }}
                 >
                   Tekrar dene
@@ -1425,7 +1433,7 @@ export function InventoryManagement() {
               icon={UtensilsCrossed}
               action={
                 products.length > 0 && items.length > 0 ? (
-                  <Button onClick={openCreateRecipe}>
+                  <Button disabled={!canManage} onClick={openCreateRecipe}>
                     <Plus />
                     Yeni reçete
                   </Button>
@@ -1460,7 +1468,8 @@ export function InventoryManagement() {
                       variant="outline"
                       size="sm"
                       disabled={
-                        items.length === 0 && recipe.ingredients.length === 0
+                        !canManage ||
+                        (items.length === 0 && recipe.ingredients.length === 0)
                       }
                       onClick={() => openEditRecipe(recipe)}
                     >
@@ -1509,13 +1518,13 @@ export function InventoryManagement() {
           toast.success("Reçete bu şubeye getirildi.", {
             description:
               "Yalnız reçete tanımı kopyalandı; stok miktarları değişmedi.",
-          });
+          })
           void Promise.all([
             queryClient.invalidateQueries({ queryKey: ["inventory"] }),
             queryClient.invalidateQueries({
               queryKey: ["catalog", "products"],
             }),
-          ]);
+          ])
         }}
       />
 
@@ -1533,8 +1542,8 @@ export function InventoryManagement() {
               <Select
                 value={transferSource}
                 onValueChange={(value) => {
-                  setTransferSource(value ?? "");
-                  setTransferTarget("");
+                  setTransferSource(value ?? "")
+                  setTransferTarget("")
                 }}
               >
                 <SelectTrigger>
@@ -1744,8 +1753,8 @@ export function InventoryManagement() {
             id="inventory-item-form"
             className="space-y-4"
             onSubmit={(event) => {
-              event.preventDefault();
-              createItemMutation.mutate(inventoryItemDraft);
+              event.preventDefault()
+              createItemMutation.mutate(inventoryItemDraft)
             }}
           >
             <div className="space-y-2">
@@ -1919,11 +1928,11 @@ export function InventoryManagement() {
       <Dialog
         open={recipeDialogOpen}
         onOpenChange={(open) => {
-          if (recipeMutation.isPending) return;
-          setRecipeDialogOpen(open);
+          if (recipeMutation.isPending) return
+          setRecipeDialogOpen(open)
           if (!open) {
-            setEditingRecipe(null);
-            setRecipeFormError(null);
+            setEditingRecipe(null)
+            setRecipeFormError(null)
           }
         }}
       >
@@ -1943,8 +1952,8 @@ export function InventoryManagement() {
           <form
             className="space-y-5"
             onSubmit={(event) => {
-              event.preventDefault();
-              submitRecipe();
+              event.preventDefault()
+              submitRecipe()
             }}
           >
             <div className="grid gap-4 sm:grid-cols-[minmax(0,1fr)_180px]">
@@ -1954,8 +1963,8 @@ export function InventoryManagement() {
                   value={recipeProductId}
                   disabled={Boolean(editingRecipe)}
                   onValueChange={(value) => {
-                    setRecipeProductId(value ?? "");
-                    setRecipeFormError(null);
+                    setRecipeProductId(value ?? "")
+                    setRecipeFormError(null)
                   }}
                 >
                   <SelectTrigger
@@ -2000,8 +2009,8 @@ export function InventoryManagement() {
                   placeholder="1"
                   value={recipeYield}
                   onChange={(event) => {
-                    setRecipeYield(event.target.value);
-                    setRecipeFormError(null);
+                    setRecipeYield(event.target.value)
+                    setRecipeFormError(null)
                   }}
                 />
                 <p className="text-[0.66rem] text-muted-foreground">
@@ -2039,12 +2048,12 @@ export function InventoryManagement() {
                 {recipeIngredients.map((ingredient, index) => {
                   const selectedInventoryItem = items.find(
                     (item) => item.id === ingredient.inventory_item_id,
-                  );
+                  )
                   const selectedByOtherRows = new Set(
                     recipeIngredients
                       .filter((item) => item.key !== ingredient.key)
                       .map((item) => item.inventory_item_id),
-                  );
+                  )
                   return (
                     <div
                       key={ingredient.key}
@@ -2062,7 +2071,7 @@ export function InventoryManagement() {
                           onValueChange={(value) => {
                             const inventoryItem = items.find(
                               (item) => item.id === value,
-                            );
+                            )
                             setRecipeIngredients((current) =>
                               current.map((currentIngredient) =>
                                 currentIngredient.key === ingredient.key
@@ -2075,8 +2084,8 @@ export function InventoryManagement() {
                                     }
                                   : currentIngredient,
                               ),
-                            );
-                            setRecipeFormError(null);
+                            )
+                            setRecipeFormError(null)
                           }}
                         >
                           <SelectTrigger
@@ -2178,7 +2187,7 @@ export function InventoryManagement() {
                         <Trash2 />
                       </Button>
                     </div>
-                  );
+                  )
                 })}
               </div>
             </div>
@@ -2215,5 +2224,5 @@ export function InventoryManagement() {
         </DialogContent>
       </Dialog>
     </>
-  );
+  )
 }

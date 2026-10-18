@@ -103,11 +103,21 @@ def upgrade() -> None:
             sa.PrimaryKeyConstraint("id"),
             sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_email_notification_key"),
         )
-        op.create_index("ix_email_notification_delivery", "email_notifications", ["status", "next_attempt_at", "created_at"])
-        op.create_index("ix_email_notification_campaign", "email_notifications", ["tenant_id", "campaign_id"])
-        op.create_index("ix_email_notification_reward", "email_notifications", ["tenant_id", "reward_id"])
+        op.create_index(
+            "ix_email_notification_delivery",
+            "email_notifications",
+            ["status", "next_attempt_at", "created_at"],
+        )
+        op.create_index(
+            "ix_email_notification_campaign", "email_notifications", ["tenant_id", "campaign_id"]
+        )
+        op.create_index(
+            "ix_email_notification_reward", "email_notifications", ["tenant_id", "reward_id"]
+        )
         op.create_index("ix_email_notifications_tenant_id", "email_notifications", ["tenant_id"])
-        op.create_index("ix_email_notifications_customer_id", "email_notifications", ["customer_id"])
+        op.create_index(
+            "ix_email_notifications_customer_id", "email_notifications", ["customer_id"]
+        )
 
 
 def downgrade() -> None:

@@ -33,18 +33,9 @@ import { formatDateTime, formatRelativeTime } from "@/lib/formatters"
 import { cn } from "@/lib/utils"
 
 import { AdapterNotice } from "./adapter-notice"
-import {
-  getSystemHealth,
-  secondaryAdminQueryKeys,
-} from "./platform-admin-api"
-import {
-  QueryErrorState,
-  SecondaryPageSkeleton,
-} from "./query-state"
-import type {
-  ServiceHealthState,
-  SystemServiceHealth,
-} from "./types"
+import { getSystemHealth, secondaryAdminQueryKeys } from "./platform-admin-api"
+import { QueryErrorState, SecondaryPageSkeleton } from "./query-state"
+import type { ServiceHealthState, SystemServiceHealth } from "./types"
 
 const serviceIcons = {
   api: Server,
@@ -226,12 +217,13 @@ export function SystemHealth() {
           contentClassName="space-y-3"
         >
           <AdapterNotice
-            title="Canlı BFF probları"
-            badge={adapter.source}
+            title="Güncel servis kontrolü"
+            badge="Canlı"
             tone="live"
           >
-            Sağlık yanıtı sunucuda oluşturulur; servis kimlik bilgileri tarayıcıya
-            aktarılmaz.
+            Servis durumları sunucudan kontrol edilir. Yazıcı bilgisayarlarının
+            durumu son bağlantı bildirimine dayanır; fiziksel kağıt çıktısı
+            şubede ayrıca kontrol edilmelidir.
           </AdapterNotice>
           <ul className="space-y-2">
             {adapter.limitations.map((limitation) => (
@@ -253,11 +245,7 @@ export function SystemHealth() {
   )
 }
 
-function ServiceHealthCard({
-  service,
-}: {
-  service: SystemServiceHealth
-}) {
+function ServiceHealthCard({ service }: { service: SystemServiceHealth }) {
   const Icon = serviceIcons[service.id]
   const presentation = healthPresentation[service.state]
   const StateIcon = presentation.icon
@@ -296,10 +284,7 @@ function ServiceHealthCard({
           )}
         >
           <StateIcon
-            className={cn(
-              "mt-0.5 size-4 shrink-0",
-              presentation.iconClassName,
-            )}
+            className={cn("mt-0.5 size-4 shrink-0", presentation.iconClassName)}
           />
           <div>
             <p className="text-xs font-semibold">{service.summary}</p>
@@ -398,10 +383,7 @@ function visibleMetadata(
 
 function formatMetadataValue(value: string | number | boolean): string {
   if (typeof value === "boolean") return value ? "Başarılı" : "Başarısız"
-  if (
-    typeof value === "string" &&
-    /^\d{4}-\d{2}-\d{2}T/.test(value)
-  ) {
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}T/.test(value)) {
     return formatRelativeTime(value)
   }
   return String(value)

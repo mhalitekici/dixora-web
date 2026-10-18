@@ -15,17 +15,26 @@ import type {
 export const loyaltyApi = {
   async setupOptions(signal?: AbortSignal): Promise<LoyaltySetupOptions> {
     const [branches, products, categories] = await Promise.all([
-      api.get<Array<{ id: string; name: string; is_active: boolean }>>("branches", {
-        signal,
-      }),
-      api.get<{ items: Array<{ id: string; name: string }> }>("catalog/products", {
-        search: { include_inactive: false, limit: 250 },
-        signal,
-      }),
-      api.get<{ items: Array<{ id: string; name: string }> }>("catalog/categories", {
-        search: { include_inactive: false, limit: 250 },
-        signal,
-      }),
+      api.get<Array<{ id: string; name: string; is_active: boolean }>>(
+        "branches",
+        {
+          signal,
+        },
+      ),
+      api.get<{ items: Array<{ id: string; name: string }> }>(
+        "catalog/products",
+        {
+          search: { include_inactive: false, limit: 250 },
+          signal,
+        },
+      ),
+      api.get<{ items: Array<{ id: string; name: string }> }>(
+        "catalog/categories",
+        {
+          search: { include_inactive: false, limit: 250 },
+          signal,
+        },
+      ),
     ])
     return {
       branches: branches.filter((branch) => branch.is_active),
@@ -38,6 +47,7 @@ export const loyaltyApi = {
     last_name: string
     email: string
     birth_date: string | null
+    marketing_email_consent: boolean
   }) =>
     api.post<{
       verification_id: string
@@ -68,10 +78,13 @@ export const loyaltyApi = {
       signal,
     }),
   attachMembership: (orderId: string, membershipCode: string) =>
-    api.post<{ order_id: string; membership_code: string; program_name: string }>(
-      `loyalty/orders/${segment(orderId)}/membership`,
-      { membership_code: membershipCode },
-    ),
+    api.post<{
+      order_id: string
+      membership_code: string
+      program_name: string
+    }>(`loyalty/orders/${segment(orderId)}/membership`, {
+      membership_code: membershipCode,
+    }),
   /** One cashier action: attach the member and apply every earned campaign. */
   applyMemberCode: (
     orderId: string,
@@ -83,7 +96,12 @@ export const loyaltyApi = {
     ),
   redeemReward: (
     redemptionCode: string,
-    input: { order_id: string; order_item_id: string; idempotency_key: string },
+    input: {
+      order_id: string
+      order_item_id: string
+      idempotency_key: string
+      verification_code: string
+    },
   ) =>
     api.post<LoyaltyRedemption>(
       `loyalty/rewards/${segment(redemptionCode)}/redeem`,
@@ -103,6 +121,7 @@ export const loyaltyApi = {
       email: string
       birth_date: string | null
       consent_accepted: true
+      marketing_email_consent: boolean
     },
   ) =>
     api.post<{

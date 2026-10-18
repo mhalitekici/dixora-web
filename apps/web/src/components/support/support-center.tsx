@@ -1,21 +1,25 @@
-"use client";
+"use client"
 
 import {
   ChevronDown,
   LifeBuoy,
   Mail,
   MessageSquareText,
-} from "lucide-react";
-import { useState } from "react";
+  Search,
+} from "lucide-react"
+import { useState } from "react"
+import Link from "next/link"
 
-import { PageHeader } from "@/components/shared/page-header";
-import { Card, CardContent } from "@/components/ui/card";
-import { cn } from "@/lib/utils";
+import { PageHeader } from "@/components/shared/page-header"
+import { Card, CardContent } from "@/components/ui/card"
+import { Input } from "@/components/ui/input"
+import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 
-export const SUPPORT_EMAIL = "support@dixoratech.com";
-export const INFO_EMAIL = "info@dixoratech.com";
+export const SUPPORT_EMAIL = "support@dixoratech.com"
+export const INFO_EMAIL = "info@dixoratech.com"
 
-type Faq = { question: string; answer: string };
+type Faq = { question: string; answer: string }
 
 const faqs: Faq[] = [
   {
@@ -46,30 +50,56 @@ const faqs: Faq[] = [
   {
     question: "Sadakat ve kampanya nasıl çalışır?",
     answer:
-      "Admin › Sadakat ve Kampanya ekranından kural tanımlarsınız (örn. belirli sayıda ziyaret veya ürün alımı sonrası ödül). Müşteri telefon numarasıyla kaydolur; kasiyer siparişe üyeliği bağladığında ilerleme otomatik işlenir ve ödül hak edildiğinde kullanılabilir hâle gelir.",
+      "Kampanyalar ve Sadakat başlığından teklif veya ödül kuralı tanımlayın. Müşteri e-postasını doğrulayarak üye olur. Üyelik kodu siparişe bağlanır; ilerleme uygun siparişin ödemesi tamamlanınca artar. Kazanılan ikram e-postayla bildirilir; kasiyer bu e-postadaki 6 haneli ödül koduyla ikramı uygular. Kampanya duyuruları yalnız e-posta izni veren üyelere gönderilir.",
   },
   {
     question: "Şube nasıl değiştiririm?",
     answer:
-      "Birden fazla şubeye yetkiniz varsa sağ üstteki hesap menüsünden şube değiştirebilirsiniz. Masalar, siparişler, stok ve raporlar seçili şubeye göre gösterilir.",
+      "Birden fazla şubeye yetkiniz varsa üst çubuktaki işletme ve şube adına basıp şubeyi seçin. Masalar, siparişler, stok ve raporlar seçili şubeye göre yenilenir. Yazıcı ekranı da bağlantıları bu şube kapsamında gösterir.",
   },
   {
     question: "Teknik destek nasıl alırım?",
     answer:
       "support@dixoratech.com adresine yazın. Sorunu daha hızlı çözebilmemiz için işletme adınızı, hangi ekranda karşılaştığınızı ve mümkünse ekran görüntüsünü paylaşın. Faturalama ve üyelik konuları için info@dixoratech.com adresini kullanabilirsiniz.",
   },
-];
+  {
+    question: "Yazıcı entegrasyonuna nasıl başlarım?",
+    answer:
+      "Yazıcılar ekranında doğru şubeyi seçin. Yazıcının kurulu olduğu bilgisayara Dixora Print Bridge uygulamasını indirin. Bilgisayar bağla ile oluşturulan kodu ve ekranda gösterilen API adresini uygulamaya girin. Bilgisayar çevrimiçi göründüğünde mutfak, bar ve kasa cihazlarını yerel yazıcılarla eşleştirin. Son olarak test çıktısını ve kağıdı kontrol edin.",
+  },
+  {
+    question: "Vardiyamı nasıl devrederim veya kapatırım?",
+    answer:
+      "Kasa › Vardiya ekranında mevcut kasiyeri ve bakiyeyi kontrol edin. Devirde teslim alan kasiyerin bilgilerini ve doğrulama PIN'ini girin. Kapanışta sayılan nakit ve istenen ödeme toplamlarını kaydedin. Açık vardiya varken kullanıcı değiştirdiğinizde uygulama devir veya kapanış konusunda sizi yönlendirir.",
+  },
+  {
+    question: "Ödül e-postası gelmedi, ne yapmalıyım?",
+    answer:
+      "Önce uygun siparişin tamamen ödendiğini ve müşterinin doğrulanmış e-posta adresini kontrol edin. Yönetici Bildirimler ekranında gönderim durumunu ve yeniden deneme zamanını görebilir. Spam klasörünü de kontrol edin. Kullanılmış veya geri alınmış ödüller için yeni bir hazır ödül bildirimi gönderilmez.",
+  },
+]
 
 export function SupportCenter() {
-  const [openIndex, setOpenIndex] = useState<number | null>(0);
+  const [openIndex, setOpenIndex] = useState<number | null>(0)
+  const [search, setSearch] = useState("")
+  const term = search.trim().toLocaleLowerCase("tr")
 
   return (
-    <div className="min-h-full bg-muted/20 p-4 sm:p-6">
+    <main
+      id="dixora-main"
+      tabIndex={-1}
+      className="mx-auto min-h-dvh w-full max-w-5xl bg-muted/20 p-4 sm:p-6"
+    >
       <PageHeader
         eyebrow="Yardım"
         title="Destek Merkezi"
         description="Sık karşılaşılan durumlar için hızlı çözümler ve Dixora destek ekibine ulaşma yolları."
         icon={LifeBuoy}
+        actions={
+          <Button variant="outline" render={<Link href="/login" />}>
+            Panele dön
+          </Button>
+        }
       />
 
       <div className="mb-5 grid gap-3 sm:grid-cols-2">
@@ -91,15 +121,37 @@ export function SupportCenter() {
         <CardContent className="p-0">
           <div className="border-b px-4 py-3.5">
             <h2 className="font-semibold">Sık sorulan sorular</h2>
+            <div className="relative mt-3">
+              <Search
+                className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
+                aria-hidden="true"
+              />
+              <Input
+                aria-label="Yardım konularında ara"
+                value={search}
+                onChange={(event) => setSearch(event.target.value)}
+                placeholder="Yazıcı, ödül, vardiya…"
+                className="pl-9"
+                type="search"
+              />
+            </div>
           </div>
           <div className="divide-y">
             {faqs.map((faq, index) => {
-              const open = openIndex === index;
+              if (
+                term &&
+                !`${faq.question} ${faq.answer}`
+                  .toLocaleLowerCase("tr")
+                  .includes(term)
+              )
+                return null
+              const open = openIndex === index
               return (
                 <div key={faq.question}>
                   <button
                     type="button"
                     aria-expanded={open}
+                    aria-controls={`faq-answer-${index}`}
                     onClick={() => setOpenIndex(open ? null : index)}
                     className="flex w-full items-center justify-between gap-3 px-4 py-3.5 text-left transition-colors hover:bg-muted/35"
                   >
@@ -113,13 +165,26 @@ export function SupportCenter() {
                     />
                   </button>
                   {open ? (
-                    <p className="px-4 pb-4 text-sm leading-6 text-muted-foreground">
+                    <p
+                      id={`faq-answer-${index}`}
+                      className="px-4 pb-4 text-sm leading-6 text-muted-foreground"
+                    >
                       {faq.answer}
                     </p>
                   ) : null}
                 </div>
-              );
+              )
             })}
+            {!faqs.some((faq) =>
+              `${faq.question} ${faq.answer}`
+                .toLocaleLowerCase("tr")
+                .includes(term),
+            ) ? (
+              <p role="status" className="p-4 text-sm text-muted-foreground">
+                Bu aramaya uygun yardım konusu bulunamadı. Farklı bir kelime
+                deneyin.
+              </p>
+            ) : null}
           </div>
         </CardContent>
       </Card>
@@ -134,8 +199,8 @@ export function SupportCenter() {
         </a>{" "}
         adresine yazın, en kısa sürede dönüş yapalım.
       </p>
-    </div>
-  );
+    </main>
+  )
 }
 
 function SupportChannel({
@@ -144,10 +209,10 @@ function SupportChannel({
   description,
   email,
 }: {
-  icon: typeof Mail;
-  title: string;
-  description: string;
-  email: string;
+  icon: typeof Mail
+  title: string
+  description: string
+  email: string
 }) {
   return (
     <a
@@ -159,9 +224,13 @@ function SupportChannel({
       </span>
       <span className="min-w-0">
         <span className="block font-semibold">{title}</span>
-        <span className="block text-sm text-muted-foreground">{description}</span>
-        <span className="mt-1 block truncate text-sm font-medium text-brand">{email}</span>
+        <span className="block text-sm text-muted-foreground">
+          {description}
+        </span>
+        <span className="mt-1 block truncate text-sm font-medium text-brand">
+          {email}
+        </span>
       </span>
     </a>
-  );
+  )
 }

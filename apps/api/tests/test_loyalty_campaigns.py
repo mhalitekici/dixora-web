@@ -152,8 +152,8 @@ async def _setup(api: ApiContext) -> dict[str, Any]:
     }
 
 
-async def test_one_member_code_zeroes_the_treat_at_payment(api: ApiContext) -> None:
-    """The whole point: the cashier types the code and the dessert costs nothing."""
+async def test_member_code_does_not_spend_earned_reward(api: ApiContext) -> None:
+    """Attaching a member must leave their earned reward for explicit verification."""
     ctx = await _setup(api)
     headers = ctx["headers"]
     coffee, dessert = ctx["coffee"], ctx["dessert"]
@@ -181,19 +181,19 @@ async def test_one_member_code_zeroes_the_treat_at_payment(api: ApiContext) -> N
     assert response.status_code == 201, response.text
     body = response.json()
 
-    assert len(body["applied"]) == 1
-    granted = body["applied"][0]
-    assert granted["product_name"] == dessert["name"]
-    assert Decimal(granted["amount"]) == Decimal(dessert["selling_price"])
-    assert body["unapplied_reason"] is None
-    # The bill really drops — the discount is not cosmetic.
-    assert Decimal(body["order_total"]) == before - Decimal(dessert["selling_price"])
+    assert body["applied"] == []
+    assert body["unapplied_reason"] is not None
+    assert Decimal(body["order_total"]) == before
+    context = await api.client.get(
+        f"/api/v1/loyalty/orders/{order['id']}/context", headers=headers
+    )
+    assert len(context.json()["available_rewards"]) == 1
 
 
-async def test_the_code_is_matched_server_side_not_by_the_browser(
+async def test_earned_reward_requires_its_verification_code(
     api: ApiContext,
 ) -> None:
-    """The caller never names a line; the server decides what the reward covers."""
+    """A member code alone cannot stand in for the customer's emailed reward code."""
     ctx = await _setup(api)
     headers = ctx["headers"]
     coffee, dessert = ctx["coffee"], ctx["dessert"]
@@ -221,8 +221,21 @@ async def test_the_code_is_matched_server_side_not_by_the_browser(
         },
     )
     assert response.status_code == 201, response.text
-    # It landed on the dessert, not the coffee, without being told which.
-    assert response.json()["applied"][0]["order_item_id"] == dessert_item["id"]
+    assert response.json()["applied"] == []
+    context = await api.client.get(
+        f"/api/v1/loyalty/orders/{order['id']}/context", headers=headers
+    )
+    reward_code = context.json()["available_rewards"][0]["redemption_code"]
+    redemption = await api.client.post(
+        f"/api/v1/loyalty/rewards/{reward_code}/redeem",
+        headers=headers,
+        json={
+            "order_id": order["id"],
+            "order_item_id": dessert_item["id"],
+            "idempotency_key": "reward-without-verification-0001",
+        },
+    )
+    assert redemption.status_code == 422
 
 
 async def test_replaying_the_same_code_does_not_discount_twice(

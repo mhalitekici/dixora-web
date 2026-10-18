@@ -8,6 +8,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, Query, Request, status
 from sqlalchemy import func, or_, select
 from sqlalchemy.orm import selectinload
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.dependencies import (
     DbSession,
@@ -24,6 +25,7 @@ from app.models.enums import (
     OrderSource,
     OrderStatus,
     PaymentStatus,
+    TableSessionStatus,
 )
 from app.schemas import (
     AmountCheckSplitOut,
@@ -131,6 +133,8 @@ async def list_orders(
     receipt_date: date | None = None,
     limit: int = Query(default=50, ge=1, le=200),
     offset: int = Query(default=0, ge=0),
+    active_only: bool = False,
+    include_paid_open_tables: bool = False,
 ) -> Page[OrderOut]:
     predicates = [
         Order.tenant_id == require_tenant(identity),
@@ -138,6 +142,20 @@ async def list_orders(
     ]
     if order_status:
         predicates.append(Order.status == order_status)
+    if active_only:
+        active_predicate: ColumnElement[bool] = Order.status.not_in(
+            [OrderStatus.PAID, OrderStatus.CANCELLED, OrderStatus.VOIDED]
+        )
+        if include_paid_open_tables:
+            active_predicate = or_(
+                active_predicate,
+                (Order.status == OrderStatus.PAID)
+                & Order.table_session.has(
+                    (TableSession.status == TableSessionStatus.OPEN)
+                    & TableSession.closed_at.is_(None)
+                ),
+            )
+        predicates.append(active_predicate)
     if receipt_number is not None or receipt_date is not None:
         receipt_predicates = [Receipt.tenant_id == require_tenant(identity)]
         if receipt_number is not None:

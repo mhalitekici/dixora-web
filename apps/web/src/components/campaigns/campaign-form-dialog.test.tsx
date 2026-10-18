@@ -17,7 +17,9 @@ function jsonResponse(body: unknown, status = 200) {
   })
 }
 
-function setup(editing: Parameters<typeof CampaignFormDialog>[0]["editing"] = null) {
+function setup(
+  editing: Parameters<typeof CampaignFormDialog>[0]["editing"] = null,
+) {
   const posted: Array<{ url: string; method: string; body: unknown }> = []
   vi.stubGlobal(
     "fetch",
@@ -26,7 +28,9 @@ function setup(editing: Parameters<typeof CampaignFormDialog>[0]["editing"] = nu
       const method = init?.method ?? "GET"
       if (method !== "GET") {
         posted.push({ url, method, body: JSON.parse(String(init?.body)) })
-        return Promise.resolve(jsonResponse({ id: "new", summary: "özet" }, 201))
+        return Promise.resolve(
+          jsonResponse({ id: "new", summary: "özet" }, 201),
+        )
       }
       if (url.includes("catalog/products")) {
         return Promise.resolve(
@@ -39,7 +43,9 @@ function setup(editing: Parameters<typeof CampaignFormDialog>[0]["editing"] = nu
         )
       }
       if (url.includes("catalog/categories")) {
-        return Promise.resolve(jsonResponse([{ id: "cat-1", name: "Tatlılar" }]))
+        return Promise.resolve(
+          jsonResponse([{ id: "cat-1", name: "Tatlılar" }]),
+        )
       }
       if (url.includes("branches")) {
         return Promise.resolve(
@@ -69,7 +75,9 @@ describe("CampaignFormDialog", () => {
     const user = userEvent.setup({ delay: null })
     setup()
 
-    const save = await screen.findByRole("button", { name: /Kampanyayı oluştur/ })
+    const save = await screen.findByRole("button", {
+      name: /Kampanyayı oluştur/,
+    })
     expect(save).toBeDisabled()
 
     await user.type(screen.getByLabelText("Kampanya adı"), "Kahve alana tatlı")
@@ -86,7 +94,9 @@ describe("CampaignFormDialog", () => {
     expect(screen.queryByLabelText("Yüzde (%)")).not.toBeInTheDocument()
 
     await user.click(screen.getByLabelText("İkram türü"))
-    await user.click(await screen.findByRole("option", { name: "Yüzde indirim" }))
+    await user.click(
+      await screen.findByRole("option", { name: "Yüzde indirim" }),
+    )
 
     expect(await screen.findByLabelText("Yüzde (%)")).toBeVisible()
   })
@@ -100,7 +110,9 @@ describe("CampaignFormDialog", () => {
       "Kahve alana tatlı",
     )
     await user.click(screen.getByLabelText("Koşul"))
-    await user.click(await screen.findByRole("option", { name: "Filtre Kahve" }))
+    await user.click(
+      await screen.findByRole("option", { name: "Filtre Kahve" }),
+    )
     await user.click(screen.getByLabelText("İkram"))
     await user.click(await screen.findByRole("option", { name: "Tiramisu" }))
     await user.click(screen.getByRole("checkbox", { name: "Merkez" }))
@@ -116,6 +128,7 @@ describe("CampaignFormDialog", () => {
     expect(body.reward_product_id).toBe(DESSERT)
     expect(body.reward_kind).toBe("FREE_ITEM")
     expect(body.branch_ids).toEqual([BRANCH])
+    expect(body.notify_loyalty_members).toBe(true)
   })
 
   it("carries the version when editing so concurrent edits are caught", async () => {
@@ -125,6 +138,10 @@ describe("CampaignFormDialog", () => {
       name: "Mevcut",
       description: null,
       is_active: true,
+      notify_loyalty_members: false,
+      activation_version: 1,
+      email_notification_status: "NOT_REQUESTED",
+      email_notification_recipients: 0,
       branch_ids: [BRANCH],
       buy_product_id: COFFEE,
       buy_category_id: null,
@@ -147,5 +164,8 @@ describe("CampaignFormDialog", () => {
     await waitFor(() => expect(posted).toHaveLength(1))
     expect(posted[0].method).toBe("PUT")
     expect((posted[0].body as Record<string, unknown>).expected_version).toBe(7)
+    expect(
+      (posted[0].body as Record<string, unknown>).notify_loyalty_members,
+    ).toBe(false)
   })
 })

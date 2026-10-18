@@ -25,11 +25,12 @@ export function useLoyaltyProgram() {
   })
 }
 
-export function useLoyaltySetupOptions() {
+export function useLoyaltySetupOptions(enabled = true) {
   return useQuery({
     queryKey: loyaltyKeys.setup,
     queryFn: ({ signal }) => loyaltyApi.setupOptions(signal),
     staleTime: 60_000,
+    enabled,
   })
 }
 
@@ -70,5 +71,3 @@ export function useOrderLoyaltyContext(orderId: string | null) {
     retry: false,
   })
 }
-
-

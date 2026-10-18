@@ -45,9 +45,7 @@ class Identity:
         return branch_id in self.accessible_branch_ids
 
 
-async def resolve_accessible_branches(
-    db: AsyncSession, user: User
-) -> tuple[frozenset[UUID], bool]:
+async def resolve_accessible_branches(db: AsyncSession, user: User) -> tuple[frozenset[UUID], bool]:
     """Resolve which branches a user may operate in, from trusted DB state only.
 
     A user with no primary branch spans the entire business — this is the existing
@@ -59,11 +57,7 @@ async def resolve_accessible_branches(
 
     if user.branch_id is None:
         branch_ids = (
-            (
-                await db.execute(
-                    select(Branch.id).where(Branch.tenant_id == user.tenant_id)
-                )
-            )
+            (await db.execute(select(Branch.id).where(Branch.tenant_id == user.tenant_id)))
             .scalars()
             .all()
         )
@@ -206,6 +200,22 @@ def require_tenant(identity: Identity) -> UUID:
             "tenant_context_required", "A business context is required", status_code=400
         )
     return identity.tenant_id
+
+
+def require_any_permissions(*required: str) -> Callable[[Identity], Awaitable[Identity]]:
+    async def dependency(identity: CurrentIdentity) -> Identity:
+        if identity.is_super_admin or "*" in identity.permissions:
+            return identity
+        if any(permission in identity.permissions for permission in required):
+            return identity
+        raise DomainError(
+            "permission_denied",
+            "Bu işlem için yetkiniz bulunmuyor.",
+            status_code=403,
+            details={"required_any_permissions": list(required)},
+        )
+
+    return dependency
 
 
 def require_branch(identity: Identity, requested: UUID | None = None) -> UUID:

@@ -5,6 +5,7 @@ export type DecimalString = string
 export type RoleCode =
   | "SUPER_ADMIN"
   | "BUSINESS_OWNER"
+  | "BUSINESS_ADMIN"
   | "BUSINESS_MANAGER"
   | "CASHIER"
   | "WAITER"

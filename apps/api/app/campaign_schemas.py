@@ -52,7 +52,9 @@ class CampaignOut(BaseModel):
     is_active: bool
     notify_loyalty_members: bool
     activation_version: int
-    email_notification_status: Literal["NOT_REQUESTED", "PENDING", "SENT", "FAILED"]
+    email_notification_status: Literal[
+        "NOT_REQUESTED", "NO_RECIPIENTS", "PENDING", "SENT", "FAILED", "CANCELLED"
+    ]
     email_notification_recipients: int
     branch_ids: list[UUID]
     buy_product_id: UUID | None
