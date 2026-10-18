@@ -122,6 +122,9 @@ closure with open-shift and duplicate-close guards. Run once per fresh stack. Ad
 `--profile browser` to Compose to serve the isolated web UI on port 13000.
 The CI `Business day and backup restore` job runs the HTTP and restore checks on
 every configured push/PR, including a Unicode media key and an empty object.
+The validation MinIO image builds the production release's immutable official
+source commit (`0d7408f`) because its legacy community registry tag is no longer
+available to clean runners. See the upstream [source distribution instructions](https://github.com/minio/minio#source-only-distribution).
 
 ## Subscription billing
 
