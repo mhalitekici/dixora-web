@@ -8,7 +8,7 @@ export interface ExecResult {
 export type ExecFn = (
   command: string,
   args: readonly string[],
-  options?: { timeoutMs?: number },
+  options?: { timeoutMs?: number; env?: NodeJS.ProcessEnv },
 ) => Promise<ExecResult>;
 
 /** Thin, timeout-bound wrapper around `child_process.execFile`.
@@ -23,7 +23,11 @@ export const runProcess: ExecFn = (command, args, options = {}) =>
     execFile(
       command,
       args as string[],
-      { timeout: options.timeoutMs ?? 15_000, windowsHide: true },
+      {
+        timeout: options.timeoutMs ?? 15_000,
+        windowsHide: true,
+        env: options.env,
+      },
       (error, stdout, stderr) => {
         if (error) {
           // Put the OS error first: bridge messages are limited to 500 characters.

@@ -40,7 +40,7 @@ function fakeExec(
 ): ExecFn {
   return async (command, args) => {
     calls.push({ command, args });
-    return { stdout: "", stderr: "" };
+    return { stdout: "request id is BAR-123 (1 file(s))\n", stderr: "" };
   };
 }
 
@@ -49,6 +49,7 @@ test("prints through lp with the requested copy count in one call", async () => 
   const transport = new MacPrinterTransport(
     testConfig({ printerIds: ["BAR"] }),
     fakeExec(calls),
+    async () => 9,
   );
 
   await transport.print(job({ copies: 3 }));
@@ -71,6 +72,7 @@ test("maps a Dixora printer code to a differently named local printer", async ()
       printerNameMap: { BAR: "Bar_Epson_TM88" },
     }),
     fakeExec(calls),
+    async () => 9,
   );
 
   await transport.print(job());
@@ -82,6 +84,7 @@ test("refuses to print to a printer this bridge was not configured for", async (
   const transport = new MacPrinterTransport(
     testConfig({ printerIds: ["MUTFAK"] }),
     fakeExec([]),
+    async () => 9,
   );
 
   await assert.rejects(
@@ -94,11 +97,38 @@ test("reports the macos transport in the print result", async () => {
   const transport = new MacPrinterTransport(
     testConfig({ printerIds: ["BAR"] }),
     fakeExec([]),
+    async () => 9,
   );
 
   const result = await transport.print(job());
 
   assert.equal(result.transport, "macos");
+  assert.ok(result.externalReference.includes("BAR-123"));
+});
+
+test("CUPS cancellation is an uncertain failure even though lp accepted the job", async () => {
+  let submitted = 0;
+  const transport = new MacPrinterTransport(
+    testConfig({ printerIds: ["BAR"] }),
+    async () => {
+      submitted++;
+      return { stdout: "request id is BAR-123 (1 file(s))\n", stderr: "" };
+    },
+    async () => 7,
+  );
+  await assert.rejects(transport.print(job()), /iptal edildi/);
+  assert.equal(submitted, 1);
+});
+
+test("an accepted CUPS job with an unreadable status cannot be reported as PRINTED", async () => {
+  const transport = new MacPrinterTransport(
+    testConfig({ printerIds: ["BAR"] }),
+    fakeExec([]),
+    async () => {
+      throw new Error("CUPS unavailable");
+    },
+  );
+  await assert.rejects(transport.print(job()), /CUPS unavailable/);
 });
 
 test("discovery parses printer names out of lpstat -p output", async () => {

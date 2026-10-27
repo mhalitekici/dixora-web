@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdir, open, readFile, rename } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type { PrintJobClaim, PrintResult } from "@dixora/shared-types";
@@ -46,29 +46,35 @@ export class PrintJournal {
   public constructor(private readonly path: string) {}
 
   public async load(): Promise<void> {
+    this.loaded = false;
     try {
       const raw = await readFile(this.path, "utf8");
       const parsed: unknown = JSON.parse(raw);
-      if (Array.isArray(parsed)) {
-        for (const candidate of parsed) {
-          const entry = asJournalEntry(candidate);
-          if (entry) {
-            this.entries.set(entry.jobId, entry);
-          }
+      if (!Array.isArray(parsed)) throw new Error("Journal must be an array");
+      const recovered = new Map<string, JournalEntry>();
+      for (const candidate of parsed) {
+        const entry = asJournalEntry(candidate);
+        if (!entry || recovered.has(entry.jobId)) {
+          throw new Error("Invalid or duplicate journal entry");
         }
+        recovered.set(entry.jobId, entry);
       }
-      log("info", "journal_loaded", { entries: this.entries.size, path: this.path });
+      this.entries = recovered;
+      log("info", "journal_loaded", {
+        entries: this.entries.size,
+        path: this.path,
+      });
     } catch (error) {
       if (isNotFound(error)) {
         log("info", "journal_not_found_starting_empty", { path: this.path });
       } else {
-        // A corrupt or unreadable journal must never block startup — printing
-        // is the whole point of this process, and an empty journal is a safe
-        // (if imperfect) fallback: worst case, one job is reprinted once.
-        log("warn", "journal_load_failed_starting_empty", {
+        log("error", "journal_load_failed_printing_blocked", {
           path: this.path,
-          message: error instanceof Error ? error.message : String(error),
         });
+        throw new Error(
+          "Baskı günlüğü okunamıyor. Çift baskıyı önlemek için yazdırma durduruldu; günlüğü ve fiziksel çıktıları kontrol edin.",
+          { cause: error },
+        );
       }
     }
     this.loaded = true;
@@ -126,7 +132,12 @@ export class PrintJournal {
     const entry = this.entries.get(jobId);
     if (!entry || entry.acknowledged) return;
     entry.acknowledged = true;
-    await this.persist();
+    try {
+      await this.persist();
+    } catch (error) {
+      entry.acknowledged = false;
+      throw error;
+    }
   }
 
   /** Entries printed but never confirmed with the API — retried first, before
@@ -144,8 +155,24 @@ export class PrintJournal {
     const trimmed = this.trimToLimit();
     await mkdir(dirname(this.path), { recursive: true });
     const tempPath = `${this.path}.tmp-${process.pid}`;
-    await writeFile(tempPath, JSON.stringify(trimmed), "utf8");
+    const file = await open(tempPath, "w", 0o600);
+    try {
+      await file.writeFile(JSON.stringify(trimmed), "utf8");
+      await file.sync();
+    } finally {
+      await file.close();
+    }
     await rename(tempPath, this.path);
+    // Windows does not support opening directories for fsync. The file itself
+    // is synced on both platforms; macOS/Linux also sync the rename metadata.
+    if (process.platform !== "win32") {
+      const directory = await open(dirname(this.path), "r");
+      try {
+        await directory.sync();
+      } finally {
+        await directory.close();
+      }
+    }
   }
 
   /** Bounded so a bridge left running for months does not grow this file
@@ -157,7 +184,10 @@ export class PrintJournal {
     const acked = all
       .filter((entry) => entry.acknowledged)
       .sort((a, b) => b.recordedAt.localeCompare(a.recordedAt));
-    const kept = [...unacked, ...acked].slice(0, limit);
+    const kept = [
+      ...unacked,
+      ...acked.slice(0, Math.max(0, limit - unacked.length)),
+    ];
     this.entries = new Map(kept.map((entry) => [entry.jobId, entry]));
     return kept;
   }
@@ -174,22 +204,44 @@ function asJournalEntry(value: unknown): JournalEntry | null {
   const record = value as Record<string, unknown>;
   if (
     typeof record.jobId !== "string" ||
+    !record.jobId ||
     typeof record.attemptCount !== "number" ||
+    !Number.isInteger(record.attemptCount) ||
+    record.attemptCount < 1 ||
     typeof record.printerCode !== "string" ||
     typeof record.documentHash !== "string" ||
+    !/^[a-f0-9]{64}$/.test(record.documentHash) ||
     typeof record.acknowledged !== "boolean" ||
-    typeof record.recordedAt !== "string"
+    typeof record.recordedAt !== "string" ||
+    !Number.isFinite(Date.parse(record.recordedAt))
   ) {
     return null;
   }
+  if (record.state !== "DISPATCHING") {
+    const result = record.result as Record<string, unknown> | null;
+    if (
+      !result ||
+      typeof result !== "object" ||
+      typeof result.externalReference !== "string" ||
+      typeof result.printedAt !== "string" ||
+      !Number.isFinite(Date.parse(result.printedAt)) ||
+      !["mock", "windows", "macos"].includes(String(result.transport))
+    )
+      return null;
+  }
   if (!("state" in record)) {
-    if (typeof record.result !== "object" || record.result === null) return null;
+    if (typeof record.result !== "object" || record.result === null)
+      return null;
     return { ...(record as unknown as JournalEntry), state: "PRINTED" };
   }
   if (record.state === "DISPATCHING" && record.result === null) {
     return record as unknown as JournalEntry;
   }
-  if (record.state === "PRINTED" && typeof record.result === "object" && record.result !== null) {
+  if (
+    record.state === "PRINTED" &&
+    typeof record.result === "object" &&
+    record.result !== null
+  ) {
     return record as unknown as JournalEntry;
   }
   return null;
