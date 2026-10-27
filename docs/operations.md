@@ -272,11 +272,19 @@ simultaneous logins measured p50 3.9 s — the exact shape of a shift change at 
 large chain. Stagger logins or lengthen sessions; do **not** weaken the Argon2
 parameters.
 
-**Capacity.** 25 branches passes comfortably (p50 88 ms). 100 branches failed on
-a contended dev laptop and has never been retried on real hardware with
-PgBouncer. Treat anything above 25 as unmeasured.
+**Capacity.** The legacy Locust profile uses one tenant; increasing virtual users
+does not establish a branch count. The newer 30-tenant, 150-session, 60-simulated-
+printer profile completed a 120-second local run, which is still not production
+capacity acceptance. See [the current evidence and limitations](production-readiness-2026-10-27.md)
+and [reproduction instructions](../apps/api/loadtest/README.md). Run a full hour
+and soak on the intended staging host before making a capacity claim.
 
 **Clock skew.** Token time claims allow 30 seconds of tolerance. Without it a
 verifying clock reading a moment behind the issuing one rejects freshly minted
 tokens, which looks exactly like users being randomly logged out. Keep NTP
 running on the host anyway.
+
+For readiness, print queue, frontend error reporting and backup freshness alerts,
+see [observability](observability.md). The new monitor/OnFailure units are
+configuration templates until an operator installs them and proves actual alert
+delivery. A local successful restore does not establish production offsite safety.

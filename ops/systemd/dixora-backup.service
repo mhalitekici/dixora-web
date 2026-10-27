@@ -1,5 +1,6 @@
 [Unit]
 Description=Dixora PostgreSQL and MinIO verified backup
+OnFailure=dixora-alert@%n.service
 Requires=docker.service
 After=docker.service
 Wants=network-online.target

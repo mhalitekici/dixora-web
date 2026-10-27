@@ -177,6 +177,12 @@ def backup(args):
             )
         # An offsite failure leaves the local bundle intact and skips retention.
         prune(directory, args.retention_days)
+        receipt = directory / ".last-success.tmp"
+        receipt.write_text(json.dumps({
+            "completed_at": datetime.now(UTC).isoformat(),
+            "writers_quiesced": args.quiesce, "offsite_verified": bool(snapshot),
+        }) + "\n", encoding="utf-8")
+        receipt.replace(directory / "last-success.json")
         print(json.dumps({"backup": str(destination), "objects": summary["objects"],
                           "writers_quiesced": args.quiesce, "offsite_snapshot": snapshot}))
     finally:

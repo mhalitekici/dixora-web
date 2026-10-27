@@ -9,6 +9,8 @@
 # container start (files in /etc/nginx/templates ending in .template).
 
 # --- abuse limits ----------------------------------------------------------
+log_format dixora_safe escape=json '{"time":"$time_iso8601","method":"$request_method",'
+    '"status":$status,"duration":$request_time,"request_id":"$request_id"}';
 # Sized to sit well above what a person does and well below what a script does.
 # The application's own Redis limiter is the accurate one - five failed logins
 # per account, per window - and these only keep a flood from reaching it.
@@ -82,7 +84,7 @@ server {
     # referrer policy) in next.config.ts. They are not repeated here: two
     # sources for one header is how they end up contradicting each other.
 
-    access_log /var/log/nginx/dixora.access.log;
+    access_log /var/log/nginx/dixora.access.log dixora_safe;
 
     # --- brute-force surface ---------------------------------------------
     # Everything that turns a guess into an account, a code or a message.

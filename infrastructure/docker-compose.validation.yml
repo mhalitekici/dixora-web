@@ -41,6 +41,34 @@ services:
       timeout: 3s
       retries: 30
 
+  minio-init:
+    build:
+      context: ..
+      dockerfile: infrastructure/docker/minio.Dockerfile
+      target: client
+    image: dixora-mc:source-b00526b1
+    environment:
+      MINIO_ROOT_USER: validation
+      MINIO_ROOT_PASSWORD: validation-only-minio-password
+    entrypoint:
+      - /bin/sh
+      - -ec
+      - |
+        mc alias set local http://minio:9000 "$${MINIO_ROOT_USER}" "$${MINIO_ROOT_PASSWORD}" >/dev/null
+        mc mb --ignore-existing local/dixora-validation-media
+        mc anonymous set none local/dixora-validation-media
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  redis:
+    image: redis:7.4.6-alpine
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 20
+
   api:
     build:
       context: ..
@@ -50,6 +78,7 @@ services:
     environment:
       DIXORA_ENVIRONMENT: development
       DIXORA_DATABASE_URL: postgresql+asyncpg://dixora:validation-only-password@postgres:5432/dixora_validation
+      DIXORA_REDIS_URL: redis://redis:6379/0
       DIXORA_JWT_SECRET: validation-only-jwt-secret-at-least-32-characters
       DIXORA_PRINT_BRIDGE_KEY: validation-only-print-key-at-least-32-characters
       DIXORA_AUTO_CREATE_SCHEMA: "false"
@@ -68,12 +97,16 @@ services:
       [
         "sh",
         "-c",
-        "alembic upgrade head && dixora-seed && exec uvicorn app.main:app --host 0.0.0.0 --port 8000",
+        "alembic upgrade head && dixora-seed && exec uvicorn app.main:app --no-access-log --host 0.0.0.0 --port 8000 --workers 2",
       ]
     depends_on:
       postgres:
         condition: service_healthy
       minio:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+      redis:
         condition: service_healthy
     ports:
       - "127.0.0.1:${DIXORA_VALIDATION_API_PORT:-18000}:8000"

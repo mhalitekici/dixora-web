@@ -74,6 +74,25 @@ jobs:
       - name: Build
         run: npm run build --workspace web
 
+  print-bridge:
+    name: Print Bridge (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Build bridge workspace dependencies
+        run: npm run build --workspace @dixora/config && npm run build --workspace @dixora/shared-types
+      - run: npm run typecheck --workspace @dixora/print-bridge
+      - run: npm run test --workspace @dixora/print-bridge
+      - run: npm run build --workspace @dixora/print-bridge
+
   migrations:
     name: Migrations apply to an empty database
     runs-on: ubuntu-latest
@@ -211,7 +230,7 @@ jobs:
           bash -n ops/backup.sh
           bash -n ops/restore.sh
           bash -n ops/install-backup-timer.sh
-          systemd-analyze verify ops/systemd/dixora-backup.service ops/systemd/dixora-backup.timer
+          systemd-analyze verify ops/systemd/dixora-backup.service ops/systemd/dixora-backup.timer ops/systemd/dixora-monitor.service ops/systemd/dixora-monitor.timer ops/systemd/dixora-alert@.service
           bash ops/backup.sh --help
           bash ops/restore.sh . --help
 
@@ -223,6 +242,15 @@ jobs:
 
       - name: Order, split payment, refund, table close and shift reconciliation over HTTP
         run: python ops/validate_business_day.py
+
+      - name: Concurrent order, payment and print idempotency (PostgreSQL, two API workers)
+        run: python ops/validate_idempotency.py
+
+      - name: Multi-tenant load harness smoke and consistency audit (simulated printing)
+        run: |
+          docker compose exec -T api python -m loadtest.seed_pilot --businesses 1 --output /tmp/pilot-manifest.json
+          docker compose exec -T api python -m loadtest.pilot_load --host http://127.0.0.1:8000 --manifest /tmp/pilot-manifest.json --businesses 1 --seconds 10 --output /tmp/pilot-result.json
+          docker compose exec -T api python -m loadtest.audit_pilot /tmp/pilot-result.json
 
       - name: Add media fixtures including Unicode names and empty objects
         run: docker compose exec -T api python - < ops/seed_validation_media.py

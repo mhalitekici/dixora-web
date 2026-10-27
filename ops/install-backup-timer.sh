@@ -21,7 +21,8 @@ runuser -u dixora -- test -r /etc/dixora/restic-password
 install -d -m 700 -o dixora -g dixora /srv/dixora-backups
 install -m 644 /srv/dixora/ops/systemd/dixora-backup.service /etc/systemd/system/
 install -m 644 /srv/dixora/ops/systemd/dixora-backup.timer /etc/systemd/system/
-systemd-analyze verify /etc/systemd/system/dixora-backup.service /etc/systemd/system/dixora-backup.timer
+install -m 644 /srv/dixora/ops/systemd/dixora-alert@.service /etc/systemd/system/
+systemd-analyze verify /etc/systemd/system/dixora-backup.service /etc/systemd/system/dixora-backup.timer /etc/systemd/system/dixora-alert@.service
 systemctl daemon-reload
 # Enable only after an actual quiesced DB/media backup and encrypted upload pass.
 systemctl start dixora-backup.service

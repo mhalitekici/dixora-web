@@ -1,0 +1,10 @@
+[Unit]
+Description=Check Dixora operational health every minute
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=1min
+Unit=dixora-monitor.service
+
+[Install]
+WantedBy=timers.target

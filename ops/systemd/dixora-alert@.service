@@ -1,0 +1,9 @@
+[Unit]
+Description=Dixora operator alert for %i
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/echo "Dixora operation failed: %i; inspect its journal"
+SyslogIdentifier=dixora-alert
+SyslogLevel=err
+StandardOutput=journal

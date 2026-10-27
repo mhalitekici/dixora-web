@@ -6,6 +6,7 @@ import hashlib
 import io
 import json
 import os
+import subprocess
 import tarfile
 import tempfile
 import unittest
@@ -111,6 +112,30 @@ class BackupTests(unittest.TestCase):
             info.size = len(data)
             output.addfile(info, io.BytesIO(data))
         self.assertEqual(inspect_archive(path)["objects"], [])
+
+    def test_backup_failure_restarts_only_previously_running_writers(self):
+        with patch.object(backup, "compose", side_effect=["api\nweb\npostgres\n", None, None]) as compose:
+            with self.assertRaisesRegex(RuntimeError, "dump failed"):
+                with backup.quiesced(True):
+                    raise RuntimeError("dump failed")
+            self.assertEqual(compose.call_args_list[1].args, ("stop", "web", "api"))
+            self.assertEqual(compose.call_args_list[2].args, ("start", "api", "web"))
+
+    def test_database_restore_failure_never_reports_success_or_restores_media(self):
+        def pg(*args, **kwargs):
+            if args == ("printenv", "POSTGRES_DB"):
+                return "live_db"
+            if args[0] == "sh":
+                raise subprocess.CalledProcessError(1, ["pg_restore"])
+            return ""
+        with patch.object(backup, "pg", side_effect=pg), \
+                patch.object(backup, "pg_sql", return_value=""), \
+                patch.object(backup, "compose"), patch.object(backup, "media") as media, \
+                patch("builtins.print") as output:
+            with self.assertRaises(subprocess.CalledProcessError):
+                backup.restore(argparse.Namespace(bundle=self.bundle, database="fresh", bucket="fresh"))
+            self.assertEqual([call.args[0] for call in media.call_args_list], ["preflight"])
+            output.assert_not_called()
 
     def test_retention_only_removes_old_complete_bundles(self):
         root = Path(self.temp.name)

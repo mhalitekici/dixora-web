@@ -53,12 +53,19 @@ işletme günü ile tüm kayıtlar aranabilir.
    geçişleri bridge kimliği, deneme numarası ve idempotency key ile doğrulanır.
 3. Bridge, OS spooler'a vermeden önce diske `DISPATCHING` kaydı yazar; başarılı
    spool sonucunu API'ye bildirmeden önce `PRINTED` sonucunu yine diske yazar.
-4. Ağ, spool sonrası koparsa bridge yeniden açıldığında yalnızca API
+4. Ağ, spool sonrası koparsa bridge ağ dönünce süreç yeniden açılmadan API
    acknowledgement'ını tekrarlar. Aynı belge fiziksel yazıcıya ikinci kez
    gönderilmez.
 5. Spool sonucu belirsiz kaldıysa iş `FAILED` ve `manual_retry_required` olur.
    Otomatik tekrar baskı yapılmaz. Şube yöneticisi, Yazıcı yönetimi ekranındaki
    **Operatör olarak yeniden dene** eylemiyle yeni bir deneme başlatır.
+6. Lease süresi dolan CLAIMED/SENT iş de fiziksel sonucu belirsiz sayılır;
+   otomatik claim havuzuna dönmez. Geç journal onayı aynı sahip/attempt ile
+   tamamlayabilir. Manuel retry attempt kimliğini sıfırlamaz.
+7. Runtime bir seferde bir iş alır; heartbeat baskıdan bağımsızdır. Bozuk veya
+   okunamayan journal baskıyı durdurur. Aynı journal için ikinci süreç kilitle
+   engellenir. Kontrolsüz kapanıştan kalan `.lock`, eski süreç ve fiziksel/OS
+   kuyruğu operatör tarafından kontrol edilmeden kaldırılmamalı; journal silinmemeli.
 
 Bu düzen, fiziksel baskıda mutlak exactly-once garantisi verilemeyen noktayı
 açıkça ele alır: OS spooler işi kabul ettikten sonra yazıcının gerçekten kağıdı
@@ -255,7 +262,8 @@ seçilmelidir. Sürücü veya yazıcı UTF-8 desteklemiyorsa
 bu fiziksel sürücü kurulumunun sorunudur; Bridge metni kod sayfasına sessizce
 dönüştürmez.
 
-macOS taşıması CUPS'ın işi kabul etmesini, Windows taşıması ise adlandırılmış
+macOS taşıması yerel CUPS iş kimliğini saklar ve IPP `job-state=9` tamamlanmasını
+bekler; `lp` kabulü veya iptal/abort başarı sayılmaz. Windows taşıması adlandırılmış
 işin spooler kuyruğundan hatasız ayrılmasını başarı sayar. Bu kontroller kağıdın
 fiziksel olarak kesildiğini kanıtlayamaz. Raw ESC/POS, programatik kesme,
 çekmece açma ve donanım seviyesinde kağıt/bıçak durum geri bildirimi bu sürümde
@@ -305,3 +313,7 @@ Donanımlı kabul testi için Windows'ta bir test siparişini hedef spooler
 kuyruğunda, macOS'ta ise CUPS kuyruğunda kontrol edin. Ardından Yazıcı yönetimi
 ekranında işin `Yazdırıldı` olduğunu ve doğru istasyon cihazına düştüğünü
 doğrulayın.
+
+Ayrıntılı arıza ve işletim sistemi matrisi:
+[donanım kabul testi](printing-hardware-acceptance.md). Kaynak değişikliği eski
+exe/dmg dosyalarını güncellemez; release üretimi ve gerçek cihaz kabulü gerekir.
