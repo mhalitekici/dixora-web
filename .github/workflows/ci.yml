@@ -35,12 +35,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt -r requirements-dev.txt
 
-      - name: Tests
-        working-directory: apps/api
-        # Tests run against in-memory SQLite and pin the mail provider off, so
-        # no services and no live credentials are needed.
-        run: python -m pytest -q
-
       - name: Lint
         working-directory: apps/api
         run: ruff check .
@@ -48,6 +42,12 @@ jobs:
       - name: Types
         working-directory: apps/api
         run: mypy app
+
+      - name: Tests
+        working-directory: apps/api
+        # Tests run against in-memory SQLite and pin the mail provider off, so
+        # no services and no live credentials are needed.
+        run: python -m pytest -q
 
   web:
     name: Web
@@ -73,6 +73,25 @@ jobs:
 
       - name: Build
         run: npm run build --workspace web
+
+  print-bridge:
+    name: Print Bridge (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - name: Build bridge workspace dependencies
+        run: npm run build --workspace @dixora/config && npm run build --workspace @dixora/shared-types
+      - run: npm run typecheck --workspace @dixora/print-bridge
+      - run: npm run test --workspace @dixora/print-bridge
+      - run: npm run build --workspace @dixora/print-bridge
 
   migrations:
     name: Migrations apply to an empty database
@@ -190,3 +209,71 @@ jobs:
 
       - name: Production API image builds
         run: docker build -f infrastructure/docker/api.Dockerfile --target production -t dixora-api:ci .
+
+  business-day:
+    name: Business day and backup restore (PostgreSQL + MinIO)
+    runs-on: ubuntu-latest
+    env:
+      COMPOSE_FILE: infrastructure/docker-compose.validation.yml
+      COMPOSE_PROJECT_NAME: dixora-validation
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Backup integrity and restore destination safeguards
+        run: python -m unittest discover -s ops -p 'test_*.py' -v
+
+      - name: Backup and restore shell entrypoints
+        run: |
+          bash -n ops/backup.sh
+          bash -n ops/restore.sh
+          bash -n ops/install-backup-timer.sh
+          systemd-analyze verify ops/systemd/dixora-backup.service ops/systemd/dixora-backup.timer ops/systemd/dixora-monitor.service ops/systemd/dixora-monitor.timer ops/systemd/dixora-alert@.service
+          bash ops/backup.sh --help
+          bash ops/restore.sh . --help
+
+      - name: Production MinIO source images, initializer and private object storage
+        run: python ops/validate_minio.py
+
+      - name: Start disposable PostgreSQL and MinIO stack
+        run: docker compose up -d --build --wait api
+
+      - name: Order, split payment, refund, table close and shift reconciliation over HTTP
+        run: python ops/validate_business_day.py
+
+      - name: Concurrent order, payment and print idempotency (PostgreSQL, two API workers)
+        run: python ops/validate_idempotency.py
+
+      - name: Multi-tenant load harness smoke and consistency audit (simulated printing)
+        run: |
+          docker compose exec -T api python -m loadtest.seed_pilot --businesses 1 --output /tmp/pilot-manifest.json
+          docker compose exec -T api python -m loadtest.pilot_load --host http://127.0.0.1:8000 --manifest /tmp/pilot-manifest.json --businesses 1 --seconds 10 --output /tmp/pilot-result.json
+          docker compose exec -T api python -m loadtest.audit_pilot /tmp/pilot-result.json
+
+      - name: Add media fixtures including Unicode names and empty objects
+        run: docker compose exec -T api python - < ops/seed_validation_media.py
+
+      - name: Back up both stores and restore into fresh destinations
+        run: |
+          python ops/backup.py create --quiesce --directory backups/ci
+          bundle=$(find backups/ci -mindepth 1 -maxdepth 1 -type d -name 'dixora-*' | head -n 1)
+          python ops/backup.py verify "$bundle"
+          python ops/backup.py restore "$bundle" --database dixora_restore_ci --bucket dixora-restore-ci
+
+      - name: Encrypted offsite transfer and recovery mechanism (local test repository)
+        run: |
+          sudo apt-get update && sudo apt-get install -y restic
+          bundle=$(find backups/ci -mindepth 1 -maxdepth 1 -type d -name 'dixora-*' | head -n 1)
+          python ops/validate_offsite.py "$bundle" --directory backups/offsite-drill > /tmp/offsite-receipt.json
+          recovered=$(python -c 'import json; print(json.load(open("/tmp/offsite-receipt.json"))["recovered_bundle"])')
+          python ops/backup.py restore "$recovered" --database dixora_offsite_ci --bucket dixora-offsite-ci
+
+      - name: Failure diagnostics
+        if: failure()
+        run: docker compose logs --tail=100
+
+      - name: Remove disposable stack
+        if: always()
+        run: docker compose down --volumes

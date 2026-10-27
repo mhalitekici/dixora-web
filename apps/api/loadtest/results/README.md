@@ -1,9 +1,16 @@
 # Measured results
 
-Numbers here come from actual runs. Do not quote a capacity figure that is not
-backed by a row in this file.
+The historical numbers below are recorded run results, not verified production
+business counts. The legacy `dixora_load.py` uses one tenant. Its old “25/100
+branches” labels were estimates from virtual-user counts and must not be quoted
+as evidence that distinct tenants/branches were tested. Historical telemetry is
+retained below with corrected scope labels.
 
-## 2026-08-09 — read-only, ~25 branches
+The 2026-10-27 run uses 30 distinct tenants, 150 staff sessions and 60 simulated
+printers; see [the measured JSON](pilot-2026-10-27.json). It lasts only 120 seconds
+and deliberately leaves `capacity_validated=false`.
+
+## 2026-08-09 — read-only, 100 virtual users, one tenant
 
 **Setup:** single Docker Compose host (Windows/WSL2, 7.6 GiB available to
 Docker), `API_WORKERS=4`, `DIXORA_DB_POOL_SIZE=10`, `DIXORA_DB_MAX_OVERFLOW=20`,
@@ -14,39 +21,38 @@ locust -f apps/api/loadtest/dixora_load.py --host http://127.0.0.1:8000 \
     --headless -u 100 -r 4 -t 3m --exclude-tags write
 ```
 
-100 simulated terminals ≈ 25 branches × 4 terminals.
+100 simulated terminals; the fixture did not establish 25 distinct branches.
 
-| Endpoint | p50 | p95 | p99 |
-| --- | --- | --- | --- |
-| `orders: list` | 39 ms | 86 ms | 110 ms |
-| `tables: list` | 30 ms | 69 ms | 82 ms |
-| `kitchen: tickets` | 48 ms | 92 ms | 170 ms |
-| `inventory: items` | 30 ms | 68 ms | 79 ms |
-| `qr: public menu` | 27 ms | 65 ms | 88 ms |
-| `auth: login` | 210 ms | 330 ms | 350 ms |
-| **Aggregate** | **38 ms** | **180 ms** | **290 ms** |
+| Endpoint           | p50       | p95        | p99        |
+| ------------------ | --------- | ---------- | ---------- |
+| `orders: list`     | 39 ms     | 86 ms      | 110 ms     |
+| `tables: list`     | 30 ms     | 69 ms      | 82 ms      |
+| `kitchen: tickets` | 48 ms     | 92 ms      | 170 ms     |
+| `inventory: items` | 30 ms     | 68 ms      | 79 ms      |
+| `qr: public menu`  | 27 ms     | 65 ms      | 88 ms      |
+| `auth: login`      | 210 ms    | 330 ms     | 350 ms     |
+| **Aggregate**      | **38 ms** | **180 ms** | **290 ms** |
 
 - Throughput: ~8.9 req/s (realistic 3–10 s terminal polling, not a stress ceiling)
 - Errors: 0.13 % (2 × `RemoteDisconnected`, keep-alive races; no API-side errors logged)
 - Resources after the run: API 1.5 % CPU / 484 MiB, PostgreSQL 0.1 % CPU / 219 MiB
 
-**Reading:** read paths are nowhere near saturation at this scale. Extrapolating
-the same polling behaviour, 100 branches ≈ 35 req/s of reads, which this
-hardware would very likely absorb — but see the caveats before quoting that.
+**Reading:** these are the observed read latencies for this single-tenant fixture.
+They cannot establish the capacity of 100 distinct businesses or production data.
 
-## 2026-08-09 — read + write, ~25 branches
+## 2026-08-09 — read + write, 100 virtual users, one tenant
 
 Same host and settings, but against a **throwaway database** (`dixora_loadtest`,
 seeded from scratch) so the write path could run for real. 100 users for 2 min,
 including 5 `ContentionTerminal` users all ordering the same product on the same
 table.
 
-| Endpoint | p50 | p95 | p99 |
-| --- | --- | --- | --- |
-| `orders: create` (realistic) | 100 ms | 480 ms | 680 ms |
-| `orders: create (same stock)` | 610 ms | 1300 ms | 2200 ms |
-| `auth: login` | 270 ms | 620 ms | 760 ms |
-| **Aggregate** | **88 ms** | **770 ms** | **1300 ms** |
+| Endpoint                      | p50       | p95        | p99         |
+| ----------------------------- | --------- | ---------- | ----------- |
+| `orders: create` (realistic)  | 100 ms    | 480 ms     | 680 ms      |
+| `orders: create (same stock)` | 610 ms    | 1300 ms    | 2200 ms     |
+| `auth: login`                 | 270 ms    | 620 ms     | 760 ms      |
+| **Aggregate**                 | **88 ms** | **770 ms** | **1300 ms** |
 
 - Throughput 18.4 req/s, errors 0.14 % (3 × keep-alive `RemoteDisconnected`)
 - API 23 % CPU / 628 MiB, PostgreSQL 0.3 % CPU / 765 MiB
@@ -62,7 +68,7 @@ hot row is not. This is a pathological shape (real branches spread across
 tables), but it means one very hot product or table serialises orders. Do not
 "fix" this by dropping the `SELECT ... FOR UPDATE`.
 
-## 2026-08-09 — read + write, ~100 branches (400 users) — **DOES NOT PASS**
+## 2026-08-09 — read + write, 400 virtual users, one tenant — **DOES NOT PASS**
 
 Same throwaway database, 4 workers, 400 users for 3 min. Two attempts:
 
@@ -78,11 +84,11 @@ limit of 100 — the defaults shipped were themselves unsafe once `API_WORKERS>1
 
 **Attempt 2** (after the fixes): no more 500s, but latency is unacceptable.
 
-| Endpoint | p50 | p95 |
-| --- | --- | --- |
-| `auth: login` | 3.6 s | 13 s |
-| `orders: create` | 9.4 s | 19 s |
-| **Aggregate** | **2.8 s** | **8.8 s** |
+| Endpoint         | p50       | p95       |
+| ---------------- | --------- | --------- |
+| `auth: login`    | 3.6 s     | 13 s      |
+| `orders: create` | 9.4 s     | 19 s      |
+| **Aggregate**    | **2.8 s** | **8.8 s** |
 
 Plus 92 × `RemoteDisconnected` (server dropping connections under load).
 
@@ -92,8 +98,8 @@ against 4 × 15 = 60 pooled connections queue by definition.
 
 **Important caveat on this measurement:** it was taken on a single 7.6 GiB
 developer machine that was simultaneously running PostgreSQL, Redis, MinIO, the
-web app, a *second* API stack, and Locust itself. It is evidence that this
-*setup* fails at 400 users; it is **not** evidence that a properly provisioned
+web app, a _second_ API stack, and Locust itself. It is evidence that this
+_setup_ fails at 400 users; it is **not** evidence that a properly provisioned
 server would. A real verdict needs a dedicated environment, and likely PgBouncer
 plus more than one API host.
 

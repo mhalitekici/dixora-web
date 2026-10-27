@@ -72,7 +72,7 @@ edilmelidir.
 
 - Windows: `Get-Printer` keşfi, yazdırılabilir alanı kullanan `PrintDocument`
   gönderimi ve adlandırılmış spool işinin hata/zaman aşımı doğrulaması
-- macOS: `lpstat` keşfi ve `lp`/CUPS spooler gönderimi
+- macOS: `lpstat` keşfi, `lp`/CUPS gönderimi ve IPP iş durumu kontrolü
 - 80 mm, UTF-8 düz metin; kullanılabilir genişlik
   `PRINT_BRIDGE_RECEIPT_COLUMNS` (varsayılan 42) ile ayarlanır
 - Sunucu eşlemesi olmadan cihaz claim edilemez
@@ -80,9 +80,17 @@ edilmelidir.
   engeller
 - Fiziksel sonuç belirsizse otomatik tekrar yerine yönetici onaylı yeniden
   deneme gerekir
+- Bir seferde bir claim, baskıdan bağımsız heartbeat ve ağ dönünce çalışan
+  journal onay toparlaması
+- Bozuk journal veya başka süreç kilidi varsa baskı başlamaz. Kontrolsüz
+  kapanış sonrası kalan `.lock` için önce eski süreç ve fiziksel/OS kuyruğu
+  incelenmelidir; journal silinmemelidir
 
 Tam kurulum, güvenlik modeli ve sınırlamalar için
 [printing.md](../../docs/printing.md) belgesine bakın.
+Gerçek cihaz kabulü [ayrı matriste](../../docs/printing-hardware-acceptance.md)
+izlenir; kaynak testleri yeni bir exe/dmg dağıtıldığı veya kağıt çıktısının
+doğrulandığı anlamına gelmez.
 
 ## Geliştirme mock'u
 

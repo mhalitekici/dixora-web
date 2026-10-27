@@ -34,6 +34,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { useEffect, useMemo, useRef, useState } from "react"
+import { PendingCommands } from "@/lib/pending-command"
 import { toast } from "sonner"
 
 import {
@@ -59,6 +60,7 @@ import {
   CashierItemTransferDialog,
   type ItemTransferPayload,
 } from "@/components/cashier/cashier-item-transfer-dialog"
+import { PaymentRefundDialog } from "./payment-refund-dialog"
 import { Button } from "@/components/ui/button"
 import {
   Dialog,
@@ -135,6 +137,7 @@ type Payment = {
   amount: string | number
   status: string
   reference?: string | null
+  refund_reason?: string | null
 }
 type HotelRoomSummary = {
   id: string
@@ -452,6 +455,7 @@ export function CashierWorkspace() {
   const [tableSearch, setTableSearch] = useState("")
   const tablesHeadingRef = useRef<HTMLHeadingElement>(null)
   const restoreTablesFocusRef = useRef(false)
+  const pendingCommands = useRef(new PendingCommands())
   // Drives the dwell timers. Ticking locally keeps them moving without
   // refetching every table once a minute.
   const [now, setNow] = useState(() => Date.now())
@@ -468,6 +472,7 @@ export function CashierWorkspace() {
   const [dialog, setDialog] = useState<
     | "products"
     | "payment"
+    | "refund"
     | "discount"
     | "transfer"
     | "item-transfer"
@@ -487,6 +492,10 @@ export function CashierWorkspace() {
   const [loadingProductId, setLoadingProductId] = useState<string | null>(null)
   const [paymentMethod, setPaymentMethod] = useState("CASH")
   const [paymentAmount, setPaymentAmount] = useState("")
+  const [refundTarget, setRefundTarget] = useState<{
+    orderId: string
+    payment: Payment
+  } | null>(null)
   const [roomReference, setRoomReference] = useState("")
   const [discountKind, setDiscountKind] = useState("PERCENTAGE")
   const [discountValue, setDiscountValue] = useState("10")
@@ -575,11 +584,24 @@ export function CashierWorkspace() {
     currentUser.data,
     PERMISSIONS.order.comp,
   )
+  const canRefund = hasPermission(currentUser.data, PERMISSIONS.payment.manage)
+  const refundShiftReady =
+    currentUser.data?.user.roleCode !== "CASHIER" ||
+    shiftQuery.data?.status === "OPEN"
   const paid =
     selectedOrder?.payments
       .filter((payment) => payment.status === "COMPLETED")
       .reduce((sum, payment) => sum + Number(payment.amount), 0) ?? 0
   const remaining = Math.max(0, Number(selectedOrder?.total ?? 0) - paid)
+  const canCollectPayment = Boolean(
+    selectedOrder &&
+      remaining > 0 &&
+      (!terminalOrderStatuses.has(selectedOrder.status) ||
+        (selectedOrder.status === "PAID" &&
+          selectedOrder.payments.some(
+            (payment) => payment.status === "REFUNDED",
+          ))),
+  )
   const paymentAmountValue = Number(paymentAmount)
   const paymentAmountValid =
     /^(?:\d+(?:\.\d{0,2})?|\.\d{1,2})$/.test(paymentAmount) &&
@@ -609,12 +631,7 @@ export function CashierWorkspace() {
         event.preventDefault()
         setProductSearch("")
         setDialog("products")
-      } else if (
-        event.key === "F4" &&
-        selectedOrder &&
-        remaining > 0 &&
-        !terminalOrderStatuses.has(selectedOrder.status)
-      ) {
+      } else if (event.key === "F4" && canCollectPayment) {
         event.preventDefault()
         setPaymentAmount(remaining.toFixed(2))
         setRoomReference("")
@@ -623,7 +640,14 @@ export function CashierWorkspace() {
     }
     document.addEventListener("keydown", keydown)
     return () => document.removeEventListener("keydown", keydown)
-  }, [dialog, modifierProduct, selectedTable, selectedOrder, remaining])
+  }, [
+    dialog,
+    modifierProduct,
+    selectedTable,
+    selectedOrder,
+    remaining,
+    canCollectPayment,
+  ])
   const tableCanClose = canCloseTableSession(
     selectedOrder,
     selectedTable,
@@ -796,26 +820,20 @@ export function CashierWorkspace() {
           })),
         },
       ]
-      if (selectedOrder) {
-        return api<Order>(`/orders/${selectedOrder.id}/items`, {
-          method: "POST",
-          body: JSON.stringify({
-            items: payloadItems,
-            idempotency_key: crypto.randomUUID(),
-            auto_accept: false,
-          }),
-        })
-      }
-      return api<Order>("/orders", {
+      const intent = JSON.stringify(["product", selectedTable.id, product.id, [...modifierIds].sort()])
+      const command = pendingCommands.current.prepare(
+        intent,
+        selectedOrder ? `/orders/${selectedOrder.id}/items` : "/orders",
+        selectedOrder
+          ? { items: payloadItems, auto_accept: false }
+          : { table_id: selectedTable.id, source: "CASHIER", items: payloadItems, auto_accept: false },
+      )
+      const updated = await api<Order>(command.path, {
         method: "POST",
-        body: JSON.stringify({
-          table_id: selectedTable.id,
-          source: "CASHIER",
-          items: payloadItems,
-          idempotency_key: crypto.randomUUID(),
-          auto_accept: false,
-        }),
+        body: command.body,
       })
+      pendingCommands.current.confirmed(intent)
+      return updated
     },
     onSuccess: (updatedOrder, { product }) => {
       toast.success(`${product.name} siparişe eklendi`)
@@ -864,16 +882,21 @@ export function CashierWorkspace() {
       if (paymentMethod === "ROOM_CHARGE" && !roomReference.trim()) {
         throw new Error("Oda numarası veya adı girin.")
       }
-      return api(`/orders/${selectedOrder.id}/payments`, {
-        method: "POST",
-        body: JSON.stringify({
+      const intent = JSON.stringify(["payment", selectedOrder.id, paymentMethod, paymentAmount, roomReference.trim()])
+      const command = pendingCommands.current.prepare(
+        intent, `/orders/${selectedOrder.id}/payments`, {
           method: paymentMethod,
           amount: paymentAmount,
-          idempotency_key: crypto.randomUUID(),
           reference:
             paymentMethod === "ROOM_CHARGE" ? roomReference.trim() : null,
-        }),
+        },
+      )
+      const payment = await api(command.path, {
+        method: "POST",
+        body: command.body,
       })
+      pendingCommands.current.confirmed(intent)
+      return payment
     },
     onSuccess: () => {
       toast.success("Ödeme kaydedildi", {
@@ -2296,7 +2319,7 @@ export function CashierWorkspace() {
                   </div>
                 ) : null}
               </div>
-              {paid > 0 ? (
+              {selectedOrder?.payments.length ? (
                 <>
                   <div className="flex justify-between text-blue-700 dark:text-blue-300">
                     <span>Ödenen</span>
@@ -2326,11 +2349,7 @@ export function CashierWorkspace() {
 
             <Button
               className="h-14 w-full rounded-2xl text-base"
-              disabled={
-                !selectedOrder ||
-                remaining <= 0 ||
-                terminalOrderStatuses.has(selectedOrder.status)
-              }
+              disabled={!canCollectPayment}
               onClick={() => {
                 setPaymentAmount(remaining.toFixed(2))
                 setRoomReference("")
@@ -2393,7 +2412,7 @@ export function CashierWorkspace() {
                   {selectedOrder.payments.map((payment) => (
                     <div
                       key={payment.id}
-                      className="flex items-center gap-2 rounded-xl bg-muted/45 p-2.5"
+                      className="flex flex-wrap items-center gap-2 rounded-xl bg-muted/45 p-2.5"
                     >
                       <span className="flex size-8 items-center justify-center rounded-lg bg-card">
                         {payment.method === "CASH" ? (
@@ -2416,6 +2435,41 @@ export function CashierWorkspace() {
                       <span className="text-xs font-semibold">
                         {currency.format(Number(payment.amount))}
                       </span>
+                      {payment.status === "REFUNDED" ? (
+                        <span className="w-full text-xs text-muted-foreground">
+                          İade edildi
+                          {payment.refund_reason
+                            ? ` · ${payment.refund_reason}`
+                            : ""}
+                        </span>
+                      ) : payment.status === "COMPLETED" && canRefund ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="ml-auto min-h-9"
+                          disabled={!refundShiftReady}
+                          title={
+                            refundShiftReady
+                              ? undefined
+                              : "İade için önce vardiya açın"
+                          }
+                          aria-label={`${PAYMENT_METHOD_LABELS[payment.method] ?? payment.method} ${currency.format(Number(payment.amount))} ödemesini iade et`}
+                          onClick={() => {
+                            if (!selectedOrder) return
+                            setRefundTarget({
+                              orderId: selectedOrder.id,
+                              payment,
+                            })
+                            setDialog("refund")
+                          }}
+                        >
+                          İade et
+                        </Button>
+                      ) : payment.status !== "COMPLETED" ? (
+                        <span className="w-full text-xs text-muted-foreground">
+                          {payment.status}
+                        </span>
+                      ) : null}
                     </div>
                   ))}
                 </div>
@@ -2431,6 +2485,31 @@ export function CashierWorkspace() {
           </div>
         </aside>
       </div>
+
+      <PaymentRefundDialog
+        key={refundTarget?.payment.id ?? "no-refund"}
+        target={dialog === "refund" ? refundTarget : null}
+        allowed={canRefund && refundShiftReady}
+        onClose={() => {
+          setDialog(null)
+          setRefundTarget(null)
+        }}
+        onRefunded={(payment) => {
+          queryClient.setQueryData<Order[]>(["cashier", "orders"], (current) =>
+            (current ?? []).map((order) =>
+              order.id === refundTarget?.orderId
+                ? {
+                    ...order,
+                    payments: order.payments.map((item) =>
+                      item.id === payment.id ? payment : item,
+                    ),
+                  }
+                : order,
+            ),
+          )
+          refreshOperations()
+        }}
+      />
 
       <Dialog
         open={dialog === "close-table"}

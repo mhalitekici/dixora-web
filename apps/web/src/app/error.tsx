@@ -5,6 +5,7 @@ import { useEffect } from "react";
 
 import { BrandLogo } from "@/components/brand/brand-logo";
 import { Button } from "@/components/ui/button";
+import { reportIncident } from "@/lib/report-incident";
 
 export default function ErrorPage({
   error,
@@ -14,7 +15,7 @@ export default function ErrorPage({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("Dixora route error", error);
+    reportIncident("react_boundary", error.digest);
   }, [error]);
 
   return (
@@ -28,7 +29,7 @@ export default function ErrorPage({
           Ekran yüklenemedi
         </h1>
         <p className="mt-3 leading-7 text-muted-foreground">
-          İşlem verileriniz korunuyor. Bağlantıyı yenileyip bu ekranı tekrar açabilirsiniz.
+          İşlem sonucu doğrulanamadı. Bağlantıyı yenileyip sipariş ve ödeme kayıtlarını kontrol edin.
         </p>
         <Button className="mt-7" onClick={reset}>
           <RefreshCw className="size-4" />

@@ -12,18 +12,12 @@ from tests.conftest import ApiContext, auth_headers, login
 async def _use_paid_plan(api: ApiContext) -> None:
     """Trials are capped at one branch; multi-branch needs the paid plan."""
     async with api.database.session_factory() as db:
-        tenant = (
-            await db.execute(select(Tenant).where(Tenant.slug == "dixora-lab"))
-        ).scalar_one()
+        tenant = (await db.execute(select(Tenant).where(Tenant.slug == "dixora-lab"))).scalar_one()
         standard = (
-            await db.execute(
-                select(SubscriptionPlan).where(SubscriptionPlan.code == "STANDARD")
-            )
+            await db.execute(select(SubscriptionPlan).where(SubscriptionPlan.code == "STANDARD"))
         ).scalar_one()
         subscription = (
-            await db.execute(
-                select(Subscription).where(Subscription.tenant_id == tenant.id)
-            )
+            await db.execute(select(Subscription).where(Subscription.tenant_id == tenant.id))
         ).scalar_one()
         subscription.plan_id = standard.id
         await db.commit()
@@ -46,9 +40,7 @@ async def test_branch_archive_and_restore_preserves_history(api: ApiContext) -> 
 
     # Give the branch some history that must survive archiving.
     async with api.database.session_factory() as db:
-        tenant = (
-            await db.execute(select(Tenant).where(Tenant.slug == "dixora-lab"))
-        ).scalar_one()
+        tenant = (await db.execute(select(Tenant).where(Tenant.slug == "dixora-lab"))).scalar_one()
         db.add(
             Area(
                 tenant_id=tenant.id,
@@ -78,9 +70,7 @@ async def test_branch_archive_and_restore_preserves_history(api: ApiContext) -> 
         )
         assert len(areas) == 1
 
-    restored = await api.client.post(
-        f"/api/v1/branches/{branch['id']}/restore", headers=headers
-    )
+    restored = await api.client.post(f"/api/v1/branches/{branch['id']}/restore", headers=headers)
     assert restored.status_code == 200, restored.text
     assert restored.json()["is_active"] is True
     assert restored.json()["archived_at"] is None
@@ -116,7 +106,7 @@ async def test_branch_pricing_preview_reflects_active_branches(api: ApiContext) 
     assert delta == Decimal(after.json()["additional_branch_price"])
 
 
-async def test_branch_service_charge_settings_round_trip(api: ApiContext) -> None:
+async def test_branch_rejects_automatic_service_charge_activation(api: ApiContext) -> None:
     headers = auth_headers(await login(api))
     branches = await api.client.get("/api/v1/branches", headers=headers)
     assert branches.status_code == 200, branches.text
@@ -131,10 +121,15 @@ async def test_branch_service_charge_settings_round_trip(api: ApiContext) -> Non
             "service_charge_value": "10.00",
         },
     )
-    assert updated.status_code == 200, updated.text
-    assert updated.json()["service_charge_enabled"] is True
-    assert updated.json()["service_charge_type"] == "PERCENTAGE"
-    assert Decimal(updated.json()["service_charge_value"]) == Decimal("10.00")
+    assert updated.status_code == 422, updated.text
+    assert updated.json()["error"]["code"] == "automatic_service_charge_disabled"
+    disabled = await api.client.patch(
+        f"/api/v1/branches/{branch['id']}",
+        headers=headers,
+        json={"service_charge_enabled": False},
+    )
+    assert disabled.status_code == 200, disabled.text
+    assert disabled.json()["service_charge_enabled"] is False
 
 
 async def test_multi_branch_manager_reaches_exactly_their_branches(
@@ -147,9 +142,7 @@ async def test_multi_branch_manager_reaches_exactly_their_branches(
     third = await _add_branch(api, headers, "Ataşehir", "atasehir")
 
     users = await api.client.get("/api/v1/users", headers=headers)
-    cashier = next(
-        item for item in users.json() if item["username"] == "cashier@dixora.test"
-    )
+    cashier = next(item for item in users.json() if item["username"] == "cashier@dixora.test")
     home_branch = cashier["branch_id"]
 
     granted = await api.client.put(
@@ -183,14 +176,10 @@ async def test_multi_branch_manager_reaches_exactly_their_branches(
 async def test_branch_access_cannot_be_granted_across_tenants(api: ApiContext) -> None:
     headers = auth_headers(await login(api))
     users = await api.client.get("/api/v1/users", headers=headers)
-    cashier = next(
-        item for item in users.json() if item["username"] == "cashier@dixora.test"
-    )
+    cashier = next(item for item in users.json() if item["username"] == "cashier@dixora.test")
 
     async with api.database.session_factory() as db:
-        tenant = (
-            await db.execute(select(Tenant).where(Tenant.slug == "dixora-lab"))
-        ).scalar_one()
+        tenant = (await db.execute(select(Tenant).where(Tenant.slug == "dixora-lab"))).scalar_one()
         foreign = Branch(
             tenant_id=tenant.id,
             name="placeholder",
@@ -219,9 +208,7 @@ async def test_granted_branch_appears_in_the_switcher_and_can_be_switched_to(
     third = await _add_branch(api, headers, "Ataşehir", "atasehir")
 
     users = await api.client.get("/api/v1/users", headers=headers)
-    cashier = next(
-        item for item in users.json() if item["username"] == "cashier@dixora.test"
-    )
+    cashier = next(item for item in users.json() if item["username"] == "cashier@dixora.test")
     await api.client.put(
         f"/api/v1/users/{cashier['id']}/branches",
         headers=headers,

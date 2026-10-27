@@ -246,6 +246,7 @@ class PrintJob(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         nullable=False,
     )
     idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     attempt_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     last_error: Mapped[str | None] = mapped_column(Text, nullable=True)
     claimed_at: Mapped[datetime | None] = mapped_column(nullable=True)

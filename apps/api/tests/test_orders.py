@@ -8,6 +8,7 @@ from sqlalchemy.orm import selectinload
 
 from app.models import (
     AuditLog,
+    Order,
     PreparationStation,
     PrinterDevice,
     PrintJob,
@@ -317,7 +318,7 @@ async def test_cashier_modifier_rules_and_server_price_are_enforced(api: ApiCont
     assert body["items"][0]["modifiers"][0]["name_snapshot"] == option["name"]
 
 
-async def test_branch_service_charge_is_snapshotted_into_order_total(
+async def test_new_orders_do_not_include_automatic_service_charges(
     api: ApiContext,
 ) -> None:
     tokens = await login(api)
@@ -334,7 +335,7 @@ async def test_branch_service_charge_is_snapshotted_into_order_total(
             "service_charge_value": "10.00",
         },
     )
-    assert updated.status_code == 200, updated.text
+    assert updated.status_code == 422, updated.text
 
     order = await _create_burger_order(
         api,
@@ -344,8 +345,8 @@ async def test_branch_service_charge_is_snapshotted_into_order_total(
         key="service-charge-order-0001",
     )
     assert Decimal(order["subtotal"]) == Decimal("360.00")
-    assert Decimal(order["service_charge_amount"]) == Decimal("36.00")
-    assert Decimal(order["total"]) == Decimal("396.00")
+    assert Decimal(order["service_charge_amount"]) == Decimal("0.00")
+    assert Decimal(order["total"]) == Decimal("360.00")
 
 
 async def test_cashier_item_quantity_and_complimentary_flow_is_versioned_and_audited(
@@ -353,17 +354,6 @@ async def test_cashier_item_quantity_and_complimentary_flow_is_versioned_and_aud
 ) -> None:
     headers = auth_headers(await login(api))
     resources = await seeded_resources(api, headers)
-    branch_id = (await api.client.get("/api/v1/branches", headers=headers)).json()[0]["id"]
-    configured = await api.client.patch(
-        f"/api/v1/branches/{branch_id}",
-        headers=headers,
-        json={
-            "service_charge_enabled": True,
-            "service_charge_type": "PERCENTAGE",
-            "service_charge_value": "10.00",
-        },
-    )
-    assert configured.status_code == 200, configured.text
     order = await _create_burger_order(
         api,
         headers,
@@ -372,6 +362,17 @@ async def test_cashier_item_quantity_and_complimentary_flow_is_versioned_and_aud
         quantity="2",
         key="cashier-item-actions-0001",
     )
+    # Existing financial snapshots remain readable and are not rewritten by
+    # the policy for NEW orders. Exercise this workflow against a legacy bill.
+    from app.services.orders import recalculate_order_totals
+
+    async with api.database.session_factory() as db:
+        historical = await db.get(Order, UUID(order["id"]))
+        assert historical is not None
+        historical.service_charge_type = "PERCENTAGE"
+        historical.service_charge_value = Decimal("10.00")
+        recalculate_order_totals(historical)
+        await db.commit()
     item = order["items"][0]
 
     increased = await api.client.patch(

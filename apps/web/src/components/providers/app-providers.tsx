@@ -4,6 +4,7 @@ import type { PropsWithChildren } from "react"
 
 import { QueryProvider } from "@/components/providers/query-provider"
 import { RealtimeSync } from "@/components/providers/realtime-sync"
+import { ErrorReporting } from "@/components/providers/error-reporting"
 import { ServiceWorkerRegistration } from "@/components/providers/service-worker-registration"
 import { ThemeProvider } from "@/components/providers/theme-provider"
 import { Toaster } from "@/components/ui/sonner"
@@ -32,6 +33,7 @@ export function AppProviders({ children }: PropsWithChildren) {
             visibleToasts={4}
           />
           <RealtimeSync />
+          <ErrorReporting />
           <ServiceWorkerRegistration />
         </TooltipProvider>
       </QueryProvider>

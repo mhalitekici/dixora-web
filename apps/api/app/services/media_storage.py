@@ -10,6 +10,8 @@ from urllib.parse import urlsplit
 from minio import Minio
 from minio.error import S3Error
 from starlette.concurrency import run_in_threadpool
+from urllib3 import PoolManager
+from urllib3.util import Retry, Timeout
 
 from app.config import Settings
 
@@ -30,6 +32,8 @@ class StoredMediaObject:
 
 
 class MediaStorage(Protocol):
+    async def ping(self) -> bool: ...
+
     async def put_object(self, key: str, data: bytes, content_type: str) -> None: ...
 
     async def get_object(self, key: str) -> StoredMediaObject: ...
@@ -38,6 +42,9 @@ class MediaStorage(Protocol):
 
 
 class InMemoryMediaStorage:
+    async def ping(self) -> bool:
+        return True
+
     def __init__(self) -> None:
         self._objects: dict[str, StoredMediaObject] = {}
         self._lock = asyncio.Lock()
@@ -73,7 +80,17 @@ class MinioMediaStorage:
             secret_key=settings.s3_secret_key.get_secret_value(),
             secure=secure,
             region=settings.s3_region,
+            http_client=PoolManager(
+                timeout=Timeout(connect=2.0, read=3.0),
+                retries=Retry(total=0),
+            ),
         )
+
+    async def ping(self) -> bool:
+        try:
+            return bool(await run_in_threadpool(self._client.bucket_exists, self._bucket))
+        except Exception:
+            return False
 
     async def put_object(self, key: str, data: bytes, content_type: str) -> None:
         try:

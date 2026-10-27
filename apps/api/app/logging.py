@@ -22,7 +22,25 @@ _request_context: contextvars.ContextVar[dict[str, object] | None] = contextvars
 )
 
 
+class TransportPrivacyFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        # Uvicorn also writes accepted WebSocket URLs via its error logger;
+        # disabling HTTP access logs alone does not hide one-use query tickets.
+        if record.name == "uvicorn.access" or "WebSocket" in record.getMessage():
+            return False
+        if record.exc_info:
+            record.msg = "transport.unhandled type=%s"
+            record.args = (record.exc_info[0].__name__ if record.exc_info[0] else "unknown",)
+            record.exc_info = None
+            record.exc_text = None
+        return True
+
+
 def configure_logging(level: str = "INFO") -> None:
+    for name in ("uvicorn.access", "uvicorn.error"):
+        transport = logging.getLogger(name)
+        if not any(isinstance(item, TransportPrivacyFilter) for item in transport.filters):
+            transport.addFilter(TransportPrivacyFilter())
     logging.basicConfig(
         format="%(message)s",
         stream=sys.stdout,

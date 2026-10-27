@@ -36,10 +36,26 @@ export class PrintBridge {
       pendingAcknowledgements: this.journal.unacknowledged().length,
     });
 
-    while (!signal.aborted) {
-      await this.heartbeatIfDue();
-      await this.poll();
-      await waitFor(this.config.pollIntervalMs, signal);
+    const heartbeatStop = new AbortController();
+    const stopHeartbeat = () => heartbeatStop.abort();
+    signal.addEventListener("abort", stopHeartbeat, { once: true });
+    const heartbeatLoop = async () => {
+      while (!signal.aborted && !heartbeatStop.signal.aborted) {
+        await this.heartbeatIfDue();
+        await waitFor(this.config.heartbeatIntervalMs, heartbeatStop.signal);
+      }
+    };
+    const heartbeats = heartbeatLoop();
+    try {
+      while (!signal.aborted) {
+        await this.recoverJournal();
+        await this.poll();
+        await waitFor(this.config.pollIntervalMs, signal);
+      }
+    } finally {
+      heartbeatStop.abort();
+      signal.removeEventListener("abort", stopHeartbeat);
+      await heartbeats;
     }
 
     this.state.recordStopping();
@@ -48,7 +64,8 @@ export class PrintBridge {
 
   public async poll(): Promise<void> {
     try {
-      const jobs = await this.api.claimJobs();
+      // Never let a queued job's lease age behind another slow physical print.
+      const jobs = await this.api.claimJobs(1);
       this.state.recordPollSuccess();
 
       if (jobs.length > 0) {

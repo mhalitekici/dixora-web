@@ -9,7 +9,10 @@ import type { PrintJobClaim, PrintResult } from "@dixora/shared-types";
 import type { PrintBridgeApiClient } from "./api-client.js";
 import { PrintBridge } from "./bridge.js";
 import { PrintJournal } from "./journal.js";
-import type { PrinterDiscovery, PrinterTransport } from "./printer-transport.js";
+import type {
+  PrinterDiscovery,
+  PrinterTransport,
+} from "./printer-transport.js";
 import { BridgeState } from "./state.js";
 import { testConfig } from "./test-helpers.js";
 
@@ -46,7 +49,9 @@ const result: PrintResult = {
   transport: "mock",
 };
 
-async function journalPath(context: { after: (fn: () => unknown) => void }): Promise<string> {
+async function journalPath(context: {
+  after: (fn: () => unknown) => void;
+}): Promise<string> {
   const dir = await mkdtemp(join(tmpdir(), "dixora-bridge-test-"));
   context.after(() => rm(dir, { recursive: true, force: true }));
   return join(dir, "journal.json");
@@ -59,6 +64,75 @@ function api(overrides: Record<string, unknown>): PrintBridgeApiClient {
 function printer(onPrint: () => Promise<PrintResult>): PrinterTransport {
   return { print: onPrint };
 }
+
+test("heartbeats continue while a slow physical print is still in progress", async (context) => {
+  const path = await journalPath(context);
+  const stop = new AbortController();
+  let finishPrint: (value: PrintResult) => void = () => {};
+  const printing = new Promise<PrintResult>((resolve) => {
+    finishPrint = resolve;
+  });
+  let beats = 0;
+  let claims = 0;
+  const bridge = new PrintBridge(
+    testConfig({
+      journalPath: path,
+      heartbeatIntervalMs: 10,
+      pollIntervalMs: 1,
+    }),
+    api({
+      heartbeat: async () => {
+        if (++beats === 2) finishPrint(result);
+      },
+      claimJobs: async (limit: number) => {
+        assert.equal(limit, 1);
+        return claims++ === 0 ? [job()] : [];
+      },
+      markSent: async () => {},
+      markPrinted: async () => {
+        stop.abort();
+      },
+    }),
+    printer(async () => printing),
+    new BridgeState("bridge-1"),
+    new PrintJournal(path),
+  );
+  await bridge.run(stop.signal);
+  assert.ok(beats >= 2);
+  assert.equal(claims, 1);
+});
+
+test("recovers an acknowledgement after the network returns without restarting or reprinting", async (context) => {
+  const path = await journalPath(context);
+  const stop = new AbortController();
+  let claims = 0;
+  let dispatches = 0;
+  let recoveries = 0;
+  const bridge = new PrintBridge(
+    testConfig({ journalPath: path, pollIntervalMs: 1 }),
+    api({
+      heartbeat: async () => {},
+      claimJobs: async () => (claims++ === 0 ? [job()] : []),
+      markSent: async () => {},
+      markPrinted: async () => {
+        throw new Error("response lost");
+      },
+      recoverPrinted: async () => {
+        recoveries++;
+        stop.abort();
+      },
+    }),
+    printer(async () => {
+      dispatches++;
+      return result;
+    }),
+    new BridgeState("bridge-1"),
+    new PrintJournal(path),
+  );
+  await bridge.run(stop.signal);
+  assert.equal(dispatches, 1);
+  assert.equal(recoveries, 1);
+});
 
 test("does not reprint an acknowledged-pending ticket after the server issues a newer lease", async (context) => {
   const path = await journalPath(context);
@@ -103,7 +177,10 @@ test("restart recovery marks an uncertain dispatch for manual retry without prin
   const bridge = new PrintBridge(
     testConfig({ journalPath: path }),
     api({
-      recoverUncertainDispatch: async (_jobId: string, attemptCount: number) => {
+      recoverUncertainDispatch: async (
+        _jobId: string,
+        attemptCount: number,
+      ) => {
         uncertainAttempts.push(attemptCount);
       },
     }),

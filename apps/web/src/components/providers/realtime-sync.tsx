@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { useWebSocket } from "@/hooks/use-websocket";
 import { BRANCH_SWITCHED_EVENT } from "@/lib/auth-events";
+import { useConnectionStore } from "@/stores/connection-store";
 
 type RealtimeMessage = {
   type?: string;
@@ -78,8 +79,10 @@ export function RealtimeSync() {
       setTicketRequestKey((value) => value + 1);
     };
     window.addEventListener(BRANCH_SWITCHED_EVENT, reconnectForBranch);
+    window.addEventListener("online", reconnectForBranch);
     return () => {
       window.removeEventListener(BRANCH_SWITCHED_EVENT, reconnectForBranch);
+      window.removeEventListener("online", reconnectForBranch);
     };
   }, []);
 
@@ -99,7 +102,7 @@ export function RealtimeSync() {
     };
   }, [enabled, requestTicket, ticketRequestKey]);
 
-  useWebSocket<RealtimeMessage>({
+  const { status } = useWebSocket<RealtimeMessage>({
     url: socketUrl,
     enabled: enabled && Boolean(socketUrl),
     maxRetries: 0,
@@ -115,7 +118,26 @@ export function RealtimeSync() {
     },
   });
 
-  return null;
+  const online = useConnectionStore((state) => state.online);
+  useEffect(() => {
+    const update = () => useConnectionStore.getState().update(navigator.onLine, status);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, [status]);
+
+  if (!enabled || (online && status === "open")) return null;
+  return (
+    <div role="status" aria-live="polite" className="pointer-events-none fixed inset-x-3 top-20 z-40 mx-auto max-w-xl rounded-lg border bg-background px-4 py-3 text-sm shadow-md">
+      {!online
+        ? "İnternet bağlantısı yok. Sipariş ve ödeme sonucunu bağlantı gelince kontrol edin."
+        : "Canlı bağlantı kuruluyor. Listeler yeniden bağlanınca güncellenecek."}
+    </div>
+  );
 }
 
 export function shouldEnableOperationalRealtime(pathname: string): boolean {

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query"
-import { render, screen, waitFor } from "@testing-library/react"
+import { render, screen, waitFor, within } from "@testing-library/react"
 import type { ReactNode } from "react"
 import { afterEach, describe, expect, it, vi } from "vitest"
 
@@ -481,7 +481,7 @@ describe("CashierWorkspace", () => {
       },
     })
     const { default: userEvent } = await import("@testing-library/user-event")
-    const user = userEvent.setup()
+    const user = userEvent.setup({ delay: null })
     render(<CashierWorkspace />, {
       wrapper: ({ children }: { children: ReactNode }) => (
         <QueryClientProvider client={queryClient}>
@@ -725,7 +725,11 @@ describe("CashierWorkspace floor summary", () => {
   })
 
   it("puts a dwell timer on an occupied table", async () => {
-    vi.stubGlobal("fetch", vi.fn(routeFetchWithOrder))
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL) =>
+      String(input).includes("/orders?")
+        ? Promise.resolve(jsonResponse([{ ...orderWithDetails, created_at: new Date().toISOString() }]))
+        : routeFetchWithOrder(input),
+    ))
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     })
@@ -741,6 +745,76 @@ describe("CashierWorkspace floor summary", () => {
     // rather than showing nothing at all.
     expect(await screen.findByText("0dk")).toBeVisible()
   })
+})
+
+describe("CashierWorkspace refunds", () => {
+  const payment = { id: "payment-1", method: "CARD", amount: "260.00", status: "COMPLETED" }
+
+  function setup({ permission = true, shift = true, fail = false } = {}) {
+    let currentOrder = { ...orderWithDetails, status: "PAID", payments: [payment] }
+    const refundCalls: RequestInit[] = []
+    vi.stubGlobal("fetch", vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      if (url.includes("/api/auth/me")) return Promise.resolve(jsonResponse({
+        ...authContext, user: { ...authContext.user, roleCode: "CASHIER" },
+        permissions: permission ? ["payments.manage"] : [],
+      }))
+      if (url.includes("/shifts/current")) return Promise.resolve(jsonResponse(shift ? { id: "shift-1", status: "OPEN" } : null))
+      if (url.endsWith("/refund")) {
+        refundCalls.push(init ?? {})
+        if (fail) return Promise.resolve(jsonResponse({ detail: "İade yetkisi kaldırıldı" }, 403))
+        currentOrder = { ...currentOrder, payments: [{ ...payment, status: "REFUNDED" }] }
+        return Promise.resolve(jsonResponse(currentOrder.payments[0]))
+      }
+      if (url.includes("/orders?")) return Promise.resolve(jsonResponse([currentOrder]))
+      return routeFetchWithOrder(input)
+    }))
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } })
+    render(<QueryClientProvider client={client}><CashierWorkspace /></QueryClientProvider>)
+    return refundCalls
+  }
+
+  it("requires a reason, records the full payment refund and permits corrected collection", async () => {
+    const calls = setup()
+    const { default: userEvent } = await import("@testing-library/user-event")
+    const user = userEvent.setup({ delay: null })
+    await user.click(await screen.findByRole("button", { name: /B1/ }))
+    await user.click(screen.getByRole("button", { name: /ödemesini iade et/ }))
+    const dialog = screen.getByRole("dialog")
+    expect(within(dialog).getByRole("button", { name: "İadeyi kaydet" })).toBeDisabled()
+    await user.type(within(dialog).getByLabelText("İade gerekçesi"), "  Hatalı POS çekimi  ")
+    await user.click(within(dialog).getByRole("button", { name: "İadeyi kaydet" }))
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument())
+    expect(calls).toHaveLength(1)
+    expect(JSON.parse(String(calls[0].body))).toEqual({ reason: "Hatalı POS çekimi" })
+    expect(await screen.findByText("İade edildi")).toBeVisible()
+    expect(screen.queryByRole("button", { name: /ödemesini iade et/ })).not.toBeInTheDocument()
+    expect(screen.getByRole("button", { name: /Ödeme al/ })).toBeEnabled()
+  })
+
+  it("preserves the dialog and payment when the server rejects a refund", async () => {
+    setup({ fail: true })
+    const { default: userEvent } = await import("@testing-library/user-event")
+    const user = userEvent.setup({ delay: null })
+    await user.click(await screen.findByRole("button", { name: /B1/ }))
+    await user.click(screen.getByRole("button", { name: /ödemesini iade et/ }))
+    await user.type(screen.getByLabelText("İade gerekçesi"), "Yanlış tahsilat")
+    await user.click(screen.getByRole("button", { name: "İadeyi kaydet" }))
+    expect(await screen.findByRole("alert")).toBeVisible()
+    expect(screen.getByLabelText("İade gerekçesi")).toHaveValue("Yanlış tahsilat")
+    expect(screen.queryByText("İade edildi")).not.toBeInTheDocument()
+  })
+
+  it.each([{ permission: false, shift: true }, { permission: true, shift: false }])(
+    "prevents a refund without permission or an active cashier shift: %o", async (options) => {
+      setup(options)
+      const { default: userEvent } = await import("@testing-library/user-event")
+      await userEvent.setup({ delay: null }).click(await screen.findByRole("button", { name: /B1/ }))
+      const button = screen.queryByRole("button", { name: /ödemesini iade et/ })
+      if (options.permission) expect(button).toBeDisabled()
+      else expect(button).not.toBeInTheDocument()
+    },
+  )
 })
 
 describe("CashierWorkspace table states", () => {

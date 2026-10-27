@@ -1,0 +1,14 @@
+[Unit]
+Description=Dixora readiness, printing and backup alert checks
+After=network-online.target docker.service
+OnFailure=dixora-alert@%n.service
+
+[Service]
+Type=oneshot
+User=dixora
+WorkingDirectory=/srv/dixora
+EnvironmentFile=/etc/dixora/monitor.env
+ExecStart=/usr/bin/python3 /srv/dixora/ops/monitor.py --base-url ${DIXORA_MONITOR_BASE_URL} --backup-receipt /srv/dixora-backups/last-success.json
+TimeoutStartSec=45
+NoNewPrivileges=true
+PrivateTmp=true

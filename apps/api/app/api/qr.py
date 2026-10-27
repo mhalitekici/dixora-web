@@ -80,6 +80,7 @@ from app.services.campaigns import (
     campaign_summary,
     is_campaignable,
 )
+from app.services.idempotency import lock_command, request_fingerprint, require_same_request
 from app.services.loyalty import (
     attach_membership_to_order,
     membership_from_code,
@@ -186,11 +187,7 @@ def _public_active_order_out(order: Order | None) -> PublicActiveOrderOut | None
     if order is None:
         return None
     paid_total = sum(
-        (
-            payment.amount
-            for payment in order.payments
-            if payment.status == PaymentStatus.COMPLETED
-        ),
+        (payment.amount for payment in order.payments if payment.status == PaymentStatus.COMPLETED),
         Decimal("0.00"),
     )
     return PublicActiveOrderOut(
@@ -414,17 +411,13 @@ async def public_campaigns(
     """
     response.headers["Cache-Control"] = "private, no-store"
     tenant, branch, _ = await _public_context(db, business_slug, branch_slug)
-    campaigns = await active_campaigns_for_branch(
-        db, tenant_id=tenant.id, branch_id=branch.id
-    )
+    campaigns = await active_campaigns_for_branch(db, tenant_id=tenant.id, branch_id=branch.id)
     return [
         PublicCampaignOut(
             id=campaign.id,
             name=campaign.name,
             description=campaign.description,
-            summary=await campaign_summary(
-                db, tenant_id=tenant.id, campaign=campaign
-            ),
+            summary=await campaign_summary(db, tenant_id=tenant.id, campaign=campaign),
             audience=CampaignAudience(campaign.audience),
             starts_at=campaign.starts_at,
             ends_at=campaign.ends_at,
@@ -557,9 +550,7 @@ async def public_menu(
 
     translation_keys: list[TranslationKey] = []
     for category in categories:
-        translation_keys.append(
-            TranslationKey("category", category.id, "name", category.name)
-        )
+        translation_keys.append(TranslationKey("category", category.id, "name", category.name))
         if category.description:
             translation_keys.append(
                 TranslationKey("category", category.id, "description", category.description)
@@ -571,13 +562,9 @@ async def public_menu(
                 TranslationKey("product", product.id, "description", product.description)
             )
     for group in groups:
-        translation_keys.append(
-            TranslationKey("modifier_group", group.id, "name", group.name)
-        )
+        translation_keys.append(TranslationKey("modifier_group", group.id, "name", group.name))
         for modifier in group.modifiers:
-            translation_keys.append(
-                TranslationKey("modifier", modifier.id, "name", modifier.name)
-            )
+            translation_keys.append(TranslationKey("modifier", modifier.id, "name", modifier.name))
     translations = await translate_fields(
         db,
         tenant_id=tenant.id,
@@ -677,9 +664,7 @@ async def public_menu(
                                     kind="modifier",
                                     resource_id=modifier.id,
                                 ),
-                                name=localized(
-                                    "modifier", modifier.id, "name", modifier.name
-                                ),
+                                name=localized("modifier", modifier.id, "name", modifier.name),
                                 price_delta=modifier.price_delta,
                             )
                             for modifier in groups_by_id[group_id].modifiers
@@ -736,9 +721,11 @@ async def create_public_qr_request(
     if not isinstance(supplied_context, str) or not hmac.compare_digest(
         supplied_context, expected_context
     ):
-        raise DomainError(
-            "invalid_qr_session", "QR session context is invalid", status_code=401
-        )
+        raise DomainError("invalid_qr_session", "QR session context is invalid", status_code=401)
+    await lock_command(db, tenant.id, "qr-create", payload.idempotency_key)
+    fingerprint = request_fingerprint(
+        payload.model_dump(mode="json", exclude={"idempotency_key", "session_token"})
+    )
     existing = (
         await db.execute(
             select(QrOrderRequest).where(
@@ -748,6 +735,9 @@ async def create_public_qr_request(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        if existing.branch_id != branch.id or existing.table_id != table.id:
+            raise DomainError("qr_request_not_found", "Request not found", status_code=404)
+        require_same_request(existing.request_hash, fingerprint)
         return _public_qr_request_out(settings, existing)
     pending_for_table = (
         await db.execute(
@@ -889,6 +879,7 @@ async def create_public_qr_request(
         loyalty_membership_id=membership.id if membership else None,
         status=QrRequestStatus.PENDING,
         idempotency_key=payload.idempotency_key,
+        request_hash=fingerprint,
         session_nonce_hash=str(claims.get("jti", ""))[:64],
         items_payload=[item.model_dump(mode="json") for item in resolved_items],
         customer_note=payload.customer_note,
@@ -973,9 +964,7 @@ async def create_public_bill_request(
     if not isinstance(supplied_context, str) or not hmac.compare_digest(
         supplied_context, expected_context
     ):
-        raise DomainError(
-            "invalid_qr_session", "QR session context is invalid", status_code=401
-        )
+        raise DomainError("invalid_qr_session", "QR session context is invalid", status_code=401)
     active_order = await _active_table_order(
         db,
         tenant_id=tenant.id,

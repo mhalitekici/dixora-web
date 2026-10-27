@@ -277,6 +277,12 @@ async def create_branch(
     identity: SettingsManager,
     db: DbSession,
 ) -> BranchOut:
+    if payload.service_charge_enabled:
+        raise DomainError(
+            "automatic_service_charge_disabled",
+            "Restoran ve kafelerde otomatik servis/kuver ücreti etkinleştirilemez",
+            status_code=422,
+        )
     tenant_id = require_tenant(identity)
     usage = await _branch_usage(db, tenant_id)
     if not usage.can_create:
@@ -324,6 +330,12 @@ async def update_branch(
     identity: SettingsManager,
     db: DbSession,
 ) -> BranchOut:
+    if payload.service_charge_enabled:
+        raise DomainError(
+            "automatic_service_charge_disabled",
+            "Restoran ve kafelerde otomatik servis/kuver ücreti etkinleştirilemez",
+            status_code=422,
+        )
     branch = await _tenant_branch(db, identity, branch_id)
     assert branch is not None
     previous = {"name": branch.name, "is_active": branch.is_active}

@@ -1,0 +1,185 @@
+{
+  "run_id": "pilot-31041b1288b24bfd840b71aca240ee7f",
+  "measurement_started_at": "2026-10-27T12:30:39.853609+00:00",
+  "measurement_finished_at": "2026-10-27T12:32:46.872318+00:00",
+  "duration_seconds": 120,
+  "businesses": 30,
+  "staff_sessions": 150,
+  "simulated_printers": 60,
+  "target_orders_per_hour": 900,
+  "simulated_print_jobs": 60,
+  "errors": {},
+  "latency_ms": {
+    "auth.login": {
+      "count": 150,
+      "p50": 305.83,
+      "p95": 577.8,
+      "p99": 673.59
+    },
+    "warmup.shift": {
+      "count": 30,
+      "p50": 19.16,
+      "p95": 40.46,
+      "p99": 53.01
+    },
+    "printer.heartbeat": {
+      "count": 372,
+      "p50": 76.13,
+      "p95": 1172.11,
+      "p99": 2317.71
+    },
+    "read.WAITER": {
+      "count": 1429,
+      "p50": 58.96,
+      "p95": 714.63,
+      "p99": 1338.16
+    },
+    "printer.claim": {
+      "count": 3572,
+      "p50": 37.8,
+      "p95": 305.98,
+      "p99": 862.1
+    },
+    "read.BUSINESS_OWNER": {
+      "count": 712,
+      "p50": 67.78,
+      "p95": 749.46,
+      "p99": 1435.96
+    },
+    "qr.menu": {
+      "count": 6,
+      "p50": 55.74,
+      "p95": 702.45,
+      "p99": 702.45
+    },
+    "read.CASHIER": {
+      "count": 713,
+      "p50": 70.27,
+      "p95": 776.76,
+      "p99": 1395.09
+    },
+    "read.KITCHEN": {
+      "count": 694,
+      "p50": 132.28,
+      "p95": 999.13,
+      "p99": 1678.92
+    },
+    "qr.create": {
+      "count": 6,
+      "p50": 132.55,
+      "p95": 989.88,
+      "p99": 989.88
+    },
+    "qr.replay": {
+      "count": 6,
+      "p50": 46.28,
+      "p95": 188.71,
+      "p99": 188.71
+    },
+    "printer.SENT": {
+      "count": 60,
+      "p50": 30.21,
+      "p95": 249.05,
+      "p99": 317.01
+    },
+    "orders.qr-result": {
+      "count": 6,
+      "p50": 32.47,
+      "p95": 682.05,
+      "p99": 682.05
+    },
+    "printer.PRINTED": {
+      "count": 120,
+      "p50": 20.29,
+      "p95": 116.15,
+      "p99": 264.07
+    },
+    "payment.create": {
+      "count": 30,
+      "p50": 54.46,
+      "p95": 437.79,
+      "p99": 457.61
+    },
+    "payment.replay": {
+      "count": 30,
+      "p50": 45.47,
+      "p95": 296.66,
+      "p99": 675.28
+    },
+    "table.read": {
+      "count": 6,
+      "p50": 18.95,
+      "p95": 26.24,
+      "p99": 26.24
+    },
+    "table.close": {
+      "count": 6,
+      "p50": 29.77,
+      "p95": 47.06,
+      "p99": 47.06
+    },
+    "orders.create": {
+      "count": 24,
+      "p50": 164.02,
+      "p95": 476.12,
+      "p99": 819.78
+    },
+    "orders.replay": {
+      "count": 24,
+      "p50": 59.14,
+      "p95": 239.1,
+      "p99": 983.81
+    }
+  },
+  "capacity_validated": false,
+  "observed_orders": 30,
+  "resource_samples": 10,
+  "resources": {
+    "api-1": {
+      "peak_cpu_percent": 180.84,
+      "peak_memory_mib": 303.3
+    },
+    "minio-1": {
+      "peak_cpu_percent": 3.45,
+      "peak_memory_mib": 132.2
+    },
+    "postgres-1": {
+      "peak_cpu_percent": 53.5,
+      "peak_memory_mib": 216.4
+    },
+    "redis-1": {
+      "peak_cpu_percent": 3.79,
+      "peak_memory_mib": 6.7
+    }
+  },
+  "database_connections_peak": 22,
+  "database_active_connections_peak": 4,
+  "consistency_audit": {
+    "orders": 30,
+    "payments": 30,
+    "simulated_jobs": 60,
+    "passed": true
+  },
+  "limitations": [
+    "120-second local run; not a one-hour capacity validation",
+    "No physical printers, real payments, stock contention or persistent WebSocket load",
+    "CPU is measured per logical core; host ran other development tasks"
+  ],
+  "prior_attempts": [
+    {
+      "file": "artifacts/p0-validation/pilot-result.json",
+      "orders": 18,
+      "simulated_jobs": 36,
+      "errors": {
+        "printer.claim:RemoteProtocolError": 2
+      },
+      "note": "Startup work and client TLS trust-store creation delayed the generator; failed attempt retained."
+    },
+    {
+      "file": "artifacts/p0-validation/pilot-steady.json",
+      "orders": 30,
+      "simulated_jobs": 60,
+      "errors": {}
+    }
+  ]
+}

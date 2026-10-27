@@ -11,10 +11,16 @@ import {
 export class PrintBridgeApiClient {
   public constructor(private readonly config: BridgeConfig) {}
 
-  public async claimJobs(): Promise<PrintJobClaim[]> {
+  public async claimJobs(
+    limit = this.config.maxClaim,
+  ): Promise<PrintJobClaim[]> {
     const jobs: PrintJobClaim[] = [];
 
-    for (let index = 0; index < this.config.maxClaim; index += 1) {
+    for (
+      let index = 0;
+      index < Math.min(limit, this.config.maxClaim);
+      index += 1
+    ) {
       const payload = await this.request(
         PRINTING_API.claim(
           this.config.printerIds,

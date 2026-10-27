@@ -6,54 +6,188 @@ Standing up a new production host is a separate document:
 
 ## Backups
 
-`ops/backup.sh` takes a compressed PostgreSQL dump, verifies it can be read
-back, and prunes anything older than the retention window.
+`ops/backup.py` creates one verified bundle containing `database.dump`,
+`media.tar`, and `manifest.json`. PostgreSQL runs `pg_dump` and `pg_restore
+--list` in the database container. MinIO media is streamed through a one-off API
+container using that stack's configured S3 credentials; credentials never appear
+in command arguments. The host needs Python 3.11+ and Docker Compose v2.
 
 ```bash
-cd /srv/dixora
-set -a && . ./.env && set +a
-./ops/backup.sh                     # writes ./backups
-BACKUP_DIR=/mnt/backup ./ops/backup.sh
+python3 ops/backup.py create --directory /srv/dixora-backups --quiesce
+python3 ops/backup.py verify /srv/dixora-backups/dixora-TIMESTAMP-ID
 ```
 
-On a production host the stack lives in a different Compose file, and these
-scripts talk to it through `docker compose`. Point them at it with the
-variable Compose reads natively:
+Windows uses `python` instead of `python3`. `ops/backup.sh` wraps `create`, and
+honors `BACKUP_DIR`, `RETENTION_DAYS` (default 14), `POSTGRES_SERVICE`,
+`API_SERVICE`, `PYTHON_BIN`, and Compose's native environment variables.
+It no longer requires sourcing `.env` into a shell.
+
+`--quiesce` briefly stops running `web` and `api` services, then restarts only
+those that were running, including after a failed backup. This prevents
+application writes/deletions between the database and media snapshots and records
+all public-table row counts. Coordinate any external writers separately. Without
+this flag the backup is online: both stores are individually readable, but their
+snapshots may reflect different moments. Schedule the quiesced backup outside service hours.
+
+Each file and each media object has a SHA-256 checksum. Media object keys,
+content types and user metadata survive restoration; empty buckets and zero-byte
+objects are supported. This backs up current application media, not MinIO users,
+server configuration, bucket lifecycle policies, historical versions, or PostgreSQL
+roles. Retain deployment configuration and secrets separately. It is a full
+snapshot, not PostgreSQL point-in-time recovery.
+
+Only a complete, verified bundle is published. Concurrent runs are refused by
+`.backup.lock`; investigate an abandoned lock before removing it. Temporary helper
+containers are removed on success and failure. Retention removes only old complete
+bundles directly under the backup root after a successful new backup. Legacy
+`.dump` files and incomplete bundles are not pruned automatically. Data stays in a
+private directory (0700 on Unix); `backups/` and `*.dump` are gitignored.
+
+### Production scheduling
 
 ```bash
 export COMPOSE_FILE=docker-compose.prod.yml
-set -a && . ./.env.production && set +a
-./ops/backup.sh
+export COMPOSE_ENV_FILES=.env.production
+python3 ops/backup.py create --directory /srv/dixora-backups --quiesce
 ```
 
-Schedule it from the host crontab:
-
-```cron
-15 3 * * * cd /srv/dixora && set -a && . ./.env && set +a && ./ops/backup.sh >> /var/log/dixora-backup.log 2>&1
-```
-
-The dump is written and verified **inside** the container before being copied
-out. A custom-format dump has to be seekable to be read back, so verifying it
-through a pipe fails even when the dump is perfectly good.
-
-### Restore — and why you must rehearse it
+The production timer **requires an encrypted off-host copy**. Configure restic
+first (paths assume `/srv/dixora` and the `dixora` user with Docker access):
 
 ```bash
-./ops/restore.sh backups/dixora-20260813-031500.dump              # into a scratch db
-TARGET_DB=dixora ./ops/restore.sh backups/....dump --force        # over the live db
+sudo apt-get update && sudo apt-get install -y restic
+sudo install -d -m 750 -o root -g dixora /etc/dixora
+sudo install -m 600 -o root -g root ops/backup.env.example /etc/dixora/backup.env
+sudo editor /etc/dixora/backup.env
+# Generate the repository encryption password without printing it.
+sudo sh -c 'set -C; umask 077; openssl rand -hex 32 > /etc/dixora/restic-password'
+sudo chown dixora:dixora /etc/dixora/restic-password
+# Save this password in a separate password manager/recovery location now.
+# Initialize a NEW repository once; skip for an existing repository.
+sudo systemd-run --wait --collect --uid=dixora \
+  --property=EnvironmentFile=/etc/dixora/backup.env \
+  /usr/bin/python3 /srv/dixora/ops/offsite.py init
+sudo bash ops/install-backup-timer.sh
 ```
 
-The script prints row counts after restoring, so an empty dump looks like the
-failure it is instead of a clean exit code. Overwriting the live database is
-refused without `--force`.
+Set `RESTIC_REPOSITORY` to an independent S3 HTTPS endpoint/bucket or SFTP host.
+Use dedicated credentials; the application server's own MinIO is not an offsite
+destination. SFTP requires noninteractive SSH and a verified `known_hosts` entry
+for `dixora`. Local and loopback repositories are rejected by scheduled backups.
+Keep the repository location, credentials, encryption password, Compose settings
+and application secrets outside this server so a total host loss is recoverable.
+Restic's [repository setup](https://restic.readthedocs.io/en/stable/030_preparing_a_new_repo.html)
+documents S3/SFTP configuration and password recovery requirements.
 
-**Run a restore drill monthly.** A backup nobody has ever restored is not a
-backup — the first time this repository's script ran, it produced a good dump
-and then destroyed it because the verification step was wrong. That was only
-caught by actually restoring.
+The installer checks prerequisites, runs a real backup/upload first, then enables
+and checks the timer. It runs at 03:15 in the **host timezone**, with up to five
+minutes of jitter, and catches up after downtime. `--quiesce` stops web/API only
+during the local snapshot; they restart before offsite upload. Failed uploads or
+repository checks fail the service, preserve the new local bundle, and skip local
+retention. Restic snapshots are encrypted and are not automatically deleted.
+Plan remote retention separately with the storage owner.
 
-`backups/` and `*.dump` are gitignored: dumps contain customer names, emails and
-order history.
+```bash
+systemctl is-enabled dixora-backup.timer
+systemctl is-active dixora-backup.timer
+systemctl list-timers --all dixora-backup.timer
+journalctl -u dixora-backup.service
+# Full remote data integrity scan (e.g. monthly):
+sudo systemd-run --wait --collect --uid=dixora \
+  --property=EnvironmentFile=/etc/dixora/backup.env \
+  /usr/bin/python3 /srv/dixora/ops/offsite.py check
+```
+
+No production timer is installed by changing this repository. Monitor failed
+service runs and snapshot age in the **remote** repository. A successful manual
+local backup does not prove the timer or remote upload is working. Snapshot IDs
+appear in the journal and each local bundle's `offsite.json` receipt. To retry an
+existing bundle, run `ops/offsite.py upload BUNDLE` with the same environment.
+
+### Restore drill
+
+On a replacement host, restore `/etc/dixora/backup.env` and the encryption
+password from the separate recovery location, install restic, then list and
+download a specific snapshot (run via `systemd-run` as above to load secrets):
+
+```bash
+python3 ops/offsite.py snapshots
+python3 ops/offsite.py download SNAPSHOT_ID --directory /srv/dixora-recovered-20261018
+```
+
+`download` requires a fresh directory, runs restic's restore verification and
+checks the recovered bundle's checksums. Use its `recovered_bundle` output below.
+Restore the saved production configuration and build the pinned images on the
+replacement host before restoring into fresh PostgreSQL/MinIO destinations.
+
+```bash
+python3 ops/backup.py restore /srv/dixora-backups/dixora-TIMESTAMP-ID \
+  --database dixora_restore_check_20261018 --bucket dixora-restore-check-20261018
+```
+
+Both targets must be fresh. The script refuses source/system databases, existing
+databases, the configured media bucket, and existing buckets. It verifies every
+archive before writes, restores PostgreSQL in one transaction, downloads every
+restored object to compare its checksum/content type/metadata, and compares all
+public-table row counts for quiesced bundles. A failed cross-store restore can
+leave its fresh targets for diagnosis; use new names on retry. It never drops or
+overwrites a live destination. Run a restore drill monthly and record its duration.
+Promoting recovered data to production requires a separate maintenance procedure
+and pointing the application at **both** recovered stores.
+
+`ops/restore.sh` accepts bundle directories with `--database` and `--bucket`.
+Its legacy `.dump` mode remains available for old backups and does not restore
+MinIO; only that legacy mode supports `TARGET_DB=... --force` overwrites.
+
+## Business-day integration verification
+
+Use the disposable stack for real PostgreSQL migrations, HTTP requests, MinIO,
+and a backup/restore drill. It has its own network and ephemeral storage; it does
+not use the local development database or mail/payment provider credentials.
+
+```bash
+export COMPOSE_FILE=infrastructure/docker-compose.validation.yml
+export COMPOSE_PROJECT_NAME=dixora-validation
+docker compose up -d --build --wait api
+python3 ops/validate_business_day.py
+docker compose exec -T api python - < ops/seed_validation_media.py
+python3 ops/backup.py create --quiesce --directory backups/validation
+# Verify and restore the printed bundle path into fresh targets as above.
+docker compose down --volumes
+```
+
+`validate_business_day.py` is restricted to localhost and the seeded `dixora-lab`
+tenant. It checks repeated order/payment/refund requests, shift requirements,
+overbalance rejection, split cash/card payment after refund, table closure,
+zero-variance shift closure/history, two-employee handoff, and manager business-day
+closure with open-shift and duplicate-close guards. Run once per fresh stack. Add
+`--profile browser` to Compose to serve the isolated web UI on port 13000.
+The CI `Business day and backup restore` job runs the HTTP and restore checks on
+every configured push/PR, including a Unicode media key and an empty object.
+Both production and validation MinIO images build the production release's
+immutable official source commit (`0d7408f`). The production `mc` initializer
+builds commit `b00526b1`. The legacy community registry tags are no longer needed.
+CI boots the production image definitions on disposable storage, checks private
+bucket initialization twice and reads/writes an object. See the upstream
+[source distribution instructions](https://github.com/minio/minio#source-only-distribution).
+Use explicit Dockerfile targets `server` and `client` for manual builds. Preserve
+the pinned source version when updating existing data volumes; do not downgrade
+a volume written by a newer MinIO version.
+
+CI also encrypts a bundle into a local test restic repository, downloads and
+verifies it, and restores the recovered database and media. This tests the
+transfer/recovery mechanism; it does not establish a live offsite destination.
+
+POS reconciliation uses card sales minus card refunds. Shift and business-day
+closures accept negative net POS totals when refunds exceed that period's sales;
+gross sales and refund amounts remain separate in reports. The HTTP drill also
+refunds a fully paid card payment, repeats the refund, and records a corrected
+payment before checking the net POS closing amount. The cashier payment history
+and closed orders screen offer a full-payment refund action to users with `payments.manage`. Cashiers
+need an open shift. The confirmation requires a reason and explains that cash
+must be returned or the POS refund completed separately. Refunded payments remain
+visible; an unpaid balance can be collected again for a correction. The refund
+does not cancel products. Closed table sessions are not reopened by this action.
 
 ## Subscription billing
 
@@ -138,11 +272,19 @@ simultaneous logins measured p50 3.9 s — the exact shape of a shift change at 
 large chain. Stagger logins or lengthen sessions; do **not** weaken the Argon2
 parameters.
 
-**Capacity.** 25 branches passes comfortably (p50 88 ms). 100 branches failed on
-a contended dev laptop and has never been retried on real hardware with
-PgBouncer. Treat anything above 25 as unmeasured.
+**Capacity.** The legacy Locust profile uses one tenant; increasing virtual users
+does not establish a branch count. The newer 30-tenant, 150-session, 60-simulated-
+printer profile completed a 120-second local run, which is still not production
+capacity acceptance. See [the current evidence and limitations](production-readiness-2026-10-27.md)
+and [reproduction instructions](../apps/api/loadtest/README.md). Run a full hour
+and soak on the intended staging host before making a capacity claim.
 
 **Clock skew.** Token time claims allow 30 seconds of tolerance. Without it a
 verifying clock reading a moment behind the issuing one rejects freshly minted
 tokens, which looks exactly like users being randomly logged out. Keep NTP
 running on the host anyway.
+
+For readiness, print queue, frontend error reporting and backup freshness alerts,
+see [observability](observability.md). The new monitor/OnFailure units are
+configuration templates until an operator installs them and proves actual alert
+delivery. A local successful restore does not establish production offsite safety.

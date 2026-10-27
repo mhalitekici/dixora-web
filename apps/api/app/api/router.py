@@ -9,6 +9,7 @@ from app.api import (
     catalog,
     dashboard,
     delivery,
+    diagnostics,
     hotel_rooms,
     inventory,
     kitchen,
@@ -29,6 +30,7 @@ from app.api import (
 
 api_router = APIRouter()
 api_router.include_router(auth.router)
+api_router.include_router(diagnostics.router)
 api_router.include_router(registrations.router)
 api_router.include_router(businesses.router)
 api_router.include_router(organization.router)

@@ -48,13 +48,18 @@ REDACTED = "[redacted]"
 
 def _scrub(value: Any, depth: int = 0) -> Any:
     """Recursively redact anything that looks like a credential or PII."""
-    if depth > 6:
-        return value
+    if depth > 12:
+        return REDACTED
     if isinstance(value, dict):
         return {
             key: (
                 REDACTED
-                if isinstance(key, str) and key.lower() in _SENSITIVE_KEYS
+                if isinstance(key, str) and (
+                    key.lower() in _SENSITIVE_KEYS
+                    or any(part in key.lower() for part in (
+                        "password", "secret", "token", "customer", "address", "phone",
+                    ))
+                )
                 else _scrub(item, depth + 1)
             )
             for key, item in value.items()
@@ -73,10 +78,26 @@ def _before_send(event: Event, _hint: Hint) -> Event:
                 name: (REDACTED if name.lower() in _SENSITIVE_HEADERS else value)
                 for name, value in headers.items()
             }
-        # Query strings can carry tokens (e.g. realtime tickets); drop the values.
+        # Drop opaque payloads/URLs entirely; JSON strings and breadcrumbs may
+        # contain arbitrary credentials and customer details under unknown keys.
+        request.pop("query_string", None)
+        request.pop("url", None)
         request.pop("cookies", None)
-        if isinstance(request.get("data"), dict | list):
-            request["data"] = _scrub(request["data"])
+        request.pop("data", None)
+    event.pop("user", None)
+    event.pop("breadcrumbs", None)
+    event.pop("message", None)
+    event.pop("logentry", None)
+    exception = event.get("exception")
+    if isinstance(exception, dict):
+        for item in exception.get("values", []):
+            if isinstance(item, dict):
+                item["value"] = REDACTED
+                stack = item.get("stacktrace")
+                if isinstance(stack, dict):
+                    for frame in stack.get("frames", []):
+                        if isinstance(frame, dict):
+                            frame.pop("vars", None)
     for section in ("extra", "contexts", "tags"):
         if isinstance(event.get(section), dict):
             event[section] = _scrub(event[section])
@@ -106,6 +127,7 @@ def configure_sentry(settings: Settings) -> bool:
         # PII must be opt-in-never here: receipts, customer names and phone
         # numbers all flow through this API.
         send_default_pii=False,
+        include_local_variables=False,
         before_send=_before_send,
     )
     return True

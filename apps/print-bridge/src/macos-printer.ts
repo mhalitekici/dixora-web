@@ -14,6 +14,7 @@ import {
 } from "./printer-transport.js";
 import { runProcess, type ExecFn } from "./process-exec.js";
 import { renderReceiptText } from "./receipt-text.js";
+import { cupsJobState } from "./cups-job.js";
 
 /**
  * Prints through CUPS via `lp`, and discovers printers via `lpstat`.
@@ -29,6 +30,9 @@ export class MacPrinterTransport implements PrinterTransport {
   public constructor(
     private readonly config: BridgeConfig,
     private readonly exec: ExecFn = runProcess,
+    private readonly jobState: (
+      jobId: number,
+    ) => Promise<number> = cupsJobState,
   ) {
     this.printerCodes = new Set(config.printerIds);
   }
@@ -46,9 +50,10 @@ export class MacPrinterTransport implements PrinterTransport {
 
     const dir = await mkdtemp(join(tmpdir(), "dixora-print-"));
     const file = join(dir, `${randomUUID()}.txt`);
+    let cupsReference = "";
     try {
       await writeFile(file, text, { encoding: "utf8" });
-      await this.exec(
+      const submitted = await this.exec(
         "lp",
         [
           "-d",
@@ -65,11 +70,36 @@ export class MacPrinterTransport implements PrinterTransport {
           "page-left=0",
           "-o",
           "page-right=0",
+          "-h",
+          "localhost:631",
           "--",
           file,
         ],
-        { timeoutMs: 20_000 },
+        { timeoutMs: 20_000, env: { ...process.env, LC_ALL: "C", LANG: "C" } },
       );
+      const reference = /request id is (\S+)-(\d+)\s/.exec(submitted.stdout);
+      if (!reference)
+        throw new Error("CUPS işi gönderildi ancak iş kimliği doğrulanamadı");
+      cupsReference = `${reference[1]}-${reference[2]}`;
+      const jobId = Number(reference[2]);
+      if (!Number.isSafeInteger(jobId) || jobId < 1)
+        throw new Error("Geçersiz CUPS iş kimliği");
+      const deadline = Date.now() + 60_000;
+      for (;;) {
+        const state = await this.jobState(jobId);
+        if (state === 9) break;
+        if (state === 6 || state === 7 || state === 8) {
+          throw new Error(
+            `CUPS işi durdu veya iptal edildi (${cupsReference}, durum ${state}); fiziksel çıktıyı kontrol edin`,
+          );
+        }
+        if (Date.now() >= deadline) {
+          throw new Error(
+            `CUPS sonucu belirsiz (${cupsReference}); fiziksel çıktıyı kontrol edin`,
+          );
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 250));
+      }
     } finally {
       await rm(dir, { recursive: true, force: true });
     }
@@ -83,6 +113,7 @@ export class MacPrinterTransport implements PrinterTransport {
 
     return {
       externalReference: [
+        cupsReference,
         this.config.bridgeId,
         printerCode,
         job.id,
@@ -98,7 +129,13 @@ export class MacPrinterDiscovery implements PrinterDiscovery {
   public constructor(private readonly exec: ExecFn = runProcess) {}
 
   public async listPrinters(): Promise<string[]> {
-    const { stdout } = await this.exec("lpstat", ["-p"]);
+    const { stdout } = await this.exec(
+      "lpstat",
+      ["-h", "localhost:631", "-p"],
+      {
+        env: { ...process.env, LC_ALL: "C", LANG: "C" },
+      },
+    );
     const names: string[] = [];
     for (const line of stdout.split("\n")) {
       // `lpstat -p` prints lines like: "printer BAR is idle.  enabled since ..."

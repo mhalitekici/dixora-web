@@ -17,6 +17,7 @@ import {
 } from "./printer-transport.js";
 import { PrintBridge } from "./bridge.js";
 import { BridgeState } from "./state.js";
+import { acquireRuntimeLock } from "./runtime-lock.js";
 import {
   WindowsPrinterDiscovery,
   WindowsPrinterTransport,
@@ -52,6 +53,7 @@ export async function startBridgeRuntime(
   }
 
   const { discovery, printer } = createTransport(config);
+  const releaseLock = await acquireRuntimeLock(config.journalPath);
   const state = new BridgeState(config.bridgeId);
   const bridge = new PrintBridge(
     config,
@@ -64,9 +66,13 @@ export async function startBridgeRuntime(
   const healthServer =
     config.healthPort > 0 ? startHealthServer(config.healthPort, state) : null;
   const abortController = new AbortController();
-  const completed = bridge
-    .run(abortController.signal)
-    .finally(() => stopDiagnosticsServer(healthServer));
+  const completed = bridge.run(abortController.signal).finally(async () => {
+    try {
+      await stopDiagnosticsServer(healthServer);
+    } finally {
+      await releaseLock();
+    }
+  });
 
   return {
     completed,
@@ -115,7 +121,9 @@ export function createTransport(config: BridgeConfig): {
       process.env.NODE_ENV !== "development" &&
       process.env.NODE_ENV !== "test"
     ) {
-      throw new Error("Mock taşıması yalnız geliştirme veya testte kullanılabilir.");
+      throw new Error(
+        "Mock taşıması yalnız geliştirme veya testte kullanılabilir.",
+      );
     }
     return { printer: new MockPrinterTransport(config) };
   }
