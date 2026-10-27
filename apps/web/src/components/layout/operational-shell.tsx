@@ -15,7 +15,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
-import { useEffect, useState, type ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 
 import { BrandLogo } from "@/components/brand/brand-logo"
 import { ShiftLogoutGuard } from "@/components/cashier/shift-logout-guard"
@@ -40,6 +40,7 @@ import { useCurrentUser, useLogout } from "@/hooks/use-auth"
 import { hasPermission } from "@/lib/permissions"
 import { canNavigate } from "@/lib/navigation-access"
 import { cn } from "@/lib/utils"
+import { connectionLabel, useConnectionStore } from "@/stores/connection-store"
 
 type OperationalMode = keyof typeof operationalLinks
 
@@ -57,7 +58,9 @@ export function OperationalShell({
   fullBleed?: boolean
 }) {
   const pathname = usePathname()
-  const [online, setOnline] = useState(true)
+  const online = useConnectionStore((state) => state.online)
+  const connectionStatus = useConnectionStore((state) => state.status)
+  const connected = online && connectionStatus === "open"
   const currentUser = useCurrentUser()
   const resolvedUserName = currentUser.data?.user.displayName ?? userName
   const resolvedStationName =
@@ -69,16 +72,6 @@ export function OperationalShell({
     },
   })
 
-  useEffect(() => {
-    const update = () => setOnline(navigator.onLine)
-    update()
-    window.addEventListener("online", update)
-    window.addEventListener("offline", update)
-    return () => {
-      window.removeEventListener("online", update)
-      window.removeEventListener("offline", update)
-    }
-  }, [])
 
   const links = operationalLinks[mode]
   const modeLabel = mode === "waiter" ? "Garson" : "Kasa"
@@ -158,18 +151,18 @@ export function OperationalShell({
         <div className="ml-auto flex items-center gap-1">
           <span
             className={cn(
-              "hidden h-8 items-center gap-1.5 rounded-full px-2.5 text-[0.65rem] font-semibold sm:flex",
-              online
+              "hidden min-h-8 items-center gap-1.5 rounded-full px-2.5 text-[0.65rem] font-semibold sm:flex",
+              connected
                 ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300"
                 : "bg-red-500/10 text-red-700 dark:text-red-300",
             )}
           >
-            {online ? (
+            {connected ? (
               <Wifi className="size-3.5" />
             ) : (
               <WifiOff className="size-3.5" />
             )}
-            {online ? "Bağlı" : "Çevrimdışı"}
+            {connectionLabel(online, connectionStatus)}
           </span>
           <NavigationSearch
             navigation={[

@@ -34,6 +34,7 @@ import {
 } from "lucide-react"
 import Link from "next/link"
 import { useEffect, useMemo, useRef, useState } from "react"
+import { PendingCommands } from "@/lib/pending-command"
 import { toast } from "sonner"
 
 import {
@@ -454,6 +455,7 @@ export function CashierWorkspace() {
   const [tableSearch, setTableSearch] = useState("")
   const tablesHeadingRef = useRef<HTMLHeadingElement>(null)
   const restoreTablesFocusRef = useRef(false)
+  const pendingCommands = useRef(new PendingCommands())
   // Drives the dwell timers. Ticking locally keeps them moving without
   // refetching every table once a minute.
   const [now, setNow] = useState(() => Date.now())
@@ -818,26 +820,20 @@ export function CashierWorkspace() {
           })),
         },
       ]
-      if (selectedOrder) {
-        return api<Order>(`/orders/${selectedOrder.id}/items`, {
-          method: "POST",
-          body: JSON.stringify({
-            items: payloadItems,
-            idempotency_key: crypto.randomUUID(),
-            auto_accept: false,
-          }),
-        })
-      }
-      return api<Order>("/orders", {
+      const intent = JSON.stringify(["product", selectedTable.id, product.id, [...modifierIds].sort()])
+      const command = pendingCommands.current.prepare(
+        intent,
+        selectedOrder ? `/orders/${selectedOrder.id}/items` : "/orders",
+        selectedOrder
+          ? { items: payloadItems, auto_accept: false }
+          : { table_id: selectedTable.id, source: "CASHIER", items: payloadItems, auto_accept: false },
+      )
+      const updated = await api<Order>(command.path, {
         method: "POST",
-        body: JSON.stringify({
-          table_id: selectedTable.id,
-          source: "CASHIER",
-          items: payloadItems,
-          idempotency_key: crypto.randomUUID(),
-          auto_accept: false,
-        }),
+        body: command.body,
       })
+      pendingCommands.current.confirmed(intent)
+      return updated
     },
     onSuccess: (updatedOrder, { product }) => {
       toast.success(`${product.name} siparişe eklendi`)
@@ -886,16 +882,21 @@ export function CashierWorkspace() {
       if (paymentMethod === "ROOM_CHARGE" && !roomReference.trim()) {
         throw new Error("Oda numarası veya adı girin.")
       }
-      return api(`/orders/${selectedOrder.id}/payments`, {
-        method: "POST",
-        body: JSON.stringify({
+      const intent = JSON.stringify(["payment", selectedOrder.id, paymentMethod, paymentAmount, roomReference.trim()])
+      const command = pendingCommands.current.prepare(
+        intent, `/orders/${selectedOrder.id}/payments`, {
           method: paymentMethod,
           amount: paymentAmount,
-          idempotency_key: crypto.randomUUID(),
           reference:
             paymentMethod === "ROOM_CHARGE" ? roomReference.trim() : null,
-        }),
+        },
+      )
+      const payment = await api(command.path, {
+        method: "POST",
+        body: command.body,
       })
+      pendingCommands.current.confirmed(intent)
+      return payment
     },
     onSuccess: () => {
       toast.success("Ödeme kaydedildi", {

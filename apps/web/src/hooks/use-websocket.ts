@@ -249,6 +249,7 @@ export function useWebSocket<TMessage = unknown>({
       }
 
       socket.onmessage = (event: MessageEvent<string>) => {
+        if (disposed || connectionGeneration !== generationRef.current) return
         let message: TMessage
         try {
           message = callbacksRef.current.parseMessage
@@ -270,6 +271,7 @@ export function useWebSocket<TMessage = unknown>({
       }
 
       socket.onerror = (event) => {
+        if (disposed || connectionGeneration !== generationRef.current) return
         setStatus("error")
         callbacksRef.current.onError?.(event)
       }
@@ -278,7 +280,6 @@ export function useWebSocket<TMessage = unknown>({
         if (socketRef.current === socket) {
           socketRef.current = null
         }
-        callbacksRef.current.onClose?.(event)
 
         if (
           disposed ||
@@ -288,6 +289,7 @@ export function useWebSocket<TMessage = unknown>({
           return
         }
 
+        callbacksRef.current.onClose?.(event)
         scheduleReconnect()
       }
     }

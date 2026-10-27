@@ -312,7 +312,7 @@ function BranchEditor({
       timezone: branch.timezone,
       address: branch.address ?? "",
       phone: branch.phone ?? "",
-      service_charge_enabled: branch.service_charge_enabled,
+      service_charge_enabled: false,
       service_charge_type: branch.service_charge_type === "FIXED" ? "FIXED" : "PERCENTAGE",
       service_charge_value: Number(branch.service_charge_value ?? 0),
     },
@@ -478,10 +478,11 @@ function BranchFields({
         <div className="flex items-center justify-between gap-3">
           <div>
             <Label htmlFor="branch-service-charge">Kuver / servis ücreti</Label>
-            <p className="mt-1 text-xs text-muted-foreground">Yeni siparişlere şube bazlı snapshot olarak uygulanır.</p>
+            <p className="mt-1 text-xs text-muted-foreground">Türkiye’de restoran ve kafelerde zorunlu servis/kuver ücreti alınamaz. Yeni siparişlere eklenmez; geçmiş hesaplar korunur.</p>
           </div>
           <Switch
             id="branch-service-charge"
+            disabled
             checked={form.watch("service_charge_enabled")}
             onCheckedChange={(checked) =>
               form.setValue("service_charge_enabled", checked, { shouldDirty: true })
