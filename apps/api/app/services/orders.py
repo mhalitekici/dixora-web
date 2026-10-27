@@ -67,6 +67,7 @@ from app.schemas import (
 )
 from app.services.audit import add_audit_log
 from app.services.cashier_shifts import operator_cashier_name
+from app.services.idempotency import lock_command, request_fingerprint, require_same_request
 from app.services.inventory_units import convert_quantity
 from app.services.loyalty import accrue_paid_order, reverse_order_redemptions
 
@@ -165,12 +166,10 @@ async def _validated_modifier_map(
 
 
 def apply_branch_service_charge_snapshot(order: Order, branch: Branch) -> None:
-    if branch.service_charge_enabled and branch.service_charge_value > 0:
-        order.service_charge_type = branch.service_charge_type
-        order.service_charge_value = money(branch.service_charge_value)
-    else:
-        order.service_charge_type = None
-        order.service_charge_value = Decimal("0.00")
+    # Turkish restaurant policy, effective 2026-01-30. Only NEW orders use
+    # this snapshot; historical financial records retain their original totals.
+    order.service_charge_type = None
+    order.service_charge_value = Decimal("0.00")
     recalculate_order_totals(order)
 
 
@@ -532,6 +531,10 @@ async def create_order(
     payload: OrderCreate,
     source_override: OrderSource | None = None,
 ) -> tuple[Order, bool]:
+    await lock_command(db, tenant_id, "order-create", payload.idempotency_key)
+    command = payload.model_dump(mode="json", exclude={"idempotency_key"})
+    command["source"] = (source_override or payload.source).value
+    fingerprint = request_fingerprint(command)
     existing = (
         await db.execute(
             select(Order).where(
@@ -541,7 +544,29 @@ async def create_order(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        if existing.branch_id != branch_id:
+            raise DomainError("order_not_found", "Order not found", status_code=404)
+        require_same_request(existing.request_hash, fingerprint)
         return await load_order(db, tenant_id, existing.id), True
+
+    previous_append = (
+        await db.execute(
+            select(OrderOperation).where(
+                OrderOperation.tenant_id == tenant_id,
+                OrderOperation.idempotency_key == payload.idempotency_key,
+            )
+        )
+    ).scalar_one_or_none()
+    if previous_append is not None:
+        if previous_append.branch_id != branch_id:
+            raise DomainError("order_not_found", "Order not found", status_code=404)
+        previous_hash = previous_append.result.get("create_request_hash")
+        if previous_append.operation != "APPEND_ITEMS" or not isinstance(previous_hash, str):
+            raise DomainError(
+                "idempotency_conflict", "İşlem anahtarı zaten kullanılmış", status_code=409
+            )
+        require_same_request(previous_hash, fingerprint)
+        return await load_order(db, tenant_id, previous_append.order_id), True
 
     branch = await db.get(Branch, branch_id)
     if branch is None or branch.tenant_id != tenant_id:
@@ -583,6 +608,7 @@ async def create_order(
                 items=payload.items,
                 idempotency_key=payload.idempotency_key,
                 auto_accept=payload.auto_accept,
+                create_request_hash=fingerprint,
             )
             return order, False
 
@@ -630,6 +656,7 @@ async def create_order(
         customer_name=payload.customer_name,
         currency=tenant.default_currency,
         idempotency_key=payload.idempotency_key,
+        request_hash=fingerprint,
     )
     db.add(order)
     await db.flush()
@@ -724,7 +751,15 @@ async def append_order_items(
     items: list[OrderItemInput],
     idempotency_key: str,
     auto_accept: bool = True,
+    create_request_hash: str | None = None,
 ) -> tuple[Order, bool]:
+    await lock_command(db, tenant_id, "order-append", idempotency_key)
+    fingerprint = request_fingerprint(
+        {
+            "items": [item.model_dump(mode="json") for item in items],
+            "auto_accept": auto_accept,
+        }
+    )
     operation = (
         await db.execute(
             select(OrderOperation).where(
@@ -734,12 +769,14 @@ async def append_order_items(
         )
     ).scalar_one_or_none()
     if operation is not None:
-        if operation.order_id != order_id:
+        if operation.order_id != order_id or operation.operation != "APPEND_ITEMS":
             raise DomainError(
                 "idempotency_conflict",
                 "Idempotency key was used for a different order",
                 status_code=409,
             )
+        previous_hash = operation.result.get("request_hash")
+        require_same_request(previous_hash if isinstance(previous_hash, str) else None, fingerprint)
         return await load_order(db, tenant_id, order_id), True
     order = await load_order(db, tenant_id, order_id, lock=True)
     if order.status not in {
@@ -860,7 +897,11 @@ async def append_order_items(
         actor_user_id=actor_user_id,
         operation="APPEND_ITEMS",
         idempotency_key=idempotency_key,
-        result={"item_ids": [str(item.id) for item in new_items]},
+        result={
+            "item_ids": [str(item.id) for item in new_items],
+            "request_hash": fingerprint,
+            "create_request_hash": create_request_hash,
+        },
     )
     db.add(operation)
     order.version += 1
@@ -1583,6 +1624,7 @@ async def add_payment(
     actor_user_id: UUID,
     shift_id: UUID | None = None,
 ) -> Payment:
+    await lock_command(db, order.tenant_id, "payment", payload.idempotency_key)
     existing = (
         await db.execute(
             select(Payment).where(
@@ -1592,6 +1634,18 @@ async def add_payment(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        if (
+            existing.order_id != order.id
+            or existing.branch_id != order.branch_id
+            or existing.method != payload.method
+            or existing.amount != payload.amount
+            or existing.reference != payload.reference
+        ):
+            raise DomainError(
+                "idempotency_conflict",
+                "Ödeme anahtarı farklı bir tahsilat için kullanılmış",
+                status_code=409,
+            )
         return existing
     if order.status in {OrderStatus.CANCELLED, OrderStatus.VOIDED}:
         raise DomainError("order_not_payable", "Order cannot be paid", status_code=409)

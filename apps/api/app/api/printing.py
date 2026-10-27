@@ -71,7 +71,9 @@ from app.schemas import (
 from app.security import as_utc
 from app.services.audit import add_audit_log
 from app.services.cashier_shifts import current_operator_shift, receipt_cashier_names
+from app.services.idempotency import lock_command, request_fingerprint, require_same_request
 from app.services.orders import (
+    _station_printer_id,
     load_order,
     mark_order_bill_requested,
     order_bill_reference,
@@ -420,6 +422,75 @@ async def list_print_jobs(
     return [PrintJobOut.model_validate(job) for job in jobs]
 
 
+@router.get("/health")
+async def printing_health(identity: PrintReader, db: DbSession) -> dict[str, object]:
+    tenant_id, branch_id = require_tenant(identity), require_branch(identity)
+    scope = [PrintJob.tenant_id == tenant_id, PrintJob.branch_id == branch_id]
+    failed = (
+        await db.execute(
+            select(func.count(PrintJob.id)).where(
+                *scope,
+                PrintJob.status == PrintJobStatus.FAILED,
+            )
+        )
+    ).scalar_one()
+    unfinished = [PrintJobStatus.PENDING, PrintJobStatus.CLAIMED, PrintJobStatus.SENT]
+    oldest = (
+        await db.execute(
+            select(func.min(PrintJob.created_at)).where(
+                *scope,
+                PrintJob.status.in_(unfinished),
+            )
+        )
+    ).scalar_one()
+    unrouted = (
+        await db.execute(
+            select(func.count(PrintJob.id)).where(
+                *scope,
+                PrintJob.status.in_(unfinished),
+                PrintJob.printer_device_id.is_(None),
+            )
+        )
+    ).scalar_one()
+    now = datetime.now(UTC)
+    active_scope = [
+        PrintBridgeClient.tenant_id == tenant_id,
+        PrintBridgeClient.branch_id == branch_id,
+        PrintBridgeClient.is_active.is_(True),
+    ]
+    active = (
+        await db.execute(
+            select(func.count(PrintBridgeClient.id)).where(
+                *active_scope,
+            )
+        )
+    ).scalar_one()
+    online = (
+        await db.execute(
+            select(func.count(PrintBridgeClient.id)).where(
+                *active_scope,
+                PrintBridgeClient.last_seen_at
+                >= now - timedelta(seconds=BRIDGE_ONLINE_WINDOW_SECONDS),
+            )
+        )
+    ).scalar_one()
+    age = max(0.0, (now - as_utc(oldest)).total_seconds()) if oldest is not None else 0.0
+    return {
+        "status": (
+            "not_configured"
+            if not active
+            else "degraded"
+            if failed or unrouted or active > online or age > 120
+            else "ok"
+        ),
+        "configured_bridges": active,
+        "failed_jobs": failed,
+        "unrouted_jobs": unrouted,
+        "oldest_pending_seconds": round(age, 1),
+        "offline_bridges": active - online,
+    }
+
+
 @router.post("/jobs/{job_id}/retry", response_model=PrintJobOut)
 async def retry_manual_print_job(
     job_id: UUID,
@@ -452,10 +523,7 @@ async def retry_manual_print_job(
         )
     job.status = PrintJobStatus.PENDING
     previous_attempt_count = job.attempt_count
-    # Only an exhausted job needs a fresh retry cycle. Keeping the counter for
-    # earlier uncertain failures preserves the existing attempt history.
-    if job.attempt_count >= 5:
-        job.attempt_count = 0
+    # This is also the acknowledgement identity: never reuse an old attempt.
     job.manual_retry_required = False
     job.claimed_by_bridge_id = None
     job.claimed_at = None
@@ -878,6 +946,8 @@ async def create_print_job(
 ) -> PrintJobOut:
     tenant_id = require_tenant(identity)
     branch_id = require_branch(identity)
+    await lock_command(db, tenant_id, "print-create", payload.idempotency_key)
+    fingerprint = request_fingerprint(payload.model_dump(mode="json", exclude={"idempotency_key"}))
     existing = (
         await db.execute(
             select(PrintJob).where(
@@ -887,6 +957,10 @@ async def create_print_job(
         )
     ).scalar_one_or_none()
     if existing is not None:
+        if existing.branch_id != branch_id:
+            raise DomainError("print_job_not_found", "Print job not found", status_code=404)
+        require_record_branch(identity, existing.branch_id)
+        require_same_request(existing.request_hash, fingerprint)
         return PrintJobOut.model_validate(existing)
     await _validate_print_references(
         db,
@@ -940,6 +1014,7 @@ async def create_print_job(
         payload=job_payload,
         kind=payload.kind,
         idempotency_key=payload.idempotency_key,
+        request_hash=fingerprint,
     )
     db.add(job)
     await db.flush()
@@ -1556,9 +1631,46 @@ async def claim_print_job(
             status_code=422,
         )
     now = datetime.now(UTC)
-    # A fifth lease expiry used to leave the row in CLAIMED/SENT forever:
-    # `attempt_count < 5` correctly excluded it from another automatic claim,
-    # but nothing moved it into an operator-actionable terminal state.
+    # Jobs created while an installation uses the kitchen display may have no
+    # printer yet. Repair ONLY unattempted station jobs after routing is fixed.
+    unrouted = (
+        (
+            await db.execute(
+                select(PrintJob)
+                .where(
+                    PrintJob.tenant_id == bridge.tenant_id,
+                    PrintJob.branch_id == bridge.branch_id,
+                    PrintJob.printer_device_id.is_(None),
+                    PrintJob.preparation_station_id.is_not(None),
+                    PrintJob.status == PrintJobStatus.PENDING,
+                    PrintJob.attempt_count == 0,
+                )
+                .order_by(PrintJob.created_at)
+                .limit(100)
+                .with_for_update(skip_locked=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for pending_job in unrouted:
+        assert pending_job.preparation_station_id is not None
+        destination = await _station_printer_id(
+            db,
+            tenant_id=bridge.tenant_id,
+            branch_id=bridge.branch_id,
+            station_id=pending_job.preparation_station_id,
+        )
+        if destination is not None:
+            pending_job.printer_device_id = destination
+            pending_job.last_error = None
+    if unrouted:
+        await db.flush()
+    if unrouted:
+        await db.commit()
+    # An expired lease cannot prove the previous process never reached the
+    # printer. Preserve its owner/attempt so its journal can still acknowledge
+    # the result, but require an operator before another physical dispatch.
     exhausted_jobs = (
         (
             await db.execute(
@@ -1569,7 +1681,6 @@ async def claim_print_job(
                     PrintJob.status.in_([PrintJobStatus.CLAIMED, PrintJobStatus.SENT]),
                     PrintJob.lease_expires_at.is_not(None),
                     PrintJob.lease_expires_at < now,
-                    PrintJob.attempt_count >= 5,
                     PrintJob.manual_retry_required.is_(False),
                 )
                 .with_for_update(skip_locked=True)
@@ -1583,25 +1694,20 @@ async def claim_print_job(
         exhausted_job.manual_retry_required = True
         exhausted_job.lease_expires_at = None
         exhausted_job.last_error = (
-            "Maximum automatic print attempts reached; operator retry required"
+            "Yazdırma sonucu belirsiz; fiziksel çıktıyı kontrol edip yeniden deneyin"
         )
     if exhausted_jobs:
         await db.commit()
 
-    # Eligible to claim: the ordinary PENDING/FAILED pool, plus any job whose
-    # lease has lapsed — a bridge that claimed it and then crashed or lost its
-    # connection before acknowledging never gets to hold a job forever.
-    lease_expired = PrintJob.lease_expires_at.is_not(None) & (PrintJob.lease_expires_at < now)
     base_predicates = [
         PrintJob.tenant_id == bridge.tenant_id,
         PrintJob.branch_id == bridge.branch_id,
         PrinterDevice.is_active.is_(True),
         or_(
-            PrintJob.status.in_([PrintJobStatus.PENDING, PrintJobStatus.FAILED]),
-            lease_expired,
+            PrintJob.status == PrintJobStatus.PENDING,
+            (PrintJob.status == PrintJobStatus.FAILED) & (PrintJob.attempt_count < 5),
         ),
         PrintJob.manual_retry_required.is_(False),
-        PrintJob.attempt_count < 5,
     ]
     if requested_codes:
         base_predicates.append(PrinterDevice.code.in_(requested_codes))
@@ -1712,6 +1818,15 @@ async def update_bridge_job(
             )
         ).scalar_one_or_none()
         if acknowledgement is not None:
+            if acknowledgement.attempt_count != job.attempt_count or (
+                payload.attempt_count is not None
+                and acknowledgement.attempt_count != payload.attempt_count
+            ):
+                raise DomainError(
+                    "stale_print_job_attempt",
+                    "Print acknowledgement belongs to an old attempt",
+                    status_code=409,
+                )
             if (
                 acknowledgement.print_job_id != job.id
                 or acknowledgement.bridge_id != bridge.id
@@ -1750,7 +1865,13 @@ async def update_bridge_job(
             PrintJobStatus.FAILED,
         },
         PrintJobStatus.SENT: {PrintJobStatus.PRINTED, PrintJobStatus.FAILED},
-        PrintJobStatus.FAILED: {PrintJobStatus.CLAIMED, PrintJobStatus.CANCELLED},
+        # A late acknowledgement from the SAME owner/attempt can resolve a
+        # quarantined lease. It never authorizes another physical dispatch.
+        PrintJobStatus.FAILED: {
+            PrintJobStatus.CLAIMED,
+            PrintJobStatus.CANCELLED,
+            PrintJobStatus.PRINTED,
+        },
     }
     if payload.status != job.status and payload.status not in allowed.get(job.status, set()):
         raise DomainError(

@@ -62,12 +62,20 @@ logger = logging.getLogger(__name__)
 def register_error_handlers(app: FastAPI) -> None:
     @app.exception_handler(DomainError)
     async def domain_error_handler(request: Request, exc: DomainError) -> JSONResponse:
+        route = getattr(request.scope.get("route"), "path", "unknown")
+        if exc.status_code >= 400 and any(
+            segment in route for segment in ("/orders", "/printing", "/qr/")
+        ):
+            logger.warning(
+                "operation.rejected code=%s route=%s request_id=%s",
+                exc.code,
+                route,
+                getattr(request.state, "request_id", None),
+            )
         if exc.status_code == 401:
             # Authentication rejections are worth a trace: without the specific
             # code, every one of them looks alike from the outside.
-            logger.warning(
-                "auth.rejected code=%s path=%s", exc.code, request.url.path
-            )
+            logger.warning("auth.rejected code=%s path=%s", exc.code, request.url.path)
         return JSONResponse(
             status_code=exc.status_code,
             content=error_payload(request, exc.code, exc.message, exc.details),
@@ -95,5 +103,21 @@ def register_error_handlers(app: FastAPI) -> None:
                 request,
                 "conflict",
                 "The operation conflicts with existing data",
+            ),
+        )
+
+    @app.exception_handler(Exception)
+    async def unexpected_error_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.error(
+            "request.unhandled type=%s route=%s request_id=%s",
+            type(exc).__name__,
+            getattr(request.scope.get("route"), "path", "unknown"),
+            getattr(request.state, "request_id", None),
+        )
+        return JSONResponse(
+            status_code=500,
+            headers={"X-Request-ID": getattr(request.state, "request_id", "unknown")},
+            content=error_payload(
+                request, "internal_error", "İşlem tamamlanamadı. Sonucu kontrol edin."
             ),
         )

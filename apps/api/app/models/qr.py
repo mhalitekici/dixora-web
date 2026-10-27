@@ -72,6 +72,7 @@ class QrOrderRequest(UUIDPrimaryKeyMixin, TimestampMixin, Base):
         index=True,
     )
     idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     session_nonce_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     items_payload: Mapped[list[dict[str, object]]] = mapped_column(JSON, nullable=False)
     customer_note: Mapped[str | None] = mapped_column(Text, nullable=True)

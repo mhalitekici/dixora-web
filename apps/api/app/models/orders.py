@@ -85,6 +85,7 @@ class Order(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     total: Mapped[Decimal] = mapped_column(MONEY, default=ZERO_MONEY, nullable=False)
     idempotency_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     version: Mapped[int] = mapped_column(default=1, nullable=False)
     submitted_at: Mapped[datetime | None] = mapped_column(nullable=True)
     accepted_at: Mapped[datetime | None] = mapped_column(nullable=True)

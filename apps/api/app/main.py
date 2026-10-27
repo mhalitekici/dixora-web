@@ -4,7 +4,7 @@ import asyncio
 import time
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager, suppress
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -109,15 +109,23 @@ def create_app(
     ) -> Response:
         started = time.perf_counter()
         incoming_id = request.headers.get("x-request-id", "")
-        request_id = incoming_id[:100] if incoming_id and incoming_id.isprintable() else uuid4().hex
+        try:
+            request_id = UUID(incoming_id).hex
+        except ValueError:
+            request_id = uuid4().hex
         request.state.request_id = request_id
         bind_request_context(
             request_id=request_id,
             method=request.method,
-            path=request.url.path,
+            path="unmatched",
         )
         response = await call_next(request)
         response.headers["X-Request-ID"] = request_id
+        bind_request_context(
+            request_id=request_id,
+            method=request.method,
+            path=getattr(request.scope.get("route"), "path", "unmatched"),
+        )
         logger.info(
             "http.request",
             status_code=response.status_code,

@@ -22,11 +22,10 @@ from tests.test_orders import _create_burger_order
 DEV_BRIDGE_HEADERS = {"X-Print-Bridge-Token": "pb_dev_dixora_lab_bridge_2026"}
 
 
-async def test_a_lease_expires_and_the_job_becomes_reclaimable(
+async def test_expired_lease_requires_operator_instead_of_automatic_physical_retry(
     api: ApiContext,
 ) -> None:
-    """A bridge that claims a job and then vanishes (crash, dead network) must
-    not leave that job stuck forever — the lease has to lapse and give it back."""
+    """A lost bridge may already have printed; never guess by re-dispatching."""
     tokens = await login(api)
     headers = auth_headers(tokens)
     devices = await api.client.get("/api/v1/printing/devices", headers=headers)
@@ -75,11 +74,25 @@ async def test_a_lease_expires_and_the_job_becomes_reclaimable(
         params={"printer_codes": "MOCK-KITCHEN"},
     )
     assert reclaimed.status_code == 200, reclaimed.text
-    assert reclaimed.json()["id"] == job_id
-    assert reclaimed.json()["attempt_count"] == 2
+    assert reclaimed.json() is None
+    async with api.database.session_factory() as db:
+        job = await db.get(PrintJob, UUID(job_id))
+        assert job is not None and job.manual_retry_required
+        assert job.status == PrintJobStatus.FAILED
+        assert job.attempt_count == 1
+    # Its existing journal may still resolve the original attempt without a
+    # second physical send, even after another agent noticed the expiry.
+    recovered = await api.client.patch(
+        f"/api/v1/printing/bridge/jobs/{job_id}",
+        headers={**DEV_BRIDGE_HEADERS, "Idempotency-Key": "late-printed-lease-0001"},
+        json={"status": "PRINTED", "attempt_count": 1},
+    )
+    assert recovered.status_code == 200, recovered.text
+    assert recovered.json()["status"] == "PRINTED"
+    assert recovered.json()["manual_retry_required"] is False
 
 
-async def test_exhausted_lease_requires_operator_and_retry_starts_a_new_cycle(
+async def test_exhausted_lease_retry_keeps_monotonic_acknowledgement_identity(
     api: ApiContext,
 ) -> None:
     tokens = await login(api)
@@ -122,11 +135,9 @@ async def test_exhausted_lease_requires_operator_and_retry_starts_a_new_cycle(
         assert exhausted.manual_retry_required is True
         assert exhausted.lease_expires_at is None
 
-    released = await api.client.post(
-        f"/api/v1/printing/jobs/{job_id}/retry", headers=headers
-    )
+    released = await api.client.post(f"/api/v1/printing/jobs/{job_id}/retry", headers=headers)
     assert released.status_code == 200, released.text
-    assert released.json()["attempt_count"] == 0
+    assert released.json()["attempt_count"] == 5
 
     reclaimed = await api.client.post(
         "/api/v1/printing/bridge/claim",
@@ -135,7 +146,7 @@ async def test_exhausted_lease_requires_operator_and_retry_starts_a_new_cycle(
     )
     assert reclaimed.status_code == 200, reclaimed.text
     assert reclaimed.json()["id"] == job_id
-    assert reclaimed.json()["attempt_count"] == 1
+    assert reclaimed.json()["attempt_count"] == 6
 
 
 async def test_printed_clears_the_lease_and_sent_extends_it(api: ApiContext) -> None:
@@ -255,9 +266,7 @@ async def test_an_expired_enrollment_code_is_rejected(api: ApiContext) -> None:
     from app.models import PrintBridgeEnrollmentCode
 
     async with api.database.session_factory() as db:
-        record = (
-            await db.execute(select(PrintBridgeEnrollmentCode))
-        ).scalars().first()
+        record = (await db.execute(select(PrintBridgeEnrollmentCode))).scalars().first()
         assert record is not None
         record.expires_at = datetime.now(UTC) - timedelta(minutes=1)
         await db.commit()
@@ -388,9 +397,7 @@ async def test_scoped_bridge_claims_only_its_server_mapped_printer(
     assert legacy_claim.status_code == 200
     assert legacy_claim.json() is None
 
-    scoped_claim = await api.client.post(
-        "/api/v1/printing/bridge/claim", headers=scoped_headers
-    )
+    scoped_claim = await api.client.post("/api/v1/printing/bridge/claim", headers=scoped_headers)
     assert scoped_claim.status_code == 200, scoped_claim.text
     assert scoped_claim.json()["id"] == created.json()["id"]
     assert scoped_claim.json()["printer_code"] == "MOCK-KITCHEN"
@@ -443,9 +450,7 @@ async def test_uncertain_print_requires_explicit_manager_retry(api: ApiContext) 
     assert blocked.status_code == 200
     assert blocked.json() is None
 
-    released = await api.client.post(
-        f"/api/v1/printing/jobs/{job_id}/retry", headers=headers
-    )
+    released = await api.client.post(f"/api/v1/printing/jobs/{job_id}/retry", headers=headers)
     assert released.status_code == 200, released.text
     assert released.json()["status"] == "PENDING"
     assert released.json()["manual_retry_required"] is False
@@ -464,9 +469,7 @@ async def test_a_bridge_that_stops_calling_in_shows_as_offline(api: ApiContext) 
     tokens = await login(api)
     headers = auth_headers(tokens)
     async with api.database.session_factory() as db:
-        bridge = (
-            await db.execute(select(PrintBridgeClient))
-        ).scalars().first()
+        bridge = (await db.execute(select(PrintBridgeClient))).scalars().first()
         assert bridge is not None
         bridge.last_seen_at = datetime.now(UTC) - timedelta(minutes=5)
         await db.commit()
@@ -482,9 +485,7 @@ async def test_revoked_bridge_can_no_longer_claim_or_heartbeat(api: ApiContext) 
     bridges = await api.client.get("/api/v1/printing/bridges", headers=headers)
     bridge_id = bridges.json()[0]["id"]
 
-    revoked = await api.client.post(
-        f"/api/v1/printing/bridges/{bridge_id}/revoke", headers=headers
-    )
+    revoked = await api.client.post(f"/api/v1/printing/bridges/{bridge_id}/revoke", headers=headers)
     assert revoked.status_code == 200, revoked.text
     assert revoked.json()["is_active"] is False
     assert revoked.json()["is_online"] is False
@@ -515,9 +516,7 @@ async def test_platform_summary_counts_bridges_across_the_whole_platform(
     )
     headers = auth_headers(super_admin)
 
-    summary = await api.client.get(
-        "/api/v1/printing/platform/bridges/summary", headers=headers
-    )
+    summary = await api.client.get("/api/v1/printing/platform/bridges/summary", headers=headers)
     assert summary.status_code == 200, summary.text
     body = summary.json()
     assert body["total_bridges"] >= 1
@@ -529,9 +528,7 @@ async def test_platform_summary_is_refused_without_platform_permission(
 ) -> None:
     tokens = await login(api)
     headers = auth_headers(tokens)
-    response = await api.client.get(
-        "/api/v1/printing/platform/bridges/summary", headers=headers
-    )
+    response = await api.client.get("/api/v1/printing/platform/bridges/summary", headers=headers)
     assert response.status_code == 403
 
 
