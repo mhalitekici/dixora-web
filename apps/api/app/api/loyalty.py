@@ -577,6 +577,10 @@ async def list_rewards(
             membership_code=membership.lookup_code,
             program_name=program.name,
             status=reward.status,
+            expires_at=reward.expires_at,
+            is_expired=reward.status == LoyaltyRewardStatus.AVAILABLE
+            and reward.expires_at is not None
+            and as_utc(reward.expires_at) <= utcnow(),
             issued_at=reward.issued_at,
             redeemed_at=reward.redeemed_at,
         )

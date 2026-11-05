@@ -12,6 +12,7 @@ from sqlalchemy.orm import selectinload
 from app.config import Settings
 from app.errors import DomainError
 from app.models import AuditLog, Role, User, UserBranchMembership
+from app.rbac import effective_permission_codes
 from app.security import utcnow, verify_password
 from app.services.audit import add_audit_log
 
@@ -68,7 +69,11 @@ async def verify_staff_pin(
         )
     ).scalar_one_or_none()
     valid_pin = bool(
-        user and user.is_active and user.pin_hash and verify_password(pin, user.pin_hash)
+        user
+        and user.is_active
+        and user.role.is_active
+        and user.pin_hash
+        and verify_password(pin, user.pin_hash)
     )
     if not valid_pin:
         add_audit_log(
@@ -87,7 +92,7 @@ async def verify_staff_pin(
         raise DomainError("invalid_credentials", "Invalid username or PIN", status_code=401)
 
     assert user is not None
-    permission_codes = {item.code for item in user.role.permissions}
+    permission_codes = effective_permission_codes(user.role)
     if permission not in permission_codes and "*" not in permission_codes:
         raise DomainError(
             "staff_permission_required",

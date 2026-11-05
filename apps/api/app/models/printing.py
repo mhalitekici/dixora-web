@@ -3,7 +3,18 @@ from __future__ import annotations
 from datetime import date, datetime
 from uuid import UUID
 
-from sqlalchemy import JSON, Boolean, Date, ForeignKey, Integer, String, Text, UniqueConstraint
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    Date,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+    text,
+)
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models.base import Base, TimestampMixin, UUIDPrimaryKeyMixin
@@ -87,7 +98,15 @@ class PrintBridgeClient(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     __tablename__ = "print_bridge_clients"
     __table_args__ = (
         UniqueConstraint("token_hash", name="uq_print_bridge_token_hash"),
-        UniqueConstraint("tenant_id", "branch_id", "name", name="uq_print_bridge_scope_name"),
+        Index(
+            "uq_print_bridge_active_name",
+            "tenant_id",
+            "branch_id",
+            "name",
+            unique=True,
+            postgresql_where=text("is_active"),
+            sqlite_where=text("is_active = 1"),
+        ),
     )
 
     tenant_id: Mapped[UUID] = mapped_column(

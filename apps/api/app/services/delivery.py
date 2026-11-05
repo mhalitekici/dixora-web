@@ -21,6 +21,7 @@ from app.models.enums import (
 )
 from app.schemas import OrderCreate, OrderItemInput
 from app.security import utcnow
+from app.services.idempotency import request_fingerprint, require_same_request
 from app.services.orders import accept_order, create_order
 
 logger = logging.getLogger(__name__)
@@ -35,15 +36,11 @@ ALLOWED_TRANSITIONS: dict[DeliveryStatus, frozenset[DeliveryStatus]] = {
     DeliveryStatus.ACCEPTED: frozenset(
         {DeliveryStatus.PREPARING, DeliveryStatus.READY, DeliveryStatus.CANCELLED}
     ),
-    DeliveryStatus.PREPARING: frozenset(
-        {DeliveryStatus.READY, DeliveryStatus.CANCELLED}
-    ),
+    DeliveryStatus.PREPARING: frozenset({DeliveryStatus.READY, DeliveryStatus.CANCELLED}),
     DeliveryStatus.READY: frozenset(
         {DeliveryStatus.DISPATCHED, DeliveryStatus.DELIVERED, DeliveryStatus.CANCELLED}
     ),
-    DeliveryStatus.DISPATCHED: frozenset(
-        {DeliveryStatus.DELIVERED, DeliveryStatus.CANCELLED}
-    ),
+    DeliveryStatus.DISPATCHED: frozenset({DeliveryStatus.DELIVERED, DeliveryStatus.CANCELLED}),
     # Terminal.
     DeliveryStatus.DELIVERED: frozenset(),
     DeliveryStatus.CANCELLED: frozenset(),
@@ -117,6 +114,7 @@ async def create_delivery_order(
     customer_name: str | None,
     customer_phone: str | None,
     address_line: str | None = None,
+    city: str | None = None,
     district: str | None = None,
     neighbourhood: str | None = None,
     address_note: str | None = None,
@@ -134,6 +132,24 @@ async def create_delivery_order(
     existing external order, which is how duplicate provider webhooks stay
     harmless.
     """
+    fingerprint = request_fingerprint(
+        {
+            "branch_id": str(branch_id),
+            "channel": channel.value,
+            "items": [item.model_dump(mode="json") for item in items],
+            "customer_name": customer_name,
+            "customer_phone": customer_phone,
+            "city": city,
+            "district": district,
+            "neighbourhood": neighbourhood,
+            "address_line": address_line,
+            "address_note": address_note,
+            "customer_note": customer_note,
+            "payment_method": str(payment_method),
+            "payment_status": str(payment_status),
+            "auto_accept": auto_accept,
+        }
+    )
     if provider is not None and external_order_id:
         existing = await find_by_external_id(
             db,
@@ -142,6 +158,10 @@ async def create_delivery_order(
             external_order_id=external_order_id,
         )
         if existing is not None:
+            if existing.branch_id != branch_id:
+                raise DomainError(
+                    "delivery_order_not_found", "Sipariş bulunamadı.", status_code=404
+                )
             order = (
                 await db.execute(select(Order).where(Order.id == existing.order_id))
             ).scalar_one()
@@ -173,11 +193,10 @@ async def create_delivery_order(
         # already exists. Creating a second one would violate the one-to-one
         # constraint and turn a harmless retry into a 409.
         existing_delivery = (
-            await db.execute(
-                select(DeliveryOrder).where(DeliveryOrder.order_id == order.id)
-            )
+            await db.execute(select(DeliveryOrder).where(DeliveryOrder.order_id == order.id))
         ).scalar_one_or_none()
         if existing_delivery is not None:
+            require_same_request(existing_delivery.request_hash, fingerprint)
             return existing_delivery, order, True
 
     delivery = DeliveryOrder(
@@ -200,6 +219,8 @@ async def create_delivery_order(
         customer_name=customer_name,
         customer_phone=customer_phone,
         address_line=address_line,
+        city=city,
+        request_hash=fingerprint,
         district=district,
         neighbourhood=neighbourhood,
         address_note=address_note,
@@ -226,9 +247,7 @@ async def accept_delivery_order(
     delivery.accepted_at = utcnow()
     delivery.promised_minutes = promised_minutes
 
-    order = (
-        await db.execute(select(Order).where(Order.id == delivery.order_id))
-    ).scalar_one()
+    order = (await db.execute(select(Order).where(Order.id == delivery.order_id))).scalar_one()
     if order.status in {OrderStatus.DRAFT, OrderStatus.SUBMITTED}:
         # Route it into the kitchen through the existing acceptance path so
         # tickets and stock behave identically to an in-house order.

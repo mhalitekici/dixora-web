@@ -142,20 +142,35 @@ async def shift_history(
     identity: ShiftReader,
     db: DbSession,
     user_id: UUID | None = None,
+    employee: str | None = Query(default=None, max_length=160),
     branch_id: UUID | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
     date_from: date | None = None,
     date_to: date | None = None,
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> list[ShiftOut]:
     predicates = [
         CashierShift.tenant_id == require_tenant(identity),
         CashierShift.branch_id == require_branch(identity, branch_id),
     ]
-    if identity.role == "CASHIER":
+    if identity.operational_profile == "CASHIER":
         predicates.append(CashierShift.user_id == identity.user_id)
     elif user_id:
         predicates.append(CashierShift.user_id == user_id)
+    if employee:
+        predicates.append(
+            CashierShift.user_id.in_(
+                select(User.id).where(
+                    User.tenant_id == require_tenant(identity),
+                    User.display_name.icontains(employee, autoescape=True),
+                )
+            )
+        )
+    if date_from and date_to and date_from > date_to:
+        raise DomainError(
+            "invalid_report_range", "Başlangıç tarihi bitişten sonra olamaz.", status_code=422
+        )
     if status_filter:
         predicates.append(CashierShift.status == status_filter.upper())
     if date_from:
@@ -167,8 +182,9 @@ async def shift_history(
             await db.execute(
                 select(CashierShift)
                 .where(*predicates)
-                .order_by(CashierShift.opened_at.desc())
+                .order_by(CashierShift.opened_at.desc(), CashierShift.id.desc())
                 .limit(limit)
+                .offset(offset)
             )
         )
         .scalars()
@@ -611,6 +627,7 @@ async def day_history(
     date_from: date | None = None,
     date_to: date | None = None,
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> list[BusinessDayCloseOut]:
     predicates = [
         BusinessDayClose.tenant_id == require_tenant(identity),
@@ -627,6 +644,7 @@ async def day_history(
                 .where(*predicates)
                 .order_by(BusinessDayClose.business_date.desc())
                 .limit(limit)
+                .offset(offset)
             )
         )
         .scalars()
@@ -674,7 +692,9 @@ async def shift_detail(shift_id: UUID, identity: ShiftReader, db: DbSession) -> 
             )
         )
     ).scalar_one_or_none()
-    if shift is None or (identity.role == "CASHIER" and shift.user_id != identity.user_id):
+    if shift is None or (
+        identity.operational_profile == "CASHIER" and shift.user_id != identity.user_id
+    ):
         raise DomainError("shift_not_found", "Shift not found", status_code=404)
     ids = {shift.user_id} | ({shift.closed_by_user_id} if shift.closed_by_user_id else set())
     return _out(shift, await _names(db, require_tenant(identity), ids))

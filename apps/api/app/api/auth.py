@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import hashlib
 from datetime import UTC, datetime, timedelta
+from typing import Literal
 from uuid import UUID, uuid4
 
 import jwt
 from fastapi import APIRouter, Depends, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -21,13 +23,14 @@ from app.models import (
     AuditLog,
     AuthSession,
     Branch,
+    OperationGrant,
     RealtimeTicket,
     Role,
     Tenant,
     TrustedDevice,
     User,
 )
-from app.rbac import effective_permission_codes
+from app.rbac import authority_hash, effective_permission_codes, operational_profile
 from app.schemas import (
     AccessibleBranchesOut,
     AuthResponse,
@@ -56,9 +59,154 @@ from app.security import (
     verify_password,
 )
 from app.services.audit import add_audit_log
+from app.services.branch_access import resolve_accessible_branches
 from app.services.subscriptions import enforce_trial_expiry, tenant_access_blocked
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+
+
+class OperationAuthorization(BaseModel):
+    username: str = Field(min_length=1, max_length=255)
+    password: str = Field(min_length=1, max_length=512)
+    panel: Literal["waiter", "cashier"]
+
+
+@router.post("/operation-grant")
+async def authorize_operation_panel(
+    payload: OperationAuthorization,
+    identity: CurrentIdentity,
+    db: DbSession,
+    request: Request,
+    settings: Settings = Depends(get_app_settings),
+) -> dict[str, object]:
+    if (
+        identity.operational_profile
+        not in {"BUSINESS_OWNER", "BUSINESS_ADMIN", "BUSINESS_MANAGER", "MANAGEMENT"}
+        or identity.tenant_id is None
+        or identity.branch_id is None
+    ):
+        raise DomainError(
+            "operation_grant_forbidden", "Yetkili panel girişine erişiminiz yok.", status_code=403
+        )
+    needed = "payments.manage" if payload.panel == "cashier" else "orders.create"
+    if needed not in identity.permissions:
+        raise DomainError("permission_denied", "Seçilen panel için yetkiniz yok.", status_code=403)
+    key = _credential_key("operation", str(identity.user_id), str(identity.session_id))
+    ip = request.client.host if request.client else None
+    await _enforce_login_rate_limit(
+        db, settings, action="auth.operation_failed", credential_key=key, ip_address=ip
+    )
+    user = (
+        await db.execute(
+            select(User)
+            .where(User.id == identity.user_id)
+            .options(selectinload(User.role).selectinload(Role.permissions))
+        )
+    ).scalar_one()
+    own_name = payload.username.strip().lower() in {
+        user.username.lower(),
+        (user.email or "").lower(),
+    }
+    password_valid = verify_password(payload.password, user.password_hash)
+    if not own_name or not password_valid:
+        add_audit_log(
+            db,
+            identity=identity,
+            action="auth.operation_failed",
+            resource_type="user",
+            resource_id=identity.user_id,
+            reason=key,
+            ip_address=ip,
+            new_value={"panel": payload.panel, "result": "denied"},
+        )
+        await db.commit()
+        raise DomainError(
+            "invalid_credentials",
+            "Kendi kullanıcı adınızı ve parolanızı doğrulayın.",
+            status_code=403,
+        )
+    await db.execute(
+        select(AuthSession.id).where(AuthSession.id == identity.session_id).with_for_update()
+    )
+    previous = (
+        (
+            await db.execute(
+                select(OperationGrant)
+                .where(
+                    OperationGrant.auth_session_id == identity.session_id,
+                    OperationGrant.revoked_at.is_(None),
+                )
+                .with_for_update()
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for grant in previous:
+        grant.revoked_at = utcnow()
+    expires = utcnow() + timedelta(minutes=10)
+    grant = OperationGrant(
+        tenant_id=identity.tenant_id,
+        branch_id=identity.branch_id,
+        user_id=identity.user_id,
+        auth_session_id=identity.session_id,
+        token_family=identity.token_family,
+        panel=payload.panel,
+        authority_hash=authority_hash(user.role),
+        expires_at=expires,
+    )
+    db.add(grant)
+    add_audit_log(
+        db,
+        identity=identity,
+        action="auth.operation_switched" if previous else "auth.operation_entered",
+        resource_type="user",
+        resource_id=identity.user_id,
+        new_value={"panel": payload.panel, "mode": "support", "expires_at": expires.isoformat()},
+    )
+    await db.commit()
+    return {"panel": payload.panel, "mode": "support", "expires_at": expires.isoformat()}
+
+
+@router.get("/operation-access")
+async def operation_panel_access(
+    panel: Literal["waiter", "cashier"],
+    identity: CurrentIdentity,
+) -> dict[str, object]:
+    profile = identity.operational_profile
+    needed = "payments.manage" if panel == "cashier" else "orders.create"
+    if needed not in identity.permissions:
+        raise DomainError("permission_denied", "Panel erişiminiz yok.", status_code=403)
+    if profile == panel.upper():
+        return {"panel": panel, "mode": "staff"}
+    if identity.operation_panel != panel:
+        raise DomainError(
+            "operation_reauthentication_required",
+            "Paneller sayfasından kendi parolanızla yetkili giriş yapın.",
+            status_code=403,
+        )
+    return {"panel": panel, "mode": "support"}
+
+
+@router.delete("/operation-grant", status_code=204)
+async def leave_operation_panel(identity: CurrentIdentity, db: DbSession) -> None:
+    await db.execute(
+        update(OperationGrant)
+        .where(
+            OperationGrant.auth_session_id == identity.session_id,
+            OperationGrant.revoked_at.is_(None),
+        )
+        .values(revoked_at=utcnow())
+    )
+    add_audit_log(
+        db,
+        identity=identity,
+        action="auth.operation_exited",
+        resource_type="user",
+        resource_id=identity.user_id,
+        new_value={"panel": identity.operation_panel},
+    )
+    await db.commit()
 
 
 def _credential_key(prefix: str, business: str | None, username: str) -> str:
@@ -110,6 +258,7 @@ async def user_payload(
         email=user.email,
         display_name=user.display_name,
         role=user.role.code,
+        operational_profile=operational_profile(user.role),
         permissions=sorted(effective_permission_codes(user.role)),
         is_super_admin=user.is_super_admin,
         tenant=(
@@ -187,18 +336,10 @@ async def _validate_branch(
         ).scalar_one_or_none()
     if selected is None:
         raise DomainError("branch_required", "No active branch is available", status_code=403)
-    branch = (
-        await db.execute(
-            select(Branch).where(
-                Branch.id == selected,
-                Branch.tenant_id == user.tenant_id,
-                Branch.is_active.is_(True),
-            )
-        )
-    ).scalar_one_or_none()
-    if branch is None or (user.branch_id is not None and user.branch_id != branch.id):
+    accessible, _ = await resolve_accessible_branches(db, user)
+    if selected not in accessible:
         raise DomainError("branch_forbidden", "Branch access is not allowed", status_code=403)
-    return branch.id
+    return selected
 
 
 async def _enroll_trusted_device(
@@ -225,8 +366,7 @@ async def _enroll_trusted_device(
                 select(TrustedDevice).where(
                     TrustedDevice.tenant_id == tenant_id,
                     TrustedDevice.branch_id == branch_id,
-                    TrustedDevice.credential_hash
-                    == trusted_device_token_hash(previous_token),
+                    TrustedDevice.credential_hash == trusted_device_token_hash(previous_token),
                 )
             )
         ).scalar_one_or_none()
@@ -326,7 +466,11 @@ async def login(
         raise DomainError("invalid_credentials", "Invalid login credentials", status_code=401)
     if tenant is not None:
         await enforce_trial_expiry(db, tenant)
-    if not user.is_active or (tenant is not None and tenant_access_blocked(tenant)):
+    if (
+        not user.is_active
+        or not user.role.is_active
+        or (tenant is not None and tenant_access_blocked(tenant))
+    ):
         raise DomainError("account_inactive", "Account or business is inactive", status_code=403)
     branch_id = await _validate_branch(db, user, payload.branch_id)
     tokens = await issue_token_pair(
@@ -450,8 +594,7 @@ async def pin_login(
             select(TrustedDevice).where(
                 TrustedDevice.tenant_id == tenant.id,
                 TrustedDevice.branch_id == branch.id,
-                TrustedDevice.credential_hash
-                == trusted_device_token_hash(payload.device_token),
+                TrustedDevice.credential_hash == trusted_device_token_hash(payload.device_token),
             )
         )
     ).scalar_one_or_none()
@@ -488,7 +631,12 @@ async def pin_login(
             .options(selectinload(User.role).selectinload(Role.permissions))
         )
     ).scalar_one_or_none()
-    if user is None or user.pin_hash is None or not verify_password(payload.pin, user.pin_hash):
+    if (
+        user is None
+        or not user.role.is_active
+        or user.pin_hash is None
+        or not verify_password(payload.pin, user.pin_hash)
+    ):
         await _audit_pin_failure(
             db,
             credential_key=credential_key,
@@ -499,8 +647,7 @@ async def pin_login(
             user_agent=request.headers.get("user-agent"),
         )
         raise DomainError("invalid_credentials", "Invalid login credentials", status_code=401)
-    if user.branch_id is not None and user.branch_id != branch.id:
-        raise DomainError("branch_forbidden", "Branch access is not allowed", status_code=403)
+    await _validate_branch(db, user, branch.id)
     tokens = await issue_token_pair(
         db,
         settings,
@@ -694,9 +841,7 @@ async def _find_logout_session(
 
         auth_session = (
             await db.execute(
-                select(AuthSession)
-                .where(AuthSession.id == session_id)
-                .with_for_update()
+                select(AuthSession).where(AuthSession.id == session_id).with_for_update()
             )
         ).scalar_one_or_none()
         if (
@@ -772,10 +917,10 @@ async def accessible_branches(
         # branch the API would then refuse.
         predicates.append(Branch.id.in_(identity.accessible_branch_ids))
     branches = (
-        await db.execute(
-            select(Branch).where(*predicates).order_by(Branch.name, Branch.id)
-        )
-    ).scalars().all()
+        (await db.execute(select(Branch).where(*predicates).order_by(Branch.name, Branch.id)))
+        .scalars()
+        .all()
+    )
     return AccessibleBranchesOut(
         branches=[
             BranchSessionSummary(
@@ -788,7 +933,7 @@ async def accessible_branches(
             for branch in branches
         ],
         current_branch_id=identity.branch_id,
-        can_switch=user.branch_id is None and len(branches) > 1,
+        can_switch=len(branches) > 1,
     )
 
 

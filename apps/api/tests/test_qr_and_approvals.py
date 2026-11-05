@@ -85,12 +85,20 @@ async def test_public_menu_hides_legacy_media_paths_containing_internal_ids(
         config.logo_url = legacy_logo_url
         await session.commit()
 
+    from tests.test_product_media import _image_bytes
+
+    for url in (legacy_product_url, legacy_logo_url):
+        await api.media_storage.put_object(
+            url.split("/media/", 1)[1], _image_bytes("PNG"), "image/png"
+        )
     response = await api.client.get("/api/v1/qr/public/dixora-lab/merkez")
     assert response.status_code == 200, response.text
     payload = response.json()
     burger = next(item for item in payload["products"] if item["name"] == "Classic Burger")
-    assert burger["image_url"] is None
-    assert payload["config"]["logo_url"] is None
+    assert burger["image_url"].startswith("/api/v1/media/products/")
+    assert payload["config"]["logo_url"].startswith("/api/v1/media/qr-menu/")
+    assert (await api.client.get(burger["image_url"])).status_code == 200
+    assert (await api.client.get(payload["config"]["logo_url"])).status_code == 200
     assert tenant_id.hex not in response.text
 
 

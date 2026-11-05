@@ -13,9 +13,10 @@ from sqlalchemy.orm import selectinload
 
 from app.config import Settings
 from app.errors import DomainError
-from app.models import AuthSession, Branch, Role, Tenant, User, UserBranchMembership
-from app.rbac import effective_permission_codes
+from app.models import AuthSession, OperationGrant, Role, Tenant, User
+from app.rbac import authority_hash, effective_permission_codes, operational_profile
 from app.security import as_utc, decode_token, utcnow
+from app.services.branch_access import resolve_accessible_branches
 from app.services.subscriptions import enforce_trial_expiry, tenant_access_blocked
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -40,46 +41,18 @@ class Identity:
     # True when the user spans the whole business (owners/administrators), which
     # is what lets them use the consolidated "all branches" views.
     has_all_branch_access: bool = False
+    operational_profile: str = ""
+    operation_panel: str | None = None
 
     def can_access_branch(self, branch_id: UUID) -> bool:
         return branch_id in self.accessible_branch_ids
 
-
-async def resolve_accessible_branches(db: AsyncSession, user: User) -> tuple[frozenset[UUID], bool]:
-    """Resolve which branches a user may operate in, from trusted DB state only.
-
-    A user with no primary branch spans the entire business — this is the existing
-    convention for owners and administrators. A user pinned to a branch is scoped
-    to it, widened by any active membership rows.
-    """
-    if user.tenant_id is None:
-        return frozenset(), False
-
-    if user.branch_id is None:
-        branch_ids = (
-            (await db.execute(select(Branch.id).where(Branch.tenant_id == user.tenant_id)))
-            .scalars()
-            .all()
+    @property
+    def requires_cashier_shift(self) -> bool:
+        return self.operational_profile == "CASHIER" or (
+            self.role not in {"BUSINESS_OWNER", "BUSINESS_ADMIN", "BUSINESS_MANAGER", "SUPER_ADMIN"}
+            and "payments.manage" in self.permissions
         )
-        return frozenset(branch_ids), True
-
-    membership_ids = (
-        (
-            await db.execute(
-                select(UserBranchMembership.branch_id)
-                .join(Branch, Branch.id == UserBranchMembership.branch_id)
-                .where(
-                    UserBranchMembership.user_id == user.id,
-                    UserBranchMembership.tenant_id == user.tenant_id,
-                    UserBranchMembership.is_active.is_(True),
-                    Branch.tenant_id == user.tenant_id,
-                )
-            )
-        )
-        .scalars()
-        .all()
-    )
-    return frozenset({user.branch_id, *membership_ids}), False
 
 
 async def get_db(request: Request) -> AsyncIterator[AsyncSession]:
@@ -116,7 +89,7 @@ async def get_current_identity(
         .options(selectinload(User.role).selectinload(Role.permissions))
     )
     user = result.scalar_one_or_none()
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or not user.role.is_active:
         raise DomainError("account_inactive", "Account is inactive", status_code=401)
     if user.tenant_id != claim_tenant_id:
         raise DomainError("invalid_tenant_context", "Tenant context is invalid", status_code=401)
@@ -139,23 +112,32 @@ async def get_current_identity(
             await enforce_trial_expiry(db, tenant)
         if tenant_access_blocked(tenant):
             raise DomainError("tenant_inactive", "Business is not active", status_code=403)
-        if claim_branch_id is not None:
-            branch_result = await db.execute(
-                select(Branch).where(
-                    Branch.id == claim_branch_id,
-                    Branch.tenant_id == user.tenant_id,
-                    Branch.is_active.is_(True),
-                )
-            )
-            if branch_result.scalar_one_or_none() is None:
-                raise DomainError(
-                    "branch_forbidden", "Branch access is not allowed", status_code=403
-                )
-        if user.branch_id is not None and claim_branch_id not in {None, user.branch_id}:
-            raise DomainError("branch_forbidden", "Branch access is not allowed", status_code=403)
+    accessible_branch_ids, has_all_branch_access = await resolve_accessible_branches(db, user)
+    selected_branch_id = claim_branch_id or user.branch_id
+    if user.tenant_id is not None and selected_branch_id not in accessible_branch_ids:
+        raise DomainError("branch_forbidden", "Branch access is not allowed", status_code=403)
 
     permissions = effective_permission_codes(user.role)
-    accessible_branch_ids, has_all_branch_access = await resolve_accessible_branches(db, user)
+    profile = operational_profile(user.role)
+    grant = None
+    if profile in {"BUSINESS_OWNER", "BUSINESS_ADMIN", "BUSINESS_MANAGER", "MANAGEMENT"}:
+        grant = (
+            await db.execute(
+                select(OperationGrant)
+                .where(
+                    OperationGrant.auth_session_id == session_id,
+                    OperationGrant.user_id == user.id,
+                    OperationGrant.tenant_id == user.tenant_id,
+                    OperationGrant.branch_id == selected_branch_id,
+                    OperationGrant.token_family == claim_family,
+                    OperationGrant.authority_hash == authority_hash(user.role),
+                    OperationGrant.revoked_at.is_(None),
+                    OperationGrant.expires_at > utcnow(),
+                )
+                .order_by(OperationGrant.created_at.desc())
+                .limit(1)
+            )
+        ).scalar_one_or_none()
     return Identity(
         user_id=user.id,
         tenant_id=user.tenant_id,
@@ -170,6 +152,8 @@ async def get_current_identity(
         email=user.email,
         accessible_branch_ids=accessible_branch_ids,
         has_all_branch_access=has_all_branch_access,
+        operational_profile=profile,
+        operation_panel=grant.panel if grant else None,
     )
 
 
@@ -179,6 +163,17 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 def require_permissions(*required: str) -> Callable[[Identity], Awaitable[Identity]]:
     async def dependency(identity: CurrentIdentity) -> Identity:
+        if identity.operation_panel == "cashier" and set(required) & {
+            "payments.manage",
+            "cashier.shift.manage",
+            "cashier.day.close",
+        }:
+            raise DomainError(
+                "operation_observation_only",
+                "Destek modu yalnız gözlem içindir. "
+                "Parasal işlem için kendi kasiyer vardiyanızı kullanın.",
+                status_code=403,
+            )
         if identity.is_super_admin or "*" in identity.permissions:
             return identity
         missing = [permission for permission in required if permission not in identity.permissions]

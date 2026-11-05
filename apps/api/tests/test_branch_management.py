@@ -231,6 +231,35 @@ async def test_granted_branch_appears_in_the_switcher_and_can_be_switched_to(
     assert switched.status_code == 200, switched.text
     assert switched.json()["user"]["branch_id"] == second["id"]
 
+    assert listed.json()["can_switch"] is True
+    switched_headers = auth_headers(switched.json())
+    protected = await api.client.get("/api/v1/tables", headers=switched_headers)
+    assert protected.status_code == 200, protected.text
+    refreshed = await api.client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": switched.json()["refresh_token"]}
+    )
+    assert refreshed.status_code == 200, refreshed.text
+    assert refreshed.json()["user"]["branch_id"] == second["id"]
+    direct_login = await api.client.post(
+        "/api/v1/auth/login",
+        json={
+            "business": "dixora-lab",
+            "username": "cashier@dixora.test",
+            "password": "DixoraLab!2026",
+            "branch_id": second["id"],
+        },
+    )
+    assert direct_login.status_code == 200, direct_login.text
+    await api.client.put(
+        f"/api/v1/users/{cashier['id']}/branches", headers=headers, json={"branch_ids": []}
+    )
+    denied = await api.client.get("/api/v1/tables", headers=auth_headers(refreshed.json()))
+    assert denied.status_code == 403, denied.text
+    denied_refresh = await api.client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": refreshed.json()["refresh_token"]}
+    )
+    assert denied_refresh.status_code == 403, denied_refresh.text
+
 
 async def test_switching_to_an_ungranted_branch_is_refused(api: ApiContext) -> None:
     await _use_paid_plan(api)

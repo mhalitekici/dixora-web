@@ -227,7 +227,7 @@ async def create_new_order(
     source_override = {
         "WAITER": OrderSource.WAITER,
         "CASHIER": OrderSource.CASHIER,
-    }.get(identity.role)
+    }.get(identity.operational_profile)
     order, replayed = await create_order(
         db,
         tenant_id=tenant_id,
@@ -558,7 +558,7 @@ async def record_payment(
             .limit(1)
         )
     ).scalar_one_or_none()
-    if identity.role == "CASHIER" and shift is None:
+    if identity.requires_cashier_shift and shift is None:
         raise DomainError(
             "cashier_shift_required",
             "Open a cashier shift before recording a payment",
@@ -635,7 +635,7 @@ async def refund_payment(
             .limit(1)
         )
     ).scalar_one_or_none()
-    if identity.role == "CASHIER" and shift is None:
+    if identity.requires_cashier_shift and shift is None:
         raise DomainError(
             "cashier_shift_required",
             "Open a cashier shift before refunding a payment",

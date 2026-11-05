@@ -19,6 +19,7 @@ from app.api import (
     orders,
     organization,
     printing,
+    printing_acceptance,
     qr,
     registrations,
     reports,
@@ -52,5 +53,6 @@ api_router.include_router(loyalty.router)
 api_router.include_router(notifications.router)
 api_router.include_router(reports.router)
 api_router.include_router(printing.router)
+api_router.include_router(printing_acceptance.router)
 api_router.include_router(audit.router)
 api_router.include_router(websocket.router)

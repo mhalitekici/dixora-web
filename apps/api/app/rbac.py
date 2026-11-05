@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 from collections.abc import Iterable
 from uuid import UUID
 
@@ -182,6 +183,26 @@ ASSIGNABLE_ROLE_PRESETS: dict[str, str] = {
     "CASHIER": "Kasiyer",
     "WAITER": "Garson",
 }
+
+
+def operational_profile(role: Role) -> str:
+    if role.is_system:
+        return role.code
+    if role.operational_profile:
+        return role.operational_profile
+    # Existing custom roles must not bypass shift requirements after upgrade.
+    codes = effective_permission_codes(role)
+    return (
+        "CASHIER"
+        if "payments.manage" in codes
+        else ("WAITER" if "orders.create" in codes else "BACKOFFICE")
+    )
+
+
+def authority_hash(role: Role) -> str:
+    permissions = ",".join(sorted(effective_permission_codes(role)))
+    value = f"{role.id}:{operational_profile(role)}:{permissions}"
+    return hashlib.sha256(value.encode()).hexdigest()
 
 
 def effective_permission_codes(role: Role) -> frozenset[str]:

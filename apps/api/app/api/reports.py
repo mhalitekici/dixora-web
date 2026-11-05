@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import aliased
+from starlette.concurrency import run_in_threadpool
 
 from app.dependencies import (
     DbSession,
@@ -55,6 +56,7 @@ from app.schemas import (
 )
 from app.security import as_utc
 from app.services.orders import load_order, order_bill_reference
+from app.services.report_export import reconciliation_report, render_report_pdf, report_bounds
 
 
 def _naive(value: datetime) -> datetime:
@@ -174,6 +176,45 @@ async def sales_summary(
         paid_orders=paid_orders,
         average_order_value=(gross / paid_orders if paid_orders else Decimal("0.00")),
         by_payment_method={method: Decimal(amount) for method, amount in payment_rows},
+    )
+
+
+@router.get("/financial-summary")
+async def financial_summary(
+    identity: ReportReader,
+    db: DbSession,
+    date_from: date | datetime,
+    date_to: date | datetime,
+) -> dict[str, object]:
+    start, end, branch = await report_bounds(db, identity, date_from, date_to)
+    # Existing sale definition is shared with the on-screen summary. Exclude the
+    # next period's first instant without reducing timestamp precision in storage.
+    sales = await sales_summary(
+        identity,
+        db,
+        start.replace(tzinfo=None),
+        (end - timedelta(microseconds=1)).replace(tzinfo=None),
+    )
+    return await reconciliation_report(db, identity, branch, start, end, sales.model_dump())
+
+
+@router.get("/export.pdf")
+async def export_pdf(
+    identity: ReportReader,
+    db: DbSession,
+    date_from: date | datetime,
+    date_to: date | datetime,
+) -> Response:
+    snapshot = await financial_summary(identity, db, date_from, date_to)
+    content = await run_in_threadpool(render_report_pdf, snapshot)
+    return Response(
+        content,
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": 'attachment; filename="dixora-rapor.pdf"',
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

@@ -252,6 +252,7 @@ class MeOut(BaseModel):
     email: str | None
     display_name: str
     role: str
+    operational_profile: str | None = None
     permissions: list[str]
     is_super_admin: bool
     tenant: TenantSessionSummary | None = None
@@ -463,6 +464,9 @@ class RoleCreate(BaseModel):
     code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{2,49}$")
     name: str = Field(min_length=1, max_length=100)
     permission_codes: list[str] = []
+    operational_profile: Literal["WAITER", "CASHIER", "KITCHEN", "MANAGEMENT", "BACKOFFICE"] = (
+        "WAITER"
+    )
 
 
 class RoleUpdate(BaseModel):
@@ -479,6 +483,7 @@ class RoleDetailOut(BaseModel):
     is_system: bool
     is_active: bool
     permissions: list[str]
+    operational_profile: str | None = None
 
 
 class OwnerCreate(BaseModel):
@@ -2040,7 +2045,8 @@ class DeliveryOrderCreate(BaseModel):
     customer_name: str | None = Field(default=None, max_length=160)
     customer_phone: str | None = Field(default=None, pattern=r"^[0-9+()\s.-]{7,32}$", max_length=32)
     address_line: str | None = Field(default=None, max_length=500)
-    district: str | None = Field(default=None, max_length=120)
+    city: str | None = Field(default=None, min_length=2, max_length=120)
+    district: str | None = Field(default=None, min_length=2, max_length=120)
     neighbourhood: str | None = Field(default=None, max_length=120)
     address_note: str | None = Field(default=None, max_length=500)
     customer_note: str | None = Field(default=None, max_length=500)
@@ -2056,8 +2062,13 @@ class DeliveryOrderCreate(BaseModel):
     def delivery_needs_an_address(self) -> DeliveryOrderCreate:
         # Must be a model validator: a field validator never fires when the
         # field is simply absent, so an address-less delivery slipped through.
-        if self.channel == "OWN_DELIVERY" and not (self.address_line or "").strip():
-            raise ValueError("Paket servis siparişi için adres gerekli")
+        if self.channel == "OWN_DELIVERY":
+            if not (self.address_line or "").strip():
+                raise ValueError("Paket servis siparişi için açık adres gerekli")
+            if len((self.city or "").strip()) < 2:
+                raise ValueError("Paket servis siparişi için en az 2 karakterli il gerekli")
+            if len((self.district or "").strip()) < 2:
+                raise ValueError("Paket servis siparişi için en az 2 karakterli ilçe gerekli")
         return self
 
 
@@ -2103,6 +2114,7 @@ class DeliveryOrderOut(BaseModel):
     customer_name: str | None
     customer_phone: str | None
     address_line: str | None
+    city: str | None = None
     district: str | None
     neighbourhood: str | None
     address_note: str | None

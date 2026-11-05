@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.dependencies import (
     DbSession,
     Identity,
+    require_any_permissions,
     require_branch,
     require_permissions,
     require_record_branch,
@@ -28,7 +29,14 @@ from app.models import (
     User,
     UserBranchMembership,
 )
-from app.rbac import ASSIGNABLE_ROLE_PRESETS, ensure_tenant_role_presets
+from app.rbac import (
+    ASSIGNABLE_ROLE_PRESETS,
+    ROLE_PERMISSIONS,
+    effective_permission_codes,
+    ensure_permission_catalog,
+    ensure_tenant_role_presets,
+    operational_profile,
+)
 from app.schemas import (
     BranchArchiveRequest,
     BranchCreate,
@@ -56,6 +64,9 @@ router = APIRouter(tags=["organization"])
 SettingsManager = Annotated[Identity, Depends(require_permissions("settings.manage"))]
 UserManager = Annotated[Identity, Depends(require_permissions("users.manage"))]
 RoleManager = Annotated[Identity, Depends(require_permissions("roles.manage"))]
+RoleReader = Annotated[
+    Identity, Depends(require_any_permissions("roles.read", "users.manage", "roles.manage"))
+]
 
 
 def role_output(role: Role) -> RoleDetailOut:
@@ -66,7 +77,8 @@ def role_output(role: Role) -> RoleDetailOut:
         name=role.name,
         is_system=role.is_system,
         is_active=role.is_active,
-        permissions=sorted(permission.code for permission in role.permissions),
+        permissions=sorted(effective_permission_codes(role)),
+        operational_profile=operational_profile(role),
     )
 
 
@@ -86,7 +98,7 @@ def user_output(user: User) -> UserOut:
         display_name=user.display_name,
         is_active=user.is_active,
         has_pin=user.pin_hash is not None,
-        permissions=sorted(permission.code for permission in user.role.permissions),
+        permissions=sorted(effective_permission_codes(user.role)),
     )
 
 
@@ -125,7 +137,8 @@ async def _tenant_branch(
     ).scalar_one_or_none()
     if branch is None:
         raise DomainError("branch_not_found", "Branch not found", status_code=404)
-    require_record_branch(identity, branch.id)
+    if not identity.has_all_branch_access:
+        require_record_branch(identity, branch.id)
     return branch
 
 
@@ -136,6 +149,10 @@ def _assert_user_in_scope(identity: Identity, user: User) -> None:
     spans it may touch them — otherwise a manager pinned to one branch could
     reset the owner's password from their own employee screen.
     """
+    if user.role.code == "BUSINESS_OWNER" and identity.role != "BUSINESS_OWNER":
+        raise DomainError(
+            "owner_account_protected", "İşletme sahibi hesabı korunur.", status_code=403
+        )
     if user.branch_id is None:
         if not identity.has_all_branch_access:
             raise DomainError(
@@ -185,12 +202,13 @@ async def _validate_employee_scope(
     branch_id: UUID | None,
     station_id: UUID | None,
 ) -> None:
-    if role.code not in ASSIGNABLE_ROLE_PRESETS:
+    if role.is_system and role.code not in ASSIGNABLE_ROLE_PRESETS:
         raise DomainError(
             "role_not_assignable",
             "Only fixed employee role presets can be assigned",
             status_code=422,
         )
+    _assert_delegable(identity, effective_permission_codes(role))
     if role.code == "BUSINESS_ADMIN":
         if branch_id is not None or station_id is not None:
             raise DomainError(
@@ -259,9 +277,7 @@ async def list_branches(identity: SettingsManager, db: DbSession) -> list[Branch
         # exactly the branches they may act in and no more.
         predicates.append(Branch.id.in_(identity.accessible_branch_ids))
     rows = (
-        (await db.execute(select(Branch).where(*predicates).order_by(Branch.name)))
-        .scalars()
-        .all()
+        (await db.execute(select(Branch).where(*predicates).order_by(Branch.name))).scalars().all()
     )
     return [BranchOut.model_validate(branch) for branch in rows]
 
@@ -520,9 +536,7 @@ async def get_user_branch_access(
         .scalars()
         .all()
     )
-    branch_ids = sorted(
-        {*memberships, *([user.branch_id] if user.branch_id else [])}, key=str
-    )
+    branch_ids = sorted({*memberships, *([user.branch_id] if user.branch_id else [])}, key=str)
     return UserBranchAccessOut(
         user_id=user.id,
         primary_branch_id=user.branch_id,
@@ -563,9 +577,7 @@ async def set_user_branch_access(
         owned = set(
             (
                 await db.execute(
-                    select(Branch.id).where(
-                        Branch.tenant_id == tenant_id, Branch.id.in_(requested)
-                    )
+                    select(Branch.id).where(Branch.tenant_id == tenant_id, Branch.id.in_(requested))
                 )
             )
             .scalars()
@@ -725,6 +737,10 @@ async def update_user(
             "The business owner account cannot be reassigned or deactivated",
             status_code=403,
         )
+    authorization_changed = any(
+        key in data and data[key] != getattr(user, key)
+        for key in ("role_id", "branch_id", "preparation_station_id")
+    )
     role_changed = "role_id" in data
     if "role_id" in data:
         user.role = await _tenant_role(db, tenant_id, data["role_id"])
@@ -732,7 +748,7 @@ async def update_user(
         data.pop("role_id")
     desired_branch_id = data.get("branch_id", user.branch_id)
     desired_station_id = data.get("preparation_station_id", user.preparation_station_id)
-    if user.role.code in ASSIGNABLE_ROLE_PRESETS:
+    if user.role.code in ASSIGNABLE_ROLE_PRESETS or not user.role.is_system:
         await _validate_employee_scope(
             db,
             identity=identity,
@@ -755,7 +771,7 @@ async def update_user(
     previous_active = user.is_active
     for key, value in data.items():
         setattr(user, key, value)
-    if previous_active and not user.is_active:
+    if authorization_changed or (previous_active and not user.is_active):
         await db.execute(
             update(AuthSession)
             .where(AuthSession.user_id == user.id, AuthSession.revoked_at.is_(None))
@@ -831,7 +847,7 @@ async def set_user_pin(
 
 
 @router.get("/roles", response_model=list[RoleDetailOut])
-async def list_roles(identity: UserManager, db: DbSession) -> list[RoleDetailOut]:
+async def list_roles(identity: RoleReader, db: DbSession) -> list[RoleDetailOut]:
     tenant_id = require_tenant(identity)
     await ensure_tenant_role_presets(db, tenant_id)
     await db.commit()
@@ -841,7 +857,7 @@ async def list_roles(identity: UserManager, db: DbSession) -> list[RoleDetailOut
                 select(Role)
                 .where(
                     Role.tenant_id == tenant_id,
-                    Role.code.in_(ASSIGNABLE_ROLE_PRESETS),
+                    (Role.code.in_(ASSIGNABLE_ROLE_PRESETS) | Role.is_system.is_(False)),
                 )
                 .options(selectinload(Role.permissions))
                 .order_by(Role.name)
@@ -859,27 +875,135 @@ async def create_role(
     identity: RoleManager,
     db: DbSession,
 ) -> RoleDetailOut:
-    del payload, identity, db
-    raise DomainError(
-        "role_presets_locked",
-        "Employee roles are fixed presets and cannot be created",
-        status_code=409,
+    tenant_id = require_tenant(identity)
+    if payload.code in ROLE_PERMISSIONS:
+        raise DomainError("system_role_protected", "Sistem rol kodu kullanılamaz.", status_code=403)
+    codes = set(payload.permission_codes)
+    _assert_delegable(identity, codes, custom=True)
+    _validate_profile(payload.operational_profile, codes)
+    if (
+        await db.execute(
+            select(Role.id).where(Role.tenant_id == tenant_id, Role.code == payload.code)
+        )
+    ).scalar_one_or_none():
+        raise DomainError("role_code_conflict", "Bu rol kodu zaten kullanılıyor.", status_code=409)
+    permission_map = await ensure_permission_catalog(db)
+    role = Role(
+        tenant_id=tenant_id,
+        code=payload.code,
+        name=payload.name.strip(),
+        is_system=False,
+        is_active=True,
+        operational_profile=payload.operational_profile,
+        permissions=[permission_map[code] for code in sorted(codes)],
     )
+    db.add(role)
+    await db.flush()
+    add_audit_log(
+        db,
+        identity=identity,
+        action="role.created",
+        resource_type="role",
+        resource_id=role.id,
+        new_value={
+            "name": role.name,
+            "permissions": sorted(codes),
+            "operational_profile": role.operational_profile,
+        },
+    )
+    await db.commit()
+    return role_output(role)
+
+
+def _assert_delegable(
+    identity: Identity, codes: set[str] | frozenset[str], *, custom: bool = False
+) -> None:
+    invalid = set(codes) - set(ROLE_PERMISSIONS["BUSINESS_OWNER"])
+    if custom:
+        invalid |= set(codes) & {"roles.manage"}
+    if invalid or not set(codes).issubset(identity.permissions):
+        raise DomainError(
+            "role_permission_forbidden",
+            "Sahip olmadığınız veya korunan yetkileri atayamazsınız.",
+            status_code=403,
+        )
+
+
+def _validate_profile(profile: str, codes: set[str]) -> None:
+    if "payments.manage" in codes and profile not in {"CASHIER", "MANAGEMENT"}:
+        raise DomainError(
+            "role_profile_invalid",
+            "Ödeme yetkisi kasa veya yönetim profili gerektirir.",
+            status_code=422,
+        )
 
 
 @router.patch("/roles/{role_id}", response_model=RoleDetailOut)
 async def update_role(
-    role_id: UUID,
-    payload: RoleUpdate,
-    identity: RoleManager,
-    db: DbSession,
+    role_id: UUID, payload: RoleUpdate, identity: RoleManager, db: DbSession
 ) -> RoleDetailOut:
-    del role_id, payload, identity, db
-    raise DomainError(
-        "role_presets_locked",
-        "Employee role presets cannot be changed",
-        status_code=409,
+    role = (
+        await db.execute(
+            select(Role)
+            .where(Role.id == role_id, Role.tenant_id == require_tenant(identity))
+            .with_for_update()
+            .options(selectinload(Role.permissions))
+        )
+    ).scalar_one_or_none()
+    if role is None:
+        raise DomainError("role_not_found", "Rol bulunamadı.", status_code=404)
+    if role.is_system:
+        raise DomainError(
+            "role_presets_locked",
+            "Sistem rollerini değiştirmek yerine kopyalayın.",
+            status_code=409,
+        )
+    _assert_delegable(identity, effective_permission_codes(role), custom=True)
+    actor = await db.get(User, identity.user_id)
+    if actor is not None and role_id == actor.role_id:
+        raise DomainError(
+            "self_role_change_forbidden", "Kendi rolünüzü değiştiremezsiniz.", status_code=403
+        )
+    previous = {
+        "name": role.name,
+        "permissions": sorted(effective_permission_codes(role)),
+        "is_active": role.is_active,
+    }
+    if payload.is_active is False:
+        assigned = (
+            await db.execute(select(User.id).where(User.role_id == role.id).limit(1))
+        ).first()
+        if assigned:
+            raise DomainError(
+                "role_in_use",
+                "Bu rol çalışana atanmış. Önce çalışanların rolünü değiştirin.",
+                status_code=409,
+            )
+    if payload.permission_codes is not None:
+        codes = set(payload.permission_codes)
+        _assert_delegable(identity, codes, custom=True)
+        _validate_profile(operational_profile(role), codes)
+        permission_map = await ensure_permission_catalog(db)
+        role.permissions = [permission_map[code] for code in sorted(codes)]
+    if payload.name is not None:
+        role.name = payload.name.strip()
+    if payload.is_active is not None:
+        role.is_active = payload.is_active
+    add_audit_log(
+        db,
+        identity=identity,
+        action="role.updated",
+        resource_type="role",
+        resource_id=role.id,
+        previous_value=previous,
+        new_value={
+            "name": role.name,
+            "permissions": sorted(effective_permission_codes(role)),
+            "is_active": role.is_active,
+        },
     )
+    await db.commit()
+    return role_output(role)
 
 
 @router.get("/permissions", response_model=list[str])
@@ -888,4 +1012,11 @@ async def list_permissions(identity: RoleManager, db: DbSession) -> list[str]:
     permissions = (
         (await db.execute(select(Permission.code).order_by(Permission.code))).scalars().all()
     )
-    return list(permissions)
+    return [
+        code
+        for code in permissions
+        if code in identity.permissions
+        and code != "*"
+        and not code.startswith("platform.")
+        and code != "roles.manage"
+    ]

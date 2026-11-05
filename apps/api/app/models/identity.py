@@ -122,6 +122,7 @@ class Role(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     is_system: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    operational_profile: Mapped[str | None] = mapped_column(String(24), nullable=True)
 
     permissions: Mapped[list[Permission]] = relationship(
         secondary="role_permissions",
@@ -200,6 +201,26 @@ class AuthSession(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     user_agent: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     user: Mapped[User] = relationship(lazy="selectin")
+
+
+class OperationGrant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
+    __tablename__ = "operation_grants"
+
+    tenant_id: Mapped[UUID] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"), index=True
+    )
+    branch_id: Mapped[UUID] = mapped_column(
+        ForeignKey("branches.id", ondelete="CASCADE"), index=True
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+    auth_session_id: Mapped[UUID] = mapped_column(
+        ForeignKey("auth_sessions.id", ondelete="CASCADE"), index=True
+    )
+    token_family: Mapped[UUID] = mapped_column(nullable=False)
+    panel: Mapped[str] = mapped_column(String(12), nullable=False)
+    authority_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
 
 class TrustedDevice(UUIDPrimaryKeyMixin, TimestampMixin, Base):

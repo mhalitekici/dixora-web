@@ -293,6 +293,7 @@ async def test_courier_receipt_contains_delivery_contact_prices_and_reprint_mark
             "customer_name": "Ayşe Yılmaz",
             "customer_phone": "0555 111 22 33",
             "address_line": "Atatürk Cad. No: 10 D: 4",
+            "city": "İstanbul",
             "district": "Kadıköy",
             "customer_note": "Zil çalışmıyor",
             "payment_method": "CARD_ON_DELIVERY",
@@ -316,7 +317,7 @@ async def test_courier_receipt_contains_delivery_contact_prices_and_reprint_mark
     assert original.json()["printer_device_id"] == cashier_printer["id"]
     document = original.json()["payload"]["document"]
     assert document["document_type"] == "COURIER"
-    assert document["title"] == "KURYE FİŞİ"
+    assert document["title"] == "PAKET SERVİS"
     assert document["customer_name"] == "Ayşe Yılmaz"
     assert document["customer_phone"] == "0555 111 22 33"
     assert "Atatürk Cad." in document["delivery_address"]
@@ -337,7 +338,7 @@ async def test_courier_receipt_contains_delivery_contact_prices_and_reprint_mark
     assert reprint.status_code == 201, reprint.text
     assert reprint.json()["kind"] == "REPRINT"
     assert reprint.json()["payload"]["is_reprint"] is True
-    assert reprint.json()["payload"]["document"]["title"] == "KURYE FİŞİ"
+    assert reprint.json()["payload"]["document"]["title"] == "PAKET SERVİS"
 
 
 async def test_print_jobs_order_id_filter_is_tenant_scoped(api: ApiContext) -> None:
