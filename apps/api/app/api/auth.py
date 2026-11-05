@@ -7,7 +7,7 @@ from uuid import UUID, uuid4
 
 import jwt
 from fastapi import APIRouter, Depends, Request, status
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -67,8 +67,15 @@ router = APIRouter(prefix="/auth", tags=["authentication"])
 
 class OperationAuthorization(BaseModel):
     username: str = Field(min_length=1, max_length=255)
-    password: str = Field(min_length=1, max_length=512)
+    password: str | None = Field(default=None, min_length=1, max_length=512)
+    pin: str | None = Field(default=None, pattern=r"^\d{4,12}$")
     panel: Literal["waiter", "cashier"]
+
+    @model_validator(mode="after")
+    def exactly_one_credential(self) -> OperationAuthorization:
+        if (self.password is None) == (self.pin is None):
+            raise ValueError("Parola veya PIN yöntemlerinden yalnız birini seçin.")
+        return self
 
 
 @router.post("/operation-grant")
@@ -107,8 +114,17 @@ async def authorize_operation_panel(
         user.username.lower(),
         (user.email or "").lower(),
     }
-    password_valid = verify_password(payload.password, user.password_hash)
-    if not own_name or not password_valid:
+    credential_valid = (
+        verify_password(payload.password, user.password_hash)
+        if payload.password is not None
+        else bool(
+            settings.pin_login_enabled
+            and user.pin_hash is not None
+            and payload.pin is not None
+            and verify_password(payload.pin, user.pin_hash)
+        )
+    )
+    if not own_name or not credential_valid:
         add_audit_log(
             db,
             identity=identity,
@@ -122,7 +138,7 @@ async def authorize_operation_panel(
         await db.commit()
         raise DomainError(
             "invalid_credentials",
-            "Kendi kullanıcı adınızı ve parolanızı doğrulayın.",
+            "Aktif hesabınızın kullanıcı adını ve seçtiğiniz parola veya PIN bilgisini doğrulayın.",
             status_code=403,
         )
     await db.execute(
@@ -182,7 +198,7 @@ async def operation_panel_access(
     if identity.operation_panel != panel:
         raise DomainError(
             "operation_reauthentication_required",
-            "Paneller sayfasından kendi parolanızla yetkili giriş yapın.",
+            "Paneller sayfasından kendi parolanız veya PIN’inizle yetkili giriş yapın.",
             status_code=403,
         )
     return {"panel": panel, "mode": "support"}

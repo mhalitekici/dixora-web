@@ -17,12 +17,18 @@ export function OperationPanels() {
   const current = useCurrentUser();
   const router = useRouter();
   const cache = useQueryClient();
-  const [username, setUsername] = useState("");
+  const [username, setUsername] = useState<string | null>(null);
   const [password, setPassword] = useState("");
+  const [method, setMethod] = useState<"password" | "pin">("password");
+  const pinEnabled = process.env.NEXT_PUBLIC_ENABLE_PIN_LOGIN === "true";
   const [panel, setPanel] = useState<"waiter" | "cashier">("waiter");
   const authorize = useMutation({
     mutationFn: () =>
-      api.post("auth/operation-grant", { username, password, panel }),
+      api.post("auth/operation-grant", {
+        username: (username ?? current.data?.user.username ?? "").trim(),
+        ...(method === "pin" ? { pin: password } : { password }),
+        panel,
+      }),
     onSuccess: async () => {
       setPassword("");
       await cache.invalidateQueries();
@@ -36,7 +42,7 @@ export function OperationPanels() {
         title="Paneller"
         eyebrow="Yetkili operasyon girişi"
         icon={ShieldCheck}
-        description="Kendi işletme hesabınızla doğrulama yapın. Destek erişimi seçili şubede 10 dakika geçerlidir."
+        description="Açık olan hesabın parolası veya PIN’iyle doğrulayın. Destek erişimi seçili şubede 10 dakika geçerlidir."
       />
       <form
         method="post"
@@ -57,22 +63,51 @@ export function OperationPanels() {
             name="username"
             autoComplete="username"
             required
-            value={username}
+            value={username ?? current.data?.user.username ?? ""}
             onChange={(e) => setUsername(e.target.value)}
           />
         </div>
+        {pinEnabled ? (
+          <div className="space-y-2">
+            <Label htmlFor="operation-method">Doğrulama yöntemi</Label>
+            <select
+              id="operation-method"
+              className="min-h-11 w-full rounded-md border bg-background px-3 text-sm"
+              value={method}
+              disabled={authorize.isPending}
+              onChange={(event) => {
+                setMethod(event.target.value === "pin" ? "pin" : "password");
+                setPassword("");
+                authorize.reset();
+              }}
+            >
+              <option value="password">Hesap parolası</option>
+              <option value="pin">Çalışan PIN’i</option>
+            </select>
+          </div>
+        ) : null}
         <div className="space-y-2">
-          <Label htmlFor="operation-password">Parola</Label>
+          <Label htmlFor="operation-password">
+            {method === "pin" ? "PIN" : "Parola"}
+          </Label>
           <Input
             id="operation-password"
-            name="password"
+            name={method}
             type="password"
-            autoComplete="current-password"
+            autoComplete={method === "pin" ? "off" : "current-password"}
+            inputMode={method === "pin" ? "numeric" : undefined}
+            pattern={method === "pin" ? "[0-9]{4,12}" : undefined}
+            maxLength={method === "pin" ? 12 : 512}
             required
             value={password}
             onChange={(e) => setPassword(e.target.value)}
           />
         </div>
+        <p className="text-sm text-muted-foreground">
+          Yalnız aktif hesabın bilgileri geçerlidir. Başka bir müdür veya
+          yönetici için önce o hesapla giriş yapın. PIN atanmamışsa hesap
+          parolasını kullanın.
+        </p>
         <fieldset className="space-y-2">
           <legend className="mb-2 text-sm font-medium">Panel seçimi</legend>
           {(

@@ -5,9 +5,120 @@ from datetime import timedelta
 import pytest
 from sqlalchemy import select
 
-from app.models import OperationGrant
-from app.security import utcnow
+from app.models import OperationGrant, User
+from app.security import hash_password, utcnow
 from tests.conftest import ApiContext, auth_headers, login, seeded_resources
+
+
+@pytest.mark.parametrize("role_code", ["BUSINESS_OWNER", "BUSINESS_ADMIN", "BUSINESS_MANAGER"])
+async def test_operation_pin_reauth_uses_only_current_account(
+    api: ApiContext, role_code: str
+) -> None:
+    owner = await login(api)
+    owner_headers = auth_headers(owner)
+    username = "owner@dixora.test"
+    if role_code != "BUSINESS_OWNER":
+        roles = (await api.client.get("/api/v1/roles", headers=owner_headers)).json()
+        role = next(role for role in roles if role["code"] == role_code)
+        username = "panel-" + role_code.lower()
+        created = await api.client.post(
+            "/api/v1/users",
+            headers=owner_headers,
+            json={
+                "username": username,
+                "display_name": "Panel Manager",
+                "role_id": role["id"],
+                "branch_id": owner["user"]["branch_id"]
+                if role_code == "BUSINESS_MANAGER"
+                else None,
+                "temporary_password": "Temporary!2026",
+                "pin": "7246",
+            },
+        )
+        assert created.status_code == 201, created.text
+        headers = auth_headers(await login(api, username=username, password="Temporary!2026"))
+    else:
+        headers = owner_headers
+        async with api.database.session_factory() as db:
+            user = (await db.execute(select(User).where(User.username == username))).scalar_one()
+            user.pin_hash = hash_password("7246")
+            await db.commit()
+    for credentials in [
+        {"username": username, "pin": "9999"},
+        {"username": "cashier@dixora.test", "pin": "1357"},
+    ]:
+        denied = await api.client.post(
+            "/api/v1/auth/operation-grant",
+            headers=headers,
+            json={**credentials, "panel": "cashier"},
+        )
+        assert denied.status_code == 403, denied.text
+    for panel in ["cashier", "waiter"]:
+        granted = await api.client.post(
+            "/api/v1/auth/operation-grant",
+            headers=headers,
+            json={"username": username, "pin": "7246", "panel": panel},
+        )
+        assert granted.status_code == 200, granted.text
+        access = await api.client.get(
+            f"/api/v1/auth/operation-access?panel={panel}", headers=headers
+        )
+        assert access.json()["mode"] == "support"
+        other_session = auth_headers(
+            await login(
+                api,
+                username=username,
+                password="DixoraLab!2026" if role_code == "BUSINESS_OWNER" else "Temporary!2026",
+            )
+        )
+        assert (
+            await api.client.get(
+                f"/api/v1/auth/operation-access?panel={panel}", headers=other_session
+            )
+        ).status_code == 403
+
+
+async def test_operation_pin_requires_configured_pin_and_enabled_feature(api: ApiContext) -> None:
+    headers = auth_headers(await login(api))
+    for payload in [
+        {"pin": "7246"},
+        {"password": "DixoraLab!2026", "pin": "7246"},
+        {},
+        {"pin": "abc"},
+    ]:
+        result = await api.client.post(
+            "/api/v1/auth/operation-grant",
+            headers=headers,
+            json={"username": "owner@dixora.test", "panel": "waiter", **payload},
+        )
+        assert result.status_code == (403 if payload == {"pin": "7246"} else 422), result.text
+    async with api.database.session_factory() as db:
+        user = (
+            await db.execute(select(User).where(User.username == "owner@dixora.test"))
+        ).scalar_one()
+        user.pin_hash = hash_password("7246")
+        await db.commit()
+    api.settings.pin_login_enabled = False
+    denied = await api.client.post(
+        "/api/v1/auth/operation-grant",
+        headers=headers,
+        json={"username": "owner@dixora.test", "panel": "waiter", "pin": "7246"},
+    )
+    assert denied.status_code == 403
+
+
+async def test_operation_pin_failures_are_rate_limited(api: ApiContext) -> None:
+    headers = auth_headers(await login(api))
+    payload = {"username": "owner@dixora.test", "pin": "9999", "panel": "waiter"}
+    for _ in range(api.settings.login_rate_limit_attempts):
+        result = await api.client.post(
+            "/api/v1/auth/operation-grant", headers=headers, json=payload
+        )
+        assert result.status_code == 403, result.text
+    blocked = await api.client.post("/api/v1/auth/operation-grant", headers=headers, json=payload)
+    assert blocked.status_code == 429, blocked.text
+    async with api.database.session_factory() as db:
+        assert (await db.execute(select(OperationGrant))).scalars().all() == []
 
 
 async def test_operation_reauth_is_self_scoped_and_cashier_is_observation_only(
