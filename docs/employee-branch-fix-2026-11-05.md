@@ -24,4 +24,11 @@ TypeScript, ilgili ESLint, Ruff ve API dosyası mypy kontrolleri geçti.
 Tarayıcı regresyonu `apps/web/e2e/employee-branch.pw.ts`, en az iki aktif şubeli
 yalıtılmış `dixora-lab` doğrulama verisiyle çalışır. Tek şubeli ortamda atlanır.
 Gerçek kullanıcı parolası/PIN'i alınmadı; gerçek hesabın girişini kullanıcı
-yeniden deneyecek. Yerel Docker güncellemesi veri hacimleri korunarak yapılır.
+yeniden deneyecek.
+
+Yerel Docker `dixora` API/web imajları başarıyla yeniden derlendi ve veri hacimleri
+korunarak başlatıldı. Her iki servis healthy; API `/ready` 200; üretim derlemesinin
+giriş ekranı tarayıcıda 200, etkin giriş düğmesi ve sıfır sayfa hatasıyla doğrulandı.
+Sipariş, ödeme, kasa vardiyası ve yazdırma işi tablolarının satır sayıları ve tam
+satır özetleri güncelleme öncesi/sonrası aynı. Güncelleme öncesi PostgreSQL yedeği
+Git dışında alındı, `pg_restore --list` ile doğrulandı.
