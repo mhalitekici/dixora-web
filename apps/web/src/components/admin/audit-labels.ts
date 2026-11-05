@@ -7,6 +7,44 @@
  * added backend action is never invisible to the business owner.
  */
 export const auditActionLabels: Record<string, string> = {
+  "auth.staff_pin_failed": "Çalışan PIN doğrulaması başarısız",
+  "billing.card_removed": "Kayıtlı ödeme kartı kaldırıldı",
+  "branch.archived": "Şube arşivlendi",
+  "branch.restored": "Şube yeniden etkinleştirildi",
+  "business.deleted": "İşletme kaldırıldı",
+  "business_day.closed": "İşletme günü kapatıldı",
+  "campaign.applied": "Kampanya uygulandı",
+  "campaign.created": "Kampanya oluşturuldu",
+  "campaign.deactivated": "Kampanya devre dışı bırakıldı",
+  "campaign.updated": "Kampanya güncellendi",
+  "catalog.product_import_updated": "İçe aktarılan ürün güncellendi",
+  "catalog.product_translations_updated": "Ürün çevirileri güncellendi",
+  "delivery.courier_assigned": "Siparişe kurye atandı",
+  "delivery.order_accepted": "Paket siparişi kabul edildi",
+  "delivery.order_created": "Paket siparişi oluşturuldu",
+  "delivery.order_rejected": "Paket siparişi reddedildi",
+  "inventory.recipe_copied": "Reçete kopyalandı",
+  "inventory.stock_transferred": "Stok transfer edildi",
+  "loyalty.campaign_applied": "Sadakat kampanyası uygulandı",
+  "loyalty.enrollment_completed": "Sadakat kaydı tamamlandı",
+  "loyalty.enrollment_started": "Sadakat kaydı başlatıldı",
+  "loyalty.public_email_enrollment_completed": "QR sadakat kaydı tamamlandı",
+  "loyalty.public_email_enrollment_started": "QR sadakat kaydı başlatıldı",
+  "onboarding.saved": "İşletme kurulum bilgileri kaydedildi",
+  "order.items_transferred": "Sipariş kalemleri taşındı",
+  "order.sent_to_preparation": "Sipariş hazırlığa gönderildi",
+  "order.zero_total_settled": "Sıfır tutarlı sipariş kapatıldı",
+  "payment.refunded": "Ödeme iade edildi",
+  "printing.bridge_enrolled": "Yazdırma bilgisayarı bağlandı",
+  "printing.bridge_printer_mapped": "Yerel yazıcı eşleştirildi",
+  "printing.bridge_printer_unmapped": "Yerel yazıcı eşleştirmesi kaldırıldı",
+  "printing.bridge_revoked": "Yazdırma bilgisayarı kaldırıldı",
+  "printing.enrollment_code_created": "Bilgisayar bağlantı kodu oluşturuldu",
+  "printing.job_manual_retry_requested": "Baskı için manuel tekrar istendi",
+  "qr.bill_requested": "QR menüden hesap istendi",
+  "shift.cash_difference": "Vardiyada kasa farkı kaydedildi",
+  "user.branch_access_updated": "Çalışanın şube erişimleri güncellendi",
+  "user.password_change_failed": "Parola değiştirme doğrulaması başarısız",
   "auth.operation_entered": "Yetkili operasyon paneline girildi",
   "auth.operation_failed": "Yetkili panel doğrulaması başarısız",
   "auth.operation_switched": "Yetkili operasyon paneli değiştirildi",
@@ -135,6 +173,19 @@ export const auditActionLabels: Record<string, string> = {
 };
 
 const resourceLabels: Record<string, string> = {
+  role: "Rol",
+  auth_session: "Oturum",
+  business_day_close: "Gün sonu kaydı",
+  campaign: "Kampanya",
+  delivery_order: "Paket siparişi",
+  print_bridge: "Yazdırma bilgisayarı",
+  print_bridge_client: "Yazdırma bilgisayarı",
+  print_bridge_mapping: "Yazıcı eşleştirmesi",
+  trusted_device: "Güvenilir cihaz",
+  loyalty_program: "Sadakat programı",
+  loyalty_customer: "Sadakat müşterisi",
+  subscription: "Üyelik",
+  onboarding: "İşletme kurulumu",
   user: "Çalışan",
   tenant: "İşletme",
   branch: "Şube",
@@ -181,4 +232,23 @@ export function auditResourceLabel(
 /** True when we have real business wording (vs. a generated fallback). */
 export function hasFriendlyAuditLabel(action: string): boolean {
   return action in auditActionLabels;
+}
+
+export function auditRoleLabel(role: string | null | undefined): string {
+  const code = role ?? "SYSTEM";
+  return (
+    (
+      {
+        SYSTEM: "Sistem",
+        SUPER_ADMIN: "Platform yöneticisi",
+        BUSINESS_OWNER: "İşletme sahibi",
+        BUSINESS_ADMIN: "Yönetici",
+        BUSINESS_MANAGER: "Müdür",
+        CASHIER: "Kasiyer",
+        WAITER: "Garson",
+        KITCHEN: "Hazırlık personeli",
+        ACCOUNTANT: "Muhasebe",
+      } as Record<string, string>
+    )[code] ?? code.replaceAll("_", " ")
+  );
 }

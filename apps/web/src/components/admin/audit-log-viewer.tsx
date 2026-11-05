@@ -55,7 +55,7 @@ import {
   shortId,
 } from "./admin-utils";
 import { AuditChanges, redactAudit } from "./audit-changes";
-import { auditActionLabel, auditResourceLabel } from "./audit-labels";
+import { auditActionLabel, auditResourceLabel, auditRoleLabel } from "./audit-labels";
 import type { AuditLog } from "./types";
 
 const PAGE_SIZE = 25
@@ -242,7 +242,7 @@ export function AuditLogViewer() {
               <SelectItem value="ALL">Tüm aktör rolleri</SelectItem>
               {roles.map((item) => (
                 <SelectItem key={item} value={item}>
-                  {item}
+                  {auditRoleLabel(item)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -261,7 +261,7 @@ export function AuditLogViewer() {
               <SelectItem value="ALL">Tüm kaynaklar</SelectItem>
               {resourceTypes.map((item) => (
                 <SelectItem key={item} value={item}>
-                  {item}
+                  {auditResourceLabel(item) ?? item}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -323,7 +323,7 @@ export function AuditLogViewer() {
                     </TableCell>
                     <TableCell>
                       <p className="font-medium">
-                        {log.actor_role ?? "SYSTEM"}
+                        {auditRoleLabel(log.actor_role)}
                       </p>
                       <p className="text-xs text-muted-foreground">
                         {log.actor_name ?? shortId(log.actor_user_id)}
@@ -425,7 +425,7 @@ function AuditDetail({
           </DialogTitle>
           <DialogDescription>
             {log
-              ? `${dateTime(log.timestamp)} · ${log.actor_role ?? "SYSTEM"}`
+              ? `${dateTime(log.timestamp)} · ${auditRoleLabel(log.actor_role)}`
               : ""}
           </DialogDescription>
         </DialogHeader>
