@@ -1096,9 +1096,9 @@ export function ProductManagement() {
             <div className="grid gap-4 rounded-2xl border bg-muted/20 p-3 sm:grid-cols-[160px_1fr]">
               <div className="relative aspect-square overflow-hidden rounded-xl border bg-card">
                 {displayedImageUrl ? (
-                  // Blob previews cannot be processed by the Next.js image optimizer.
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  <MediaImage
+                    fill
+                    sizes="(max-width: 640px) 100vw, 160px"
                     src={displayedImageUrl}
                     alt={`${formValues.name?.trim() || editing?.name || "Ürün"} görsel önizlemesi`}
                     className="size-full object-cover"

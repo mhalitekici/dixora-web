@@ -400,12 +400,14 @@ test("product images upload, refresh in admin and QR, and delete", async ({
     );
     expect(upload.status()).toBe(200);
     const current = (await upload.json()).image_url;
+    const currentPath = new URL(current, "http://localhost:13000").pathname;
     expect(current).not.toBe(previous);
     previous = current;
     await page.goto("/admin/products");
     const row = page.getByRole("row").filter({ hasText: "Classic Burger" });
     const image = row.locator("img");
     await expect(image).toBeVisible();
+    await expect(image).toHaveJSProperty("src", `http://localhost:13000${currentPath}`);
     await expect
       .poll(() =>
         image.evaluate(
@@ -413,11 +415,19 @@ test("product images upload, refresh in admin and QR, and delete", async ({
         ),
       )
       .toBe(true);
+    await row.getByRole("button", { name: "Ürün işlemleri" }).click();
+    await page.getByRole("menuitem", { name: "Ürünü düzenle" }).click();
+    const preview = page.getByRole("img", {
+      name: "Classic Burger görsel önizlemesi",
+    });
+    await expect(preview).toHaveJSProperty("src", `http://localhost:13000${currentPath}`);
+    await page.getByRole("button", { name: "Vazgeç", exact: true }).click();
     await page.goto("/m/dixora-lab/merkez");
     const qrImage = page
       .getByRole("button", { name: /Classic Burger/ })
       .locator("img");
     await expect(qrImage).toBeVisible();
+    await expect(qrImage).toHaveJSProperty("src", `http://localhost:13000${currentPath}`);
     await expect
       .poll(() =>
         qrImage.evaluate(
@@ -426,6 +436,41 @@ test("product images upload, refresh in admin and QR, and delete", async ({
       )
       .toBe(true);
   }
+  await page.goto("/admin/products");
+  await page
+    .getByRole("row")
+    .filter({ hasText: "Classic Burger" })
+    .getByRole("button", { name: "Ürün işlemleri" })
+    .click();
+  await page.getByRole("menuitem", { name: "Ürünü düzenle" }).click();
+  await page
+    .getByLabel("Ürün görseli", { exact: true })
+    .setInputFiles({ name: "crop.png", mimeType: "image/png", buffer: png });
+  await expect(
+    page.getByRole("heading", { name: "Ürün görselini düzenle" }),
+  ).toBeVisible();
+  await page.getByRole("button", { name: "Kırpmayı uygula" }).click();
+  const imageUpload = page.waitForResponse(
+    (res) =>
+      res.url().includes(`/media/products/${product.id}/image`) &&
+      res.request().method() === "POST",
+  );
+  await page
+    .getByRole("button", { name: "Değişiklikleri kaydet", exact: true })
+    .click();
+  const savedImage = await imageUpload;
+  expect(savedImage.status()).toBe(200);
+  const savedPath = new URL(
+    (await savedImage.json()).image_url,
+    "http://localhost:13000",
+  ).pathname;
+  expect(savedPath).not.toBe(
+    new URL(previous, "http://localhost:13000").pathname,
+  );
+  await page.goto("/m/dixora-lab/merkez");
+  await expect(
+    page.getByRole("button", { name: /Classic Burger/ }).locator("img"),
+  ).toHaveJSProperty("src", `http://localhost:13000${savedPath}`);
   await page.screenshot({
     path: path.join(evidence, "qr-product-image.png"),
     fullPage: true,
@@ -707,4 +752,39 @@ test("cashier opens and reconciles own shift; manager sees immutable history", a
       'nextjs-portal, button[aria-label="Open Tanstack query devtools"] { visibility: hidden !important; }',
   });
   await context.close();
+});
+
+test("audit details explain role permissions in Turkish", async ({ page }) => {
+  await login(page);
+  const created = await page.request.post("/api/backend/roles", {
+    data: {
+      code: `AUDIT_${Date.now()}`,
+      name: "Denetim kabul rolü",
+      operational_profile: "WAITER",
+      permission_codes: ["orders.read", "orders.create", "tables.read"],
+    },
+    headers: { origin: "http://localhost:13000" },
+  });
+  expect(created.status()).toBe(201);
+  await page.goto("/admin/audit-logs");
+  const record = page
+    .getByRole("row")
+    .filter({ hasText: "Özel rol oluşturuldu" })
+    .first();
+  await expect(record).toContainText("İşletme sahibi");
+  await record
+    .getByRole("button", { name: "Denetim kaydı detayını aç" })
+    .click();
+  const details = page.getByRole("dialog");
+  await expect(details.getByText("Yetkiler", { exact: true })).toBeVisible();
+  await expect(details.locator("tbody")).toContainText(
+    "Sipariş oluşturma ve ürün ekleme",
+  );
+  await expect(details.locator("tbody")).toContainText("Siparişleri görme");
+  await expect(details.locator("tbody")).not.toContainText('["');
+  await expect(details.getByText("Teknik detayları göster")).toBeVisible();
+  await page.screenshot({
+    path: path.join(evidence, "audit-readable.png"),
+    fullPage: true,
+  });
 });

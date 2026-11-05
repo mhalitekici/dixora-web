@@ -10,6 +10,7 @@ import {
 } from "@/components/qr/qr-hooks"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
+import { MediaImage } from "@/components/shared/media-image"
 
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024
 const IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"])
@@ -80,8 +81,9 @@ export function QrImageUpload({
         )}
       >
         {value ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
+          <MediaImage
+            fill
+            sizes="(max-width: 640px) 100vw, 640px"
             src={value}
             alt={`${label} önizlemesi`}
             className={cn(
