@@ -24,6 +24,11 @@ Doğrulama:
   ile kasiyer gözlemi, destekten çıkış ve garson paneline giriş doğrulandı.
 - TypeScript, ilgili ESLint, Ruff ve API dosyası mypy kontrolleri geçti.
 - Docker API/web imajları başarıyla derlendi. Veri şeması değişmedi.
+- Aynı tarayıcı akışı Docker üretim web imajında, yalıtılmış doğrulama API’sine
+  bağlı geçici servisle tekrar geçti. Geçici servis doğrulama sonrası durduruldu.
+- Yerel `dixora` API/web servisleri güncellendi ve healthy. `/ready` 200;
+  giriş ekranı 200, etkin düğme ve sıfır sayfa hatasıyla kontrol edildi. Sipariş,
+  ödeme, kasa vardiyası ve yazdırma işi satır sayıları ve tam satır özetleri aynı.
 
 Tarayıcı testi, PIN özelliği açık yalıtılmış `dixora-lab` doğrulama ortamında
 çalışır ve kendi müdür hesabını oluşturur. Gerçek kullanıcı PIN’iyle giriş
