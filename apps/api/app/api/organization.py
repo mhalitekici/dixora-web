@@ -224,7 +224,7 @@ async def _validate_employee_scope(
             status_code=422,
         )
     await _tenant_branch(db, identity, branch_id)
-    if role.code == "KITCHEN":
+    if operational_profile(role) == "KITCHEN":
         if station_id is None:
             raise DomainError(
                 "kitchen_station_required",
