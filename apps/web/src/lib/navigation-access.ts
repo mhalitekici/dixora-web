@@ -44,9 +44,19 @@ export function canNavigate(
   context: AuthContext | null | undefined,
   href: string,
 ) {
-  if (!context) return false
-  const role = context.user.roleCode
-  if (href.startsWith("/super-admin") && role !== "SUPER_ADMIN") return false
+  if (!context) return false;
+  const role = context.user.operationalProfile ?? context.user.roleCode;
+  if (href === "/admin/panels")
+    return (
+      [
+        "BUSINESS_OWNER",
+        "BUSINESS_ADMIN",
+        "BUSINESS_MANAGER",
+        "MANAGEMENT",
+      ].includes(role) &&
+      hasPermission(context, ["orders.create", "payments.manage"], "any")
+    );
+  if (href.startsWith("/super-admin") && role !== "SUPER_ADMIN") return false;
   if (href.startsWith("/cashier")) {
     return (
       [
@@ -74,6 +84,8 @@ export function canNavigate(
         "BUSINESS_ADMIN",
         "BUSINESS_MANAGER",
         "ACCOUNTANT",
+        "MANAGEMENT",
+        "BACKOFFICE",
       ].includes(role)
     )
       return false

@@ -57,8 +57,8 @@ function renderHistory(shifts: unknown[]) {
       if (url.includes("/shifts/day/preview"))
         return Promise.resolve(
           response({ error: { message: "not allowed" } }, 403),
-        )
-      throw new Error(`Unexpected request: ${url}`)
+        );
+      throw new Error(`Unexpected request: ${url}`);
     }),
   )
   const client = new QueryClient({
@@ -75,17 +75,17 @@ describe("ShiftHistory", () => {
   afterEach(() => vi.unstubAllGlobals())
 
   it("shows the cashier, expected/count values and a shortage label", async () => {
-    renderHistory([shift()])
-    expect(await screen.findByText("Halit")).toBeVisible()
-    expect(screen.getByText("EKSİK · -₺120,01")).toBeVisible()
-    expect(screen.getByText("₺3.200,00")).toBeVisible()
-    expect(screen.getByText("₺3.079,99")).toBeVisible()
-    fireEvent.click(screen.getByRole("button", { name: /Detayı göster/ }))
-    expect(screen.getByText("POS / Z kart")).toBeVisible()
-    expect(screen.getByText("₺901,25")).toBeVisible()
-    expect(screen.getByText("Kart farkı")).toBeVisible()
-    expect(screen.getByText("₺1,25")).toBeVisible()
-  })
+    renderHistory([shift()]);
+    expect(await screen.findByText("Halit")).toBeVisible();
+    expect(screen.getByText("EKSİK · -₺120,01")).toBeVisible();
+    expect(screen.getByText("₺3.200,00")).toBeVisible();
+    expect(screen.getByText("₺3.079,99")).toBeVisible();
+    fireEvent.click(screen.getByRole("button", { name: /Detayı göster/ }));
+    expect(screen.getByText("POS / Z kart")).toBeVisible();
+    expect(screen.getByText("₺901,25")).toBeVisible();
+    expect(screen.getByText("Kart farkı")).toBeVisible();
+    expect(screen.getAllByText("₺1,25")[0]).toBeVisible();
+  });
 
   it("marks an exact and an open shift without relying on color", async () => {
     renderHistory([
@@ -111,9 +111,9 @@ describe("ShiftHistory", () => {
       expected_cash: "250.00",
       card_sales: "250.00",
       card_refunds: "20.00",
-    })
-    const fetchMock = vi.fn((input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input)
+    });
+    const fetchMock = vi.fn<typeof fetch>((input: RequestInfo | URL) => {
+      const url = String(input);
       if (url.includes("/api/auth/me"))
         return Promise.resolve(
           response({
@@ -147,10 +147,10 @@ describe("ShiftHistory", () => {
           }),
         )
       if (url.includes("/shifts/history"))
-        return Promise.resolve(response(isOpen ? [openShift] : []))
-      throw new Error(`Unexpected request: ${url}`)
-    })
-    vi.stubGlobal("fetch", fetchMock)
+        return Promise.resolve(response(isOpen ? [openShift] : []));
+      throw new Error(`Unexpected request: ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
     const client = new QueryClient({
       defaultOptions: { queries: { retry: false } },
     })
@@ -158,7 +158,12 @@ describe("ShiftHistory", () => {
       wrapper: ({ children }: { children: ReactNode }) => (
         <QueryClientProvider client={client}>{children}</QueryClientProvider>
       ),
-    })
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Açık vardiyalar" }));
+    fireEvent.click(
+      await screen.findByRole("button", { name: "Vardiyayı kapat: Halit" }),
+    );
 
     expect(
       await screen.findByRole("button", { name: /Halit Vardiyasını Kapat/ }),
@@ -194,7 +199,8 @@ describe("ShiftHistory", () => {
       pin: "8642",
       closing_cash: "250",
       reported_card_total: "230",
-    })
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Gün sonu kayıtları" }));
     expect(
       await screen.findByRole("button", {
         name: /Karşılaştırmayı Onayla ve Kapat/,

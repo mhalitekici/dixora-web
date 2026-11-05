@@ -7,6 +7,14 @@
  * added backend action is never invisible to the business owner.
  */
 export const auditActionLabels: Record<string, string> = {
+  "auth.operation_entered": "Yetkili operasyon paneline girildi",
+  "auth.operation_failed": "Yetkili panel doğrulaması başarısız",
+  "auth.operation_switched": "Yetkili operasyon paneli değiştirildi",
+  "auth.operation_exited": "Operasyon destek modundan çıkıldı",
+  "printing.physical_confirmed": "Test çıktısı kağıtta doğrulandı",
+  "role.created": "Özel rol oluşturuldu",
+  "role.updated": "Rol yetkileri güncellendi",
+
   // Authentication
   "auth.login": "Kullanıcı giriş yaptı",
   "auth.login_failed": "Başarısız giriş denemesi",

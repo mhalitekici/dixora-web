@@ -16,11 +16,12 @@ import {
   ErrorState,
   LoadingState,
   number,
-} from "@/components/admin/admin-utils"
-import { EmptyState } from "@/components/shared/empty-state"
-import { PageHeader } from "@/components/shared/page-header"
-import { StatusBadge } from "@/components/shared/status-badge"
-import { Button } from "@/components/ui/button"
+} from "@/components/admin/admin-utils";
+import { EmptyState } from "@/components/shared/empty-state";
+import { PageHeader } from "@/components/shared/page-header";
+import { StatusBadge } from "@/components/shared/status-badge";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -51,15 +52,17 @@ import type {
 } from "./types"
 
 export function LoyaltyDashboard() {
-  const currentUser = useCurrentUser()
-  const canManage = hasPermission(currentUser.data, "loyalty.manage")
-  const canEnroll = hasPermission(currentUser.data, "loyalty.redeem")
-  const programQuery = useLoyaltyProgram()
-  const setupQuery = useLoyaltySetupOptions(canManage)
-  const customersQuery = useLoyaltyCustomers()
-  const [enrollOpen, setEnrollOpen] = useState(false)
-  const rewardsQuery = useLoyaltyRewards()
-  const mutation = useUpdateLoyaltyProgram()
+  const currentUser = useCurrentUser();
+  const canManage = hasPermission(currentUser.data, "loyalty.manage");
+  const canEnroll = hasPermission(currentUser.data, "loyalty.redeem");
+  const programQuery = useLoyaltyProgram();
+  const setupQuery = useLoyaltySetupOptions(canManage);
+  const customersQuery = useLoyaltyCustomers();
+  const [customerSearch, setCustomerSearch] = useState("");
+  const [rewardStatus, setRewardStatus] = useState("ALL");
+  const [enrollOpen, setEnrollOpen] = useState(false);
+  const rewardsQuery = useLoyaltyRewards();
+  const mutation = useUpdateLoyaltyProgram();
 
   if (programQuery.isLoading || (canManage && setupQuery.isLoading)) {
     return <LoadingState label="Sadakat programı yükleniyor…" />
@@ -92,14 +95,36 @@ export function LoyaltyDashboard() {
 
       <ProgramPulse program={program} />
 
-      <Tabs defaultValue="program">
-        <TabsList className="mb-5 h-auto w-full justify-start gap-1 overflow-x-auto rounded-2xl bg-muted/70 p-1 sm:w-auto">
+      <Tabs defaultValue="overview">
+        <TabsList className="mb-4 flex h-auto flex-wrap justify-start gap-2">
+          <TabsTrigger value="overview">Genel bakış</TabsTrigger>
           <TabsTrigger value="program">
-            {canManage ? "Programı düzenle" : "Program özeti"}
+            {program ? "Programı düzenle" : "Program oluştur"}
           </TabsTrigger>
           <TabsTrigger value="customers">Müşteriler</TabsTrigger>
-          <TabsTrigger value="rewards">Ödül hareketleri</TabsTrigger>
+          <TabsTrigger value="rewards">Ödüller ve hareketler</TabsTrigger>
         </TabsList>
+        <TabsContent value="overview">
+          <div className="grid gap-3 sm:grid-cols-3">
+            {[
+              ["Müşteriler", program?.stats.active_customers ?? 0],
+              ["Kullanılabilir ödüller", program?.stats.available_rewards ?? 0],
+              ["Kullanılan ödüller", program?.stats.redeemed_rewards ?? 0],
+            ].map(([label, value]) => (
+              <div key={label} className="rounded-xl border bg-card p-4">
+                <p className="text-sm text-muted-foreground">{label}</p>
+                <p className="mt-2 text-xl font-semibold tabular-nums">
+                  {value}
+                </p>
+              </div>
+            ))}
+          </div>
+          <p className="mt-4 text-sm text-muted-foreground">
+            {program
+              ? "Program durumunu üstte, müşteri ve ödül ayrıntılarını ilgili sekmelerde izleyin."
+              : "Hazır bir model seçerek program oluşturun. Kazanım ve ödül koşulları kaydetmeden önce önizlenir."}
+          </p>
+        </TabsContent>
         <TabsContent value="program">
           {canManage && options ? (
             <LoyaltyProgramForm
@@ -144,18 +169,50 @@ export function LoyaltyDashboard() {
               </Button>
             ) : null}
           </div>
+          <Input
+            className="mb-3"
+            type="search"
+            aria-label="Müşteri ara"
+            placeholder="Müşteri adı veya üyelik kodu ara…"
+            value={customerSearch}
+            onChange={(e) => setCustomerSearch(e.target.value)}
+          />
           <CustomerTable
             loading={customersQuery.isLoading}
             error={customersQuery.error}
-            customers={customersQuery.data ?? []}
+            customers={(customersQuery.data ?? []).filter((customer) =>
+              `${customer.display_name} ${customer.membership_code}`
+                .toLocaleLowerCase("tr")
+                .includes(customerSearch.toLocaleLowerCase("tr")),
+            )}
             onRetry={() => void customersQuery.refetch()}
           />
         </TabsContent>
         <TabsContent value="rewards">
+          <label className="mb-4 flex flex-wrap items-center gap-3 text-sm">
+            Ödül durumu
+            <select
+              className="min-h-11 rounded-md border bg-background px-3"
+              value={rewardStatus}
+              onChange={(e) => setRewardStatus(e.target.value)}
+            >
+              <option value="ALL">Tümü</option>
+              <option value="AVAILABLE">Kazanılan / kullanılabilir</option>
+              <option value="REDEEMED">Kullanılan</option>
+              <option value="EXPIRED">Süresi dolan</option>
+              <option value="REVERSED">İptal edilen</option>
+            </select>
+          </label>
           <RewardTable
             loading={rewardsQuery.isLoading}
             error={rewardsQuery.error}
-            rewards={rewardsQuery.data ?? []}
+            rewards={(rewardsQuery.data ?? []).filter(
+              (reward) =>
+                rewardStatus === "ALL" ||
+                (rewardStatus === "EXPIRED"
+                  ? reward.is_expired
+                  : !reward.is_expired && reward.status === rewardStatus),
+            )}
             onRetry={() => void rewardsQuery.refetch()}
           />
         </TabsContent>
@@ -407,7 +464,10 @@ function RewardTable({
                   Üye {reward.membership_code}
                 </p>
               </div>
-              <RewardStatus status={reward.status} />
+              <RewardStatus
+                status={reward.status}
+                expired={reward.is_expired}
+              />
             </div>
             <div className="mt-4 grid grid-cols-2 gap-3 text-xs text-muted-foreground">
               <p>
@@ -447,7 +507,10 @@ function RewardTable({
                   {reward.membership_code}
                 </TableCell>
                 <TableCell>
-                  <RewardStatus status={reward.status} />
+                  <RewardStatus
+                    status={reward.status}
+                    expired={reward.is_expired}
+                  />
                 </TableCell>
                 <TableCell>
                   <time dateTime={reward.issued_at}>
@@ -497,7 +560,13 @@ function LedgerShell({
   )
 }
 
-function RewardStatus({ status }: { status: LoyaltyAdminReward["status"] }) {
+function RewardStatus({
+  status,
+  expired,
+}: {
+  status: LoyaltyAdminReward["status"];
+  expired?: boolean;
+}) {
   return (
     <StatusBadge
       tone={
@@ -508,11 +577,13 @@ function RewardStatus({ status }: { status: LoyaltyAdminReward["status"] }) {
             : "neutral"
       }
     >
-      {status === "AVAILABLE"
-        ? "Kullanılabilir"
-        : status === "REDEEMED"
-          ? "Kullanıldı"
-          : "Geri alındı"}
+      {expired
+        ? "Süresi doldu"
+        : status === "AVAILABLE"
+          ? "Kullanılabilir"
+          : status === "REDEEMED"
+            ? "Kullanıldı"
+            : "Geri alındı"}
     </StatusBadge>
   )
 }

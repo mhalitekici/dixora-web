@@ -95,6 +95,11 @@ export function normalizeUser(value: unknown): AuthUser | null {
     email,
     displayName,
     roleCode,
+    operationalProfile: readString(
+      record,
+      "operational_profile",
+      "operationalProfile",
+    ),
     isActive: readBoolean(record, true, "is_active", "isActive"),
     isSuperAdmin: readBoolean(
       record,
@@ -121,11 +126,7 @@ function normalizeTenant(value: unknown): TenantSummary | null {
     slug,
     state: readString(record, "state"),
     isActive: readBoolean(record, true, "is_active", "isActive"),
-    defaultCurrency: readString(
-      record,
-      "default_currency",
-      "defaultCurrency",
-    ),
+    defaultCurrency: readString(record, "default_currency", "defaultCurrency"),
     themeMode: readThemeMode(record),
   }
 }
@@ -160,9 +161,7 @@ function normalizeBranch(value: unknown): BranchSummary | null {
   }
 }
 
-export function asRecord(
-  value: unknown,
-): Record<string, unknown> | undefined {
+export function asRecord(value: unknown): Record<string, unknown> | undefined {
   if (typeof value !== "object" || value === null || Array.isArray(value)) {
     return undefined
   }

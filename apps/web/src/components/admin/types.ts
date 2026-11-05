@@ -286,6 +286,7 @@ export type Employee = {
 };
 
 export type Role = {
+  operational_profile?: string;
   id: string;
   tenant_id: string | null;
   code: string;
@@ -364,6 +365,8 @@ export type PrintBridgeEnrollment = {
 };
 
 export type RoleCreateInput = {
+  operational_profile?:
+    "WAITER" | "CASHIER" | "KITCHEN" | "MANAGEMENT" | "BACKOFFICE";
   code: string;
   name: string;
   permission_codes: string[];
@@ -376,6 +379,9 @@ export type RoleUpdateInput = {
 };
 
 export type SalesSummary = {
+  collections?: Record<string, string>;
+  refunds?: Record<string, string>;
+  net_collections?: string;
   gross_sales: string;
   paid_orders: number;
   average_order_value: string;
@@ -383,6 +389,9 @@ export type SalesSummary = {
 };
 
 export type AuditLog = {
+  actor_name?: string | null;
+  branch_name?: string | null;
+  resource_name?: string | null;
   id: string;
   branch_id: string | null;
   actor_user_id: string | null;
@@ -425,6 +434,7 @@ export type ApprovalRequest = {
 };
 
 export type CashierShift = {
+  expected_cash: string;
   id: string;
   tenant_id: string;
   branch_id: string;

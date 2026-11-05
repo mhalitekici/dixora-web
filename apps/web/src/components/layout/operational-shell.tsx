@@ -94,7 +94,7 @@ export function OperationalShell({
   ]
 
   return (
-    <div className="min-h-dvh bg-background">
+    <div className="min-h-dvh min-w-0 bg-background">
       <SkipLink />
       <header className="sticky top-0 z-40 flex h-16 items-center gap-3 border-b bg-background/94 px-3 backdrop-blur-xl sm:px-5">
         <Link href={`/${mode}`} className="flex shrink-0 items-center">
@@ -128,7 +128,7 @@ export function OperationalShell({
             const active =
               pathname === link.href ||
               (!["/waiter", "/cashier"].includes(link.href) &&
-                pathname.startsWith(`${link.href}/`))
+                pathname.startsWith(`${link.href}/`));
             return (
               <Link
                 key={link.href}
@@ -273,7 +273,7 @@ export function OperationalShell({
         id="dixora-main"
         tabIndex={-1}
         className={cn(
-          "pb-20 lg:pb-0",
+          "min-w-0 pb-[calc(5rem+env(safe-area-inset-bottom))] lg:pb-0",
           fullBleed
             ? "min-h-[calc(100dvh-4rem)]"
             : "mx-auto w-full max-w-[1680px] p-3 sm:p-5",
@@ -294,7 +294,7 @@ export function OperationalShell({
           const active =
             pathname === link.href ||
             (!["/waiter", "/cashier"].includes(link.href) &&
-              pathname.startsWith(`${link.href}/`))
+              pathname.startsWith(`${link.href}/`));
           return (
             <Link
               key={link.href}

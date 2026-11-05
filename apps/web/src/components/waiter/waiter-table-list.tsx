@@ -37,20 +37,72 @@ type Table = {
   occupied_since?: string | null;
 };
 
-const stateMeta: Record<string, { label: string; tone: Parameters<typeof StatusBadge>[0]["tone"]; card: string; dot: string }> = {
-  AVAILABLE: { label: "Müsait", tone: "neutral", card: "border-border bg-card", dot: "bg-emerald-500" },
-  OCCUPIED: { label: "Oturum açık", tone: "info", card: "border-blue-600/20 bg-blue-500/[0.035]", dot: "bg-blue-500" },
-  ORDER_PENDING: { label: "Sipariş bekliyor", tone: "warning", card: "border-amber-600/25 bg-amber-500/[0.045]", dot: "bg-amber-500" },
-  PREPARING: { label: "Hazırlanıyor", tone: "brand", card: "border-brand/25 bg-brand/[0.035]", dot: "bg-brand" },
-  BILL_REQUESTED: { label: "Hesap istendi", tone: "purple", card: "border-violet-600/25 bg-violet-500/[0.045]", dot: "bg-violet-500" },
-  PAYMENT_PENDING: { label: "Ödeme bekliyor", tone: "purple", card: "border-violet-600/25 bg-violet-500/[0.045]", dot: "bg-violet-500" },
-  CLEANING: { label: "Temizleniyor", tone: "info", card: "border-cyan-600/20 bg-cyan-500/[0.035]", dot: "bg-cyan-500" },
-  DISABLED: { label: "Kapalı", tone: "danger", card: "border-border bg-muted/30 opacity-60", dot: "bg-red-500" },
+const stateMeta: Record<
+  string,
+  {
+    label: string;
+    tone: Parameters<typeof StatusBadge>[0]["tone"];
+    card: string;
+    dot: string;
+  }
+> = {
+  AVAILABLE: {
+    label: "Müsait",
+    tone: "neutral",
+    card: "border-border bg-card",
+    dot: "bg-emerald-500",
+  },
+  OCCUPIED: {
+    label: "Oturum açık",
+    tone: "info",
+    card: "border-blue-600/20 bg-blue-500/[0.035]",
+    dot: "bg-blue-500",
+  },
+  ORDER_PENDING: {
+    label: "Sipariş bekliyor",
+    tone: "warning",
+    card: "border-amber-600/25 bg-amber-500/[0.045]",
+    dot: "bg-amber-500",
+  },
+  PREPARING: {
+    label: "Hazırlanıyor",
+    tone: "brand",
+    card: "border-brand/25 bg-brand/[0.035]",
+    dot: "bg-brand",
+  },
+  BILL_REQUESTED: {
+    label: "Hesap istendi",
+    tone: "purple",
+    card: "border-violet-600/25 bg-violet-500/[0.045]",
+    dot: "bg-violet-500",
+  },
+  PAYMENT_PENDING: {
+    label: "Ödeme bekliyor",
+    tone: "purple",
+    card: "border-violet-600/25 bg-violet-500/[0.045]",
+    dot: "bg-violet-500",
+  },
+  CLEANING: {
+    label: "Temizleniyor",
+    tone: "info",
+    card: "border-cyan-600/20 bg-cyan-500/[0.035]",
+    dot: "bg-cyan-500",
+  },
+  DISABLED: {
+    label: "Kapalı",
+    tone: "danger",
+    card: "border-border bg-muted/30 opacity-60",
+    dot: "bg-red-500",
+  },
 };
 
 function unwrap<T>(value: unknown): T[] {
   if (Array.isArray(value)) return value as T[];
-  if (value && typeof value === "object" && Array.isArray((value as { items?: unknown }).items)) {
+  if (
+    value &&
+    typeof value === "object" &&
+    Array.isArray((value as { items?: unknown }).items)
+  ) {
     return (value as { items: T[] }).items;
   }
   return [];
@@ -69,7 +121,9 @@ const currency = new Intl.NumberFormat("tr-TR", {
 });
 
 export function WaiterTableList() {
-  const { labelProps, dialog: guestLabelDialog } = useGuestLabel([["waiter", "tables"]]);
+  const { labelProps, dialog: guestLabelDialog } = useGuestLabel([
+    ["waiter", "tables"],
+  ]);
   const [area, setArea] = useState("all");
   const [search, setSearch] = useState("");
   const [now, setNow] = useState(() => Date.now());
@@ -97,13 +151,19 @@ export function WaiterTableList() {
       tables.filter((table) => {
         const areaMatch = area === "all" || table.area_id === area;
         const searchMatch =
-          table.name.toLocaleLowerCase("tr-TR").includes(search.toLocaleLowerCase("tr-TR")) ||
-          table.customer_name?.toLocaleLowerCase("tr-TR").includes(search.toLocaleLowerCase("tr-TR"));
+          table.name
+            .toLocaleLowerCase("tr-TR")
+            .includes(search.toLocaleLowerCase("tr-TR")) ||
+          table.customer_name
+            ?.toLocaleLowerCase("tr-TR")
+            .includes(search.toLocaleLowerCase("tr-TR"));
         return areaMatch && searchMatch && table.state !== "DISABLED";
       }),
     [area, search, tables],
   );
-  const billCount = tables.filter((table) => table.state === "BILL_REQUESTED").length;
+  const billCount = tables.filter(
+    (table) => table.state === "BILL_REQUESTED",
+  ).length;
   const dataLoading = areasQuery.isLoading || tablesQuery.isLoading;
   const dataError = areasQuery.error ?? tablesQuery.error;
   const dataFetching = areasQuery.isFetching || tablesQuery.isFetching;
@@ -123,7 +183,8 @@ export function WaiterTableList() {
         <AlertTriangle className="size-7 text-destructive" />
         <h1 className="mt-4 text-base font-semibold">Masalar yüklenemedi</h1>
         <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
-          Alan veya masa verilerine ulaşılamıyor. Bağlantınızı kontrol edip yeniden deneyin.
+          Alan veya masa verilerine ulaşılamıyor. Bağlantınızı kontrol edip
+          yeniden deneyin.
         </p>
         <Button
           variant="outline"
@@ -145,10 +206,15 @@ export function WaiterTableList() {
       {guestLabelDialog}
       <header className="mb-4 flex items-start justify-between gap-3">
         <div>
-          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-brand">Servis ekranı</p>
-          <h1 className="mt-1 text-2xl font-semibold tracking-[-0.04em]">Masalarım</h1>
+          <p className="text-[0.68rem] font-semibold uppercase tracking-[0.16em] text-brand">
+            Servis ekranı
+          </p>
+          <h1 className="mt-1 text-2xl font-semibold tracking-[-0.04em]">
+            Masalarım
+          </h1>
           <p className="mt-1 text-xs text-muted-foreground">
-            {tables.filter((table) => table.state !== "AVAILABLE").length} aktif · {tables.length} toplam
+            {tables.filter((table) => table.state !== "AVAILABLE").length} aktif
+            · {tables.length} toplam
           </p>
         </div>
         <StatusBadge tone="success" pulse>
@@ -163,7 +229,9 @@ export function WaiterTableList() {
               <ReceiptText className="size-4" />
             </span>
             <span>
-              <span className="block text-lg font-bold tabular-nums">{billCount}</span>
+              <span className="block text-lg font-bold tabular-nums">
+                {billCount}
+              </span>
               <span className="block text-[0.65rem] text-violet-800/70 dark:text-violet-200/70">
                 Hesap istiyor
               </span>
@@ -190,8 +258,10 @@ export function WaiterTableList() {
             type="button"
             onClick={() => setArea("all")}
             className={cn(
-              "h-10 shrink-0 rounded-xl px-4 text-sm font-semibold",
-              area === "all" ? "bg-primary text-primary-foreground" : "bg-card text-muted-foreground ring-1 ring-border",
+              "min-h-11 shrink-0 rounded-xl px-4 text-sm font-semibold",
+              area === "all"
+                ? "bg-primary text-primary-foreground"
+                : "bg-card text-muted-foreground ring-1 ring-border",
             )}
           >
             Tümü
@@ -202,7 +272,7 @@ export function WaiterTableList() {
               type="button"
               onClick={() => setArea(item.id)}
               className={cn(
-                "h-10 shrink-0 rounded-xl px-4 text-sm font-semibold",
+                "min-h-11 shrink-0 rounded-xl px-4 text-sm font-semibold",
                 area === item.id
                   ? "bg-primary text-primary-foreground"
                   : "bg-card text-muted-foreground ring-1 ring-border",
@@ -223,7 +293,12 @@ export function WaiterTableList() {
           {filtered.map((table) => {
             const meta = stateMeta[table.state] ?? stateMeta.AVAILABLE;
             const duration = table.occupied_since
-              ? Math.max(0, Math.floor((now - new Date(table.occupied_since).getTime()) / 60_000))
+              ? Math.max(
+                  0,
+                  Math.floor(
+                    (now - new Date(table.occupied_since).getTime()) / 60_000,
+                  ),
+                )
               : null;
             return (
               <Link
@@ -232,14 +307,18 @@ export function WaiterTableList() {
                 {...labelProps(table)}
                 title="Sağ tık (veya uzun bas): misafir adı ekle"
                 className={cn(
-                  "group relative min-h-40 overflow-hidden rounded-2xl border p-3.5 transition-transform active:scale-[0.98]",
+                  "group relative flex min-h-48 min-w-0 flex-col overflow-hidden rounded-2xl border p-3.5 transition-transform focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand active:scale-[0.98]",
                   meta.card,
                 )}
               >
-                <span className={cn("absolute inset-x-0 top-0 h-1", meta.dot)} />
+                <span
+                  className={cn("absolute inset-x-0 top-0 h-1", meta.dot)}
+                />
                 <div className="flex items-start justify-between gap-2">
-                  <div>
-                    <h2 className="text-xl font-bold">{table.name}</h2>
+                  <div className="min-w-0">
+                    <h2 className="break-words text-xl font-bold">
+                      {table.name}
+                    </h2>
                     {table.guest_label ? (
                       <p className="mt-0.5 truncate text-xs font-semibold text-foreground">
                         {table.guest_label}
@@ -250,10 +329,19 @@ export function WaiterTableList() {
                       {table.guest_count ?? 0}/{table.capacity}
                     </span>
                   </div>
-                  <CircleDot className={cn("size-4", meta.dot.replace("bg-", "text-"))} />
+                  <CircleDot
+                    className={cn(
+                      "size-4 shrink-0",
+                      meta.dot.replace("bg-", "text-"),
+                    )}
+                  />
                 </div>
                 <div className="mt-5">
-                  <StatusBadge tone={meta.tone} dot={false} className="max-w-full text-[0.58rem]">
+                  <StatusBadge
+                    tone={meta.tone}
+                    dot={false}
+                    className="max-w-full text-[0.58rem]"
+                  >
                     {meta.label}
                   </StatusBadge>
                   {duration !== null ? (
@@ -262,12 +350,16 @@ export function WaiterTableList() {
                       {duration} dakika
                     </p>
                   ) : (
-                    <p className="mt-2 text-[0.65rem] text-muted-foreground">Yeni oturum</p>
+                    <p className="mt-2 text-[0.65rem] text-muted-foreground">
+                      Yeni oturum
+                    </p>
                   )}
                 </div>
-                <div className="absolute inset-x-3.5 bottom-3.5 flex items-center justify-between">
+                <div className="mt-auto flex items-center justify-between gap-2 pt-3">
                   <span className="text-sm font-semibold tabular-nums">
-                    {table.current_total ? currency.format(Number(table.current_total)) : "Masa aç"}
+                    {table.current_total
+                      ? currency.format(Number(table.current_total))
+                      : "Masa aç"}
                   </span>
                   <ArrowRight className="size-4 text-muted-foreground transition-transform group-hover:translate-x-0.5" />
                 </div>
@@ -278,8 +370,12 @@ export function WaiterTableList() {
       ) : (
         <div className="flex min-h-56 flex-col items-center justify-center rounded-2xl border border-dashed text-center">
           <Grid2X2 className="size-6 text-muted-foreground" />
-          <p className="mt-3 text-sm font-semibold">Bu alanda masa bulunamadı</p>
-          <p className="mt-1 text-xs text-muted-foreground">Aramayı temizleyin veya başka bir alan seçin.</p>
+          <p className="mt-3 text-sm font-semibold">
+            Bu alanda masa bulunamadı
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Aramayı temizleyin veya başka bir alan seçin.
+          </p>
           <Button
             variant="outline"
             className="mt-4 h-10 rounded-xl"

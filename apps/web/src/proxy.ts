@@ -108,10 +108,10 @@ function loginRedirect(request: NextRequest) {
   const loginUrl = request.nextUrl.clone()
   loginUrl.pathname = pathname.startsWith("/super-admin")
     ? "/super-admin/login"
-    : "/login"
-  loginUrl.search = ""
-  loginUrl.searchParams.set("returnTo", `${pathname}${search}`)
-  return NextResponse.redirect(loginUrl)
+    : "/login";
+  loginUrl.search = "";
+  loginUrl.searchParams.set("returnTo", `${pathname}${search}`);
+  return NextResponse.redirect(loginUrl);
 }
 
 function readRole(token: string): string | null {
@@ -121,14 +121,24 @@ function readRole(token: string): string | null {
     const normalized = payload.replace(/-/g, "+").replace(/_/g, "/")
     const decoded = JSON.parse(
       Buffer.from(normalized, "base64").toString("utf8"),
-    ) as { role?: unknown; exp?: unknown }
+    ) as { role?: unknown; operational_profile?: unknown; exp?: unknown };
     if (
       typeof decoded.role !== "string" ||
       (typeof decoded.exp === "number" && decoded.exp * 1000 <= Date.now())
     ) {
       return null
     }
-    return decoded.role
+    if (roleHomes[decoded.role]) return decoded.role;
+    return typeof decoded.operational_profile === "string"
+      ? ((
+          {
+            WAITER: "WAITER",
+            CASHIER: "CASHIER",
+            MANAGEMENT: "BUSINESS_MANAGER",
+            BACKOFFICE: "ACCOUNTANT",
+          } as Record<string, string>
+        )[decoded.operational_profile] ?? decoded.role)
+      : decoded.role;
   } catch {
     return null
   }
@@ -143,7 +153,7 @@ function roleCanOpen(role: string, pathname: string) {
         "/admin/roles",
         "/admin/settings",
         "/admin/branch-settings",
-      ].some((path) => pathname === path || pathname.startsWith(`${path}/`))
+      ].some((path) => pathname === path || pathname.startsWith(`${path}/`));
     }
     if (role === "ACCOUNTANT") {
       return (

@@ -1,6 +1,6 @@
-"use client"
+"use client";
 
-import { zodResolver } from "@hookform/resolvers/zod"
+import { zodResolver } from "@hookform/resolvers/zod";
 import {
   CalendarDays,
   Gift,
@@ -10,42 +10,50 @@ import {
   ShieldCheck,
   Sparkles,
   Store,
-} from "lucide-react"
-import type { LucideIcon } from "lucide-react"
-import type { ReactNode } from "react"
-import { useState } from "react"
-import { Controller, useForm, useWatch, type Control } from "react-hook-form"
-import { z } from "zod"
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import type { ReactNode } from "react";
+import { useState } from "react";
+import { Controller, useForm, useWatch, type Control } from "react-hook-form";
+import { z } from "zod";
 
-import { FieldError } from "@/components/admin/admin-utils"
-import { LoyaltyPresetPicker } from "@/components/loyalty/loyalty-presets"
-import { Button } from "@/components/ui/button"
-import { Checkbox } from "@/components/ui/checkbox"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { FieldError } from "@/components/admin/admin-utils";
+import { LoyaltyPresetPicker } from "@/components/loyalty/loyalty-presets";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Switch } from "@/components/ui/switch"
+} from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
 
-import { StampProgress } from "./stamp-progress"
+import { StampProgress } from "./stamp-progress";
 import type {
   LoyaltyProgram,
   LoyaltyProgramInput,
   LoyaltySetupOptions,
-} from "./types"
+} from "./types";
 
 const schema = z
   .object({
-    name: z.string().trim().min(2, "Program adı en az 2 karakter olmalı.").max(160),
+    name: z
+      .string()
+      .trim()
+      .min(2, "Program adı en az 2 karakter olmalı.")
+      .max(160),
     is_active: z.boolean(),
     show_on_qr: z.boolean(),
     campaign_type: z.enum(["VISIT_COUNT", "PRODUCT_QUANTITY"]),
-    threshold: z.coerce.number().int().min(1, "Hedef en az 1 olmalı.").max(10_000),
+    threshold: z.coerce
+      .number()
+      .int()
+      .min(1, "Hedef en az 1 olmalı.")
+      .max(10_000),
     branch_ids: z.array(z.string().uuid()).min(1, "En az bir şube seçin."),
     qualifying_type: z.enum(["PRODUCT", "CATEGORY"]),
     qualifying_id: z.string(),
@@ -65,18 +73,22 @@ const schema = z
         code: "custom",
         path: ["qualifying_id"],
         message: "Sayılacak ürün veya kategoriyi seçin.",
-      })
+      });
     }
-    if (values.starts_at && values.ends_at && values.ends_at <= values.starts_at) {
+    if (
+      values.starts_at &&
+      values.ends_at &&
+      values.ends_at <= values.starts_at
+    ) {
       context.addIssue({
         code: "custom",
         path: ["ends_at"],
         message: "Bitiş tarihi başlangıçtan sonra olmalı.",
-      })
+      });
     }
-  })
+  });
 
-type FormValues = z.infer<typeof schema>
+type FormValues = z.infer<typeof schema>;
 
 export function LoyaltyProgramForm({
   program,
@@ -84,31 +96,47 @@ export function LoyaltyProgramForm({
   pending,
   onSubmit,
 }: {
-  program: LoyaltyProgram | null
-  options: LoyaltySetupOptions
-  pending: boolean
-  onSubmit: (input: LoyaltyProgramInput) => void
+  program: LoyaltyProgram | null;
+  options: LoyaltySetupOptions;
+  pending: boolean;
+  onSubmit: (input: LoyaltyProgramInput) => void;
 }) {
   const form = useForm<FormValues>({
     resolver: zodResolver(schema),
     defaultValues: defaults(program, options),
-  })
-  const [presetId, setPresetId] = useState<string | null>(null)
-  const campaignType = useWatch({ control: form.control, name: "campaign_type" })
-  const qualifyingType = useWatch({ control: form.control, name: "qualifying_type" })
-  const rewardType = useWatch({ control: form.control, name: "reward_type" })
-  const watched = useWatch({ control: form.control })
+  });
+  const [presetId, setPresetId] = useState<string | null>(null);
+  const campaignType = useWatch({
+    control: form.control,
+    name: "campaign_type",
+  });
+  const qualifyingType = useWatch({
+    control: form.control,
+    name: "qualifying_type",
+  });
+  const rewardType = useWatch({ control: form.control, name: "reward_type" });
+  const watched = useWatch({ control: form.control });
   const qualifyingOptions =
-    qualifyingType === "PRODUCT" ? options.products : options.categories
-  const rewardOptions = rewardType === "PRODUCT" ? options.products : options.categories
-  const rewardName = rewardOptions.find((item) => item.id === watched.reward_id)?.name
-  const threshold = Math.max(1, Number(watched.threshold) || 1)
+    qualifyingType === "PRODUCT" ? options.products : options.categories;
+  const rewardOptions =
+    rewardType === "PRODUCT" ? options.products : options.categories;
+  const rewardName = rewardOptions.find(
+    (item) => item.id === watched.reward_id,
+  )?.name;
+  const threshold = Math.max(1, Number(watched.threshold) || 1);
   const selectedBranchNames = options.branches
     .filter((branch) => watched.branch_ids?.includes(branch.id))
-    .map((branch) => branch.name)
+    .map((branch) => branch.name);
 
   const submit = (values: FormValues) => {
-    const minimum = values.minimum_order_amount.replace(",", ".")
+    const minimum = values.minimum_order_amount.replace(",", ".");
+    if (
+      program &&
+      !window.confirm(
+        "Program kuralları güncellensin mi? Değişiklikler sonraki kazanımlar için geçerli olacaktır.",
+      )
+    )
+      return;
     onSubmit({
       name: values.name,
       is_active: values.is_active,
@@ -117,23 +145,29 @@ export function LoyaltyProgramForm({
       threshold: values.threshold,
       branch_ids: values.branch_ids,
       qualifying_product_id:
-        values.campaign_type === "PRODUCT_QUANTITY" && values.qualifying_type === "PRODUCT"
+        values.campaign_type === "PRODUCT_QUANTITY" &&
+        values.qualifying_type === "PRODUCT"
           ? values.qualifying_id
           : null,
       qualifying_category_id:
-        values.campaign_type === "PRODUCT_QUANTITY" && values.qualifying_type === "CATEGORY"
+        values.campaign_type === "PRODUCT_QUANTITY" &&
+        values.qualifying_type === "CATEGORY"
           ? values.qualifying_id
           : null,
-      reward_product_id: values.reward_type === "PRODUCT" ? values.reward_id : null,
-      reward_category_id: values.reward_type === "CATEGORY" ? values.reward_id : null,
+      reward_product_id:
+        values.reward_type === "PRODUCT" ? values.reward_id : null,
+      reward_category_id:
+        values.reward_type === "CATEGORY" ? values.reward_id : null,
       minimum_order_amount: minimum,
       allow_multiple_same_day: values.allow_multiple_same_day,
       reward_same_order: values.reward_same_order,
-      starts_at: values.starts_at ? new Date(values.starts_at).toISOString() : null,
+      starts_at: values.starts_at
+        ? new Date(values.starts_at).toISOString()
+        : null,
       ends_at: values.ends_at ? new Date(values.ends_at).toISOString() : null,
       expected_version: program?.version ?? null,
-    })
-  }
+    });
+  };
 
   return (
     <form
@@ -146,23 +180,25 @@ export function LoyaltyProgramForm({
           <LoyaltyPresetPicker
             activePresetId={presetId}
             onSelect={(preset) => {
-              setPresetId(preset.id)
+              setPresetId(preset.id);
               // Fill the mechanics; the owner still picks the actual product and
               // reward, which is the only part a template cannot know.
               form.setValue("campaign_type", preset.values.campaign_type, {
                 shouldDirty: true,
-              })
-              form.setValue("threshold", preset.values.threshold, { shouldDirty: true })
+              });
+              form.setValue("threshold", preset.values.threshold, {
+                shouldDirty: true,
+              });
               form.setValue(
                 "minimum_order_amount",
                 preset.values.minimum_order_amount,
                 { shouldDirty: true },
-              )
+              );
               form.setValue(
                 "allow_multiple_same_day",
                 preset.values.allow_multiple_same_day,
                 { shouldDirty: true },
-              )
+              );
             }}
           />
         </div>
@@ -191,7 +227,9 @@ export function LoyaltyProgramForm({
                 control={form.control}
                 name="is_active"
                 render={({ field }) => (
-                  <div className={`rounded-2xl border p-4 ${field.value ? "border-emerald-500/25 bg-emerald-500/[0.07]" : "bg-muted/35"}`}>
+                  <div
+                    className={`rounded-2xl border p-4 ${field.value ? "border-emerald-500/25 bg-emerald-500/[0.07]" : "bg-muted/35"}`}
+                  >
                     <div className="flex items-center justify-between gap-3">
                       <Label htmlFor="loyalty-active" className="font-semibold">
                         {field.value ? "Program aktif" : "Program kapalı"}
@@ -203,7 +241,10 @@ export function LoyaltyProgramForm({
                         aria-describedby="loyalty-active-description"
                       />
                     </div>
-                    <p id="loyalty-active-description" className="mt-2 text-xs leading-5 text-muted-foreground">
+                    <p
+                      id="loyalty-active-description"
+                      className="mt-2 text-xs leading-5 text-muted-foreground"
+                    >
                       {field.value
                         ? "Uygun ödemeler ilerleme kazandırır."
                         : "Ayarlar saklanır; yeni ilerleme oluşmaz."}
@@ -229,14 +270,23 @@ export function LoyaltyProgramForm({
                     <Label htmlFor="loyalty-campaign-type">Neyi sayalım?</Label>
                     <Select
                       value={field.value}
-                      onValueChange={(value) => field.onChange(value ?? "VISIT_COUNT")}
+                      onValueChange={(value) =>
+                        field.onChange(value ?? "VISIT_COUNT")
+                      }
                     >
-                      <SelectTrigger id="loyalty-campaign-type" className="mt-1.5 w-full">
+                      <SelectTrigger
+                        id="loyalty-campaign-type"
+                        className="mt-1.5 w-full"
+                      >
                         <SelectValue />
                       </SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="VISIT_COUNT">Geçerli ziyaretleri</SelectItem>
-                        <SelectItem value="PRODUCT_QUANTITY">Seçili ürün adetlerini</SelectItem>
+                        <SelectItem value="VISIT_COUNT">
+                          Geçerli ziyaretleri
+                        </SelectItem>
+                        <SelectItem value="PRODUCT_QUANTITY">
+                          Seçili ürün adetlerini
+                        </SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -244,7 +294,9 @@ export function LoyaltyProgramForm({
               />
               <div>
                 <Label htmlFor="loyalty-threshold">
-                  {campaignType === "VISIT_COUNT" ? "Kaç ziyarette ödül?" : "Kaç üründe ödül?"}
+                  {campaignType === "VISIT_COUNT"
+                    ? "Kaç ziyarette ödül?"
+                    : "Kaç üründe ödül?"}
                 </Label>
                 <Input
                   id="loyalty-threshold"
@@ -254,7 +306,9 @@ export function LoyaltyProgramForm({
                   className="mt-1.5"
                   {...form.register("threshold")}
                 />
-                <FieldError>{form.formState.errors.threshold?.message}</FieldError>
+                <FieldError>
+                  {form.formState.errors.threshold?.message}
+                </FieldError>
               </div>
 
               {campaignType === "PRODUCT_QUANTITY" ? (
@@ -265,7 +319,9 @@ export function LoyaltyProgramForm({
                   options={qualifyingOptions}
                   control={form.control}
                   error={form.formState.errors.qualifying_id?.message}
-                  onTypeChange={() => form.setValue("qualifying_id", "", { shouldDirty: true })}
+                  onTypeChange={() =>
+                    form.setValue("qualifying_id", "", { shouldDirty: true })
+                  }
                 />
               ) : null}
 
@@ -276,22 +332,32 @@ export function LoyaltyProgramForm({
                 options={rewardOptions}
                 control={form.control}
                 error={form.formState.errors.reward_id?.message}
-                onTypeChange={() => form.setValue("reward_id", "", { shouldDirty: true })}
+                onTypeChange={() =>
+                  form.setValue("reward_id", "", { shouldDirty: true })
+                }
               />
 
               <div>
-                <Label htmlFor="loyalty-minimum">Minimum sipariş tutarı (₺)</Label>
+                <Label htmlFor="loyalty-minimum">
+                  Minimum sipariş tutarı (₺)
+                </Label>
                 <Input
                   id="loyalty-minimum"
                   inputMode="decimal"
                   className="mt-1.5"
                   {...form.register("minimum_order_amount")}
                 />
-                <p className="mt-1.5 text-xs text-muted-foreground">0 girerseniz tutar sınırı uygulanmaz.</p>
-                <FieldError>{form.formState.errors.minimum_order_amount?.message}</FieldError>
+                <p className="mt-1.5 text-xs text-muted-foreground">
+                  0 girerseniz tutar sınırı uygulanmaz.
+                </p>
+                <FieldError>
+                  {form.formState.errors.minimum_order_amount?.message}
+                </FieldError>
               </div>
               <div className="rounded-2xl border border-brand/20 bg-brand-soft/55 p-4">
-                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-brand">Kural özeti</p>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-brand">
+                  Kural özeti
+                </p>
                 <p className="mt-2 text-sm font-medium leading-6">
                   {campaignType === "VISIT_COUNT"
                     ? `${threshold} uygun ziyareti tamamla`
@@ -302,77 +368,97 @@ export function LoyaltyProgramForm({
             </div>
           </StepSection>
 
-          <StepSection
-            number="03"
-            icon={ShieldCheck}
-            title="Sınırlar ve zamanlama"
-            description="Kampanyanın ne zaman işleyeceğini ve tekrarları nasıl değerlendireceğini belirleyin."
-          >
-            <div className="grid gap-4 sm:grid-cols-2">
-              <div>
-                <Label htmlFor="loyalty-start">Başlangıç (isteğe bağlı)</Label>
-                <div className="relative mt-1.5">
-                  <CalendarDays className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="loyalty-start"
-                    type="datetime-local"
-                    className="pl-9"
-                    {...form.register("starts_at")}
-                  />
-                </div>
-              </div>
-              <div>
-                <Label htmlFor="loyalty-end">Bitiş (isteğe bağlı)</Label>
-                <div className="relative mt-1.5">
-                  <CalendarDays className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="loyalty-end"
-                    type="datetime-local"
-                    className="pl-9"
-                    {...form.register("ends_at")}
-                  />
-                </div>
-                <FieldError>{form.formState.errors.ends_at?.message}</FieldError>
-              </div>
-            </div>
-
-            <div className="mt-5 divide-y rounded-2xl border">
-              <Controller
-                control={form.control}
-                name="allow_multiple_same_day"
-                render={({ field }) => (
-                  <label htmlFor="loyalty-multiple-day" className="flex items-start gap-3 p-4 text-sm">
-                    <Checkbox
-                      id="loyalty-multiple-day"
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
+          <details className="rounded-xl border bg-card">
+            <summary className="cursor-pointer p-4 text-sm font-semibold">
+              Gelişmiş seçenekler: sınırlar ve zamanlama
+            </summary>
+            <StepSection
+              number="03"
+              icon={ShieldCheck}
+              title="Sınırlar ve zamanlama"
+              description="Kampanyanın ne zaman işleyeceğini ve tekrarları nasıl değerlendireceğini belirleyin."
+            >
+              <div className="grid gap-4 sm:grid-cols-2">
+                <div>
+                  <Label htmlFor="loyalty-start">
+                    Başlangıç (isteğe bağlı)
+                  </Label>
+                  <div className="relative mt-1.5">
+                    <CalendarDays className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      id="loyalty-start"
+                      type="datetime-local"
+                      className="pl-9"
+                      {...form.register("starts_at")}
                     />
-                    <span>
-                      <span className="font-medium">Aynı gün birden fazla ilerleme ver</span>
-                      <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                        Kapalıysa aynı üyenin yalnızca ilk uygun ziyareti sayılır.
-                      </span>
-                    </span>
-                  </label>
-                )}
-              />
-              <div className="flex items-start gap-3 p-4 text-sm opacity-65">
-                <Checkbox
-                  id="loyalty-same-order"
-                  checked={false}
-                  disabled
-                  aria-describedby="loyalty-same-order-description"
-                />
-                <span>
-                  <Label htmlFor="loyalty-same-order">Kazanılan ödülü aynı siparişte kullan</Label>
-                  <span id="loyalty-same-order-description" className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                    Yeni ödüller ödeme tamamlandıktan sonra oluşur ve sonraki uygun siparişte kullanılır.
-                  </span>
-                </span>
+                  </div>
+                </div>
+                <div>
+                  <Label htmlFor="loyalty-end">Bitiş (isteğe bağlı)</Label>
+                  <div className="relative mt-1.5">
+                    <CalendarDays className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      id="loyalty-end"
+                      type="datetime-local"
+                      className="pl-9"
+                      {...form.register("ends_at")}
+                    />
+                  </div>
+                  <FieldError>
+                    {form.formState.errors.ends_at?.message}
+                  </FieldError>
+                </div>
               </div>
-            </div>
-          </StepSection>
 
+              <div className="mt-5 divide-y rounded-2xl border">
+                <Controller
+                  control={form.control}
+                  name="allow_multiple_same_day"
+                  render={({ field }) => (
+                    <label
+                      htmlFor="loyalty-multiple-day"
+                      className="flex items-start gap-3 p-4 text-sm"
+                    >
+                      <Checkbox
+                        id="loyalty-multiple-day"
+                        checked={field.value}
+                        onCheckedChange={field.onChange}
+                      />
+                      <span>
+                        <span className="font-medium">
+                          Aynı gün birden fazla ilerleme ver
+                        </span>
+                        <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
+                          Kapalıysa aynı üyenin yalnızca ilk uygun ziyareti
+                          sayılır.
+                        </span>
+                      </span>
+                    </label>
+                  )}
+                />
+                <div className="flex items-start gap-3 p-4 text-sm opacity-65">
+                  <Checkbox
+                    id="loyalty-same-order"
+                    checked={false}
+                    disabled
+                    aria-describedby="loyalty-same-order-description"
+                  />
+                  <span>
+                    <Label htmlFor="loyalty-same-order">
+                      Kazanılan ödülü aynı siparişte kullan
+                    </Label>
+                    <span
+                      id="loyalty-same-order-description"
+                      className="mt-0.5 block text-xs leading-5 text-muted-foreground"
+                    >
+                      Yeni ödüller ödeme tamamlandıktan sonra oluşur ve sonraki
+                      uygun siparişte kullanılır.
+                    </span>
+                  </span>
+                </div>
+              </div>
+            </StepSection>
+          </details>
           <StepSection
             number="04"
             icon={MapPin}
@@ -384,10 +470,12 @@ export function LoyaltyProgramForm({
               name="branch_ids"
               render={({ field }) => (
                 <fieldset>
-                  <legend className="text-sm font-medium">Geçerli şubeler</legend>
+                  <legend className="text-sm font-medium">
+                    Geçerli şubeler
+                  </legend>
                   <div className="mt-3 grid gap-2 sm:grid-cols-2">
                     {options.branches.map((branch) => {
-                      const checked = field.value.includes(branch.id)
+                      const checked = field.value.includes(branch.id);
                       return (
                         <label
                           htmlFor={`loyalty-branch-${branch.id}`}
@@ -401,14 +489,16 @@ export function LoyaltyProgramForm({
                               field.onChange(
                                 nextChecked
                                   ? [...field.value, branch.id]
-                                  : field.value.filter((id) => id !== branch.id),
+                                  : field.value.filter(
+                                      (id) => id !== branch.id,
+                                    ),
                               )
                             }
                           />
                           <Store className="size-4 text-muted-foreground" />
                           <span className="font-medium">{branch.name}</span>
                         </label>
-                      )
+                      );
                     })}
                   </div>
                 </fieldset>
@@ -430,9 +520,12 @@ export function LoyaltyProgramForm({
                     onCheckedChange={field.onChange}
                   />
                   <span>
-                    <span className="font-medium">QR menüde katılım biletini göster</span>
+                    <span className="font-medium">
+                      QR menüde katılım biletini göster
+                    </span>
                     <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">
-                      Program aktif ve şube seçili olduğunda müşteriler telefonla doğrulanarak katılabilir.
+                      Program aktif ve şube seçili olduğunda müşteriler
+                      telefonla doğrulanarak katılabilir.
                     </span>
                   </span>
                 </label>
@@ -445,7 +538,11 @@ export function LoyaltyProgramForm({
           <p className="text-xs leading-5 text-muted-foreground">
             Değişiklikler kaydedilene kadar müşterilere yansımaz.
           </p>
-          <Button type="submit" size="lg" disabled={pending || !form.formState.isDirty}>
+          <Button
+            type="submit"
+            size="lg"
+            disabled={pending || !form.formState.isDirty}
+          >
             {pending ? <LoaderCircle className="animate-spin" /> : <Save />}
             {pending ? "Kaydediliyor…" : "Programı kaydet"}
           </Button>
@@ -459,7 +556,9 @@ export function LoyaltyProgramForm({
               <Gift className="size-4" />
               Müşteri önizlemesi
             </span>
-            <span className={`rounded-full px-2.5 py-1 text-[0.65rem] font-semibold ${watched.is_active ? "bg-emerald-600 text-white" : "bg-stone-200 text-stone-700 dark:bg-white/10 dark:text-stone-200"}`}>
+            <span
+              className={`rounded-full px-2.5 py-1 text-[0.65rem] font-semibold ${watched.is_active ? "bg-emerald-600 text-white" : "bg-stone-200 text-stone-700 dark:bg-white/10 dark:text-stone-200"}`}
+            >
               {watched.is_active ? "Yayında" : "Taslak"}
             </span>
           </div>
@@ -486,12 +585,23 @@ export function LoyaltyProgramForm({
           />
 
           <div className="mt-6 rounded-2xl bg-[#292524] p-4 text-stone-50 dark:bg-black/25">
-            <p className="text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-orange-300">Hedef ödülü</p>
-            <p className="mt-1.5 font-semibold">{rewardName || "Henüz ödül seçilmedi"}</p>
+            <p className="text-[0.65rem] font-semibold uppercase tracking-[0.14em] text-orange-300">
+              Hedef ödülü
+            </p>
+            <p className="mt-1.5 font-semibold">
+              {rewardName || "Henüz ödül seçilmedi"}
+            </p>
           </div>
 
           <dl className="mt-5 space-y-3 text-xs">
-            <PreviewRow label="Geçerli yer" value={selectedBranchNames.length ? selectedBranchNames.join(", ") : "Şube seçilmedi"} />
+            <PreviewRow
+              label="Geçerli yer"
+              value={
+                selectedBranchNames.length
+                  ? selectedBranchNames.join(", ")
+                  : "Şube seçilmedi"
+              }
+            />
             <PreviewRow
               label="Minimum sepet"
               value={formatCurrency(watched.minimum_order_amount)}
@@ -504,7 +614,7 @@ export function LoyaltyProgramForm({
         </div>
       </aside>
     </form>
-  )
+  );
 }
 
 function StepSection({
@@ -514,11 +624,11 @@ function StepSection({
   description,
   children,
 }: {
-  number: string
-  icon: LucideIcon
-  title: string
-  description: string
-  children: ReactNode
+  number: string;
+  icon: LucideIcon;
+  title: string;
+  description: string;
+  children: ReactNode;
 }) {
   return (
     <section className="border-b last:border-b-0">
@@ -528,15 +638,19 @@ function StepSection({
         </span>
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
-            <span className="font-mono text-[0.65rem] font-semibold tracking-wider text-brand">ADIM {number}</span>
+            <span className="font-mono text-[0.65rem] font-semibold tracking-wider text-brand">
+              ADIM {number}
+            </span>
             <h2 className="font-semibold">{title}</h2>
           </div>
-          <p className="mt-1 text-sm leading-5 text-muted-foreground">{description}</p>
+          <p className="mt-1 text-sm leading-5 text-muted-foreground">
+            {description}
+          </p>
         </div>
       </header>
       <div className="p-4 sm:p-6">{children}</div>
     </section>
-  )
+  );
 }
 
 function TargetSelector({
@@ -548,13 +662,13 @@ function TargetSelector({
   error,
   onTypeChange,
 }: {
-  label: string
-  typeName: "qualifying_type" | "reward_type"
-  idName: "qualifying_id" | "reward_id"
-  options: Array<{ id: string; name: string }>
-  control: Control<FormValues>
-  error?: string
-  onTypeChange: () => void
+  label: string;
+  typeName: "qualifying_type" | "reward_type";
+  idName: "qualifying_id" | "reward_id";
+  options: Array<{ id: string; name: string }>;
+  control: Control<FormValues>;
+  error?: string;
+  onTypeChange: () => void;
 }) {
   return (
     <div className="sm:col-span-2">
@@ -567,8 +681,8 @@ function TargetSelector({
             <Select
               value={field.value}
               onValueChange={(value) => {
-                field.onChange(value ?? "PRODUCT")
-                onTypeChange()
+                field.onChange(value ?? "PRODUCT");
+                onTypeChange();
               }}
             >
               <SelectTrigger className="w-full" aria-label={`${label} türü`}>
@@ -585,13 +699,18 @@ function TargetSelector({
           control={control}
           name={idName}
           render={({ field }) => (
-            <Select value={field.value} onValueChange={(value) => field.onChange(value ?? "")}>
+            <Select
+              value={field.value}
+              onValueChange={(value) => field.onChange(value ?? "")}
+            >
               <SelectTrigger className="w-full" aria-label={label}>
                 <SelectValue placeholder="Seçin" />
               </SelectTrigger>
               <SelectContent>
                 {options.map((option) => (
-                  <SelectItem key={option.id} value={option.id}>{option.name}</SelectItem>
+                  <SelectItem key={option.id} value={option.id}>
+                    {option.name}
+                  </SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -600,7 +719,7 @@ function TargetSelector({
       </div>
       <FieldError>{error}</FieldError>
     </div>
-  )
+  );
 }
 
 function PreviewRow({ label, value }: { label: string; value: string }) {
@@ -609,29 +728,32 @@ function PreviewRow({ label, value }: { label: string; value: string }) {
       <dt className="text-stone-500 dark:text-stone-400">{label}</dt>
       <dd className="max-w-[60%] text-right font-medium">{value}</dd>
     </div>
-  )
+  );
 }
 
 function formatCurrency(value: string | undefined): string {
-  const amount = Number((value ?? "0").replace(",", "."))
-  if (!Number.isFinite(amount) || amount <= 0) return "Sınır yok"
-  return amount.toLocaleString("tr-TR", { style: "currency", currency: "TRY" })
+  const amount = Number((value ?? "0").replace(",", "."));
+  if (!Number.isFinite(amount) || amount <= 0) return "Sınır yok";
+  return amount.toLocaleString("tr-TR", { style: "currency", currency: "TRY" });
 }
 
 function defaults(
   program: LoyaltyProgram | null,
   options: LoyaltySetupOptions,
 ): FormValues {
-  const rule = program?.rule
+  const rule = program?.rule;
   return {
     name: program?.name ?? "Dixora Müdavim",
     is_active: program?.is_active ?? false,
     show_on_qr: program?.show_on_qr ?? false,
     campaign_type: rule?.campaign_type ?? "VISIT_COUNT",
     threshold: rule?.threshold ?? 5,
-    branch_ids: program?.branch_ids ?? (options.branches[0] ? [options.branches[0].id] : []),
+    branch_ids:
+      program?.branch_ids ??
+      (options.branches[0] ? [options.branches[0].id] : []),
     qualifying_type: rule?.qualifying_category_id ? "CATEGORY" : "PRODUCT",
-    qualifying_id: rule?.qualifying_product_id ?? rule?.qualifying_category_id ?? "",
+    qualifying_id:
+      rule?.qualifying_product_id ?? rule?.qualifying_category_id ?? "",
     reward_type: rule?.reward_category_id ? "CATEGORY" : "PRODUCT",
     reward_id: rule?.reward_product_id ?? rule?.reward_category_id ?? "",
     minimum_order_amount: rule?.minimum_order_amount ?? "0.00",
@@ -639,12 +761,12 @@ function defaults(
     reward_same_order: false,
     starts_at: toLocalDateTime(program?.starts_at),
     ends_at: toLocalDateTime(program?.ends_at),
-  }
+  };
 }
 
 function toLocalDateTime(value: string | null | undefined): string {
-  if (!value) return ""
-  const date = new Date(value)
-  const offset = date.getTimezoneOffset() * 60_000
-  return new Date(date.getTime() - offset).toISOString().slice(0, 16)
+  if (!value) return "";
+  const date = new Date(value);
+  const offset = date.getTimezoneOffset() * 60_000;
+  return new Date(date.getTime() - offset).toISOString().slice(0, 16);
 }

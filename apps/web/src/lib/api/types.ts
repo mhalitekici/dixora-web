@@ -69,15 +69,16 @@ export interface BranchSummary {
 }
 
 export interface AuthUser {
-  id: UUID
-  tenantId: UUID | null
-  branchId: UUID | null
-  username: string
-  email: string | null
-  displayName: string
-  roleCode: RoleCode
-  isActive: boolean
-  isSuperAdmin: boolean
+  id: UUID;
+  tenantId: UUID | null;
+  branchId: UUID | null;
+  username: string;
+  email: string | null;
+  displayName: string;
+  operationalProfile?: string;
+  roleCode: RoleCode;
+  isActive: boolean;
+  isSuperAdmin: boolean;
 }
 
 export interface AuthContext {
