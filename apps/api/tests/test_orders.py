@@ -206,7 +206,10 @@ async def test_cashier_print_command_dispatches_only_pending_items(api: ApiConte
             .all()
         )
     assert len(all_jobs) == 3
-    newest_document = max(all_jobs, key=lambda job: job.created_at).payload["document"]
+    first_job_ids = {job.id for job in first_jobs}
+    new_jobs = [job for job in all_jobs if job.id not in first_job_ids]
+    assert len(new_jobs) == 1
+    newest_document = new_jobs[0].payload["document"]
     assert [line["name"] for line in newest_document["lines"]] == ["Homemade Lemonade"]
 
     tables = (await api.client.get("/api/v1/tables", headers=headers)).json()
