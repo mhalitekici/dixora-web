@@ -215,35 +215,16 @@ async def test_custom_cashier_cannot_bypass_shift_requirement(api: ApiContext) -
     assert payment.json()["error"]["code"] == "cashier_shift_required"
 
 
-async def test_custom_kitchen_profile_requires_a_valid_preparation_station(api: ApiContext) -> None:
+async def test_custom_roles_cannot_restore_retired_kitchen_profile(api: ApiContext) -> None:
     headers = auth_headers(await login(api))
-    resources = await seeded_resources(api, headers)
     role = await api.client.post(
         "/api/v1/roles",
         headers=headers,
         json={
             "code": "CUSTOM_KITCHEN",
-            "name": "Özel hazırlık personeli",
+            "name": "Eski hazırlık profili",
             "operational_profile": "KITCHEN",
             "permission_codes": ["kitchen.read", "kitchen.manage"],
         },
     )
-    assert role.status_code == 201, role.text
-    payload = {
-        "username": "custom-kitchen",
-        "display_name": "Özel hazırlık",
-        "role_id": role.json()["id"],
-        "branch_id": resources["tables"][0]["branch_id"],
-        "temporary_password": "DixoraLab!2026",
-    }
-    missing = await api.client.post("/api/v1/users", headers=headers, json=payload)
-    assert missing.status_code == 422, missing.text
-    assert missing.json()["error"]["code"] == "kitchen_station_required"
-    stations = (await api.client.get("/api/v1/catalog/stations", headers=headers)).json()
-    created = await api.client.post(
-        "/api/v1/users",
-        headers=headers,
-        json={**payload, "preparation_station_id": stations[0]["id"]},
-    )
-    assert created.status_code == 201, created.text
-    assert created.json()["preparation_station_id"] == stations[0]["id"]
+    assert role.status_code == 422, role.text

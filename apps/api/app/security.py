@@ -16,11 +16,11 @@ from sqlalchemy.orm import selectinload
 
 from app.config import Settings
 from app.errors import DomainError
-from app.models import AuthSession, Branch, Role, Tenant, User
+from app.models import AuthSession, Role, Tenant, User
 from app.models.enums import TenantState
 from app.rbac import operational_profile
 from app.schemas import TokenPair
-from app.services.branch_access import resolve_accessible_branches
+from app.services.branch_access import default_accessible_branch, resolve_accessible_branches
 
 password_hasher = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4)
 
@@ -359,14 +359,7 @@ async def _resolve_refresh_branch(
     branches, _ = await resolve_accessible_branches(db, user)
     selected_branch_id = requested_branch_id or user.branch_id
     if selected_branch_id is None and allow_fallback:
-        selected_branch_id = (
-            await db.execute(
-                select(Branch.id)
-                .where(Branch.id.in_(branches))
-                .order_by(Branch.created_at, Branch.id)
-                .limit(1)
-            )
-        ).scalar_one_or_none()
+        selected_branch_id = await default_accessible_branch(db, branches)
     if selected_branch_id not in branches:
         raise DomainError("branch_forbidden", "Branch access is not allowed", status_code=403)
     return selected_branch_id

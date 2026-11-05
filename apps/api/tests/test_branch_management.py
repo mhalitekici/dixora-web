@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from decimal import Decimal
 from uuid import UUID
 
@@ -273,3 +274,27 @@ async def test_switching_to_an_ungranted_branch_is_refused(api: ApiContext) -> N
     )
     assert response.status_code == 403, response.text
     assert response.json()["error"]["code"] == "branch_switch_forbidden"
+
+
+async def test_default_branch_prefers_catalogue_source_when_timestamps_are_reordered(
+    api: ApiContext,
+) -> None:
+    await _use_paid_plan(api)
+    initial = await login(api)
+    first_id = UUID(initial["user"]["branch_id"])
+    second = await _add_branch(api, auth_headers(initial), "Kopya şube", "kopya-sube")
+    async with api.database.session_factory() as db:
+        first = await db.get(Branch, first_id)
+        copied = await db.get(Branch, UUID(second["id"]))
+        assert first is not None and copied is not None
+        first.created_at = datetime(2026, 1, 2, tzinfo=UTC)
+        copied.created_at = datetime(2026, 1, 1, tzinfo=UTC)
+        copied.catalog_source_branch_id = first.id
+        await db.commit()
+    session = await login(api)
+    assert session["user"]["branch_id"] == str(first_id)
+    refreshed = await api.client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": session["refresh_token"]}
+    )
+    assert refreshed.status_code == 200, refreshed.text
+    assert refreshed.json()["user"]["branch_id"] == str(first_id)

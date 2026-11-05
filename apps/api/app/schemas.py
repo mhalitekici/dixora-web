@@ -464,7 +464,7 @@ class RoleCreate(BaseModel):
     code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{2,49}$")
     name: str = Field(min_length=1, max_length=100)
     permission_codes: list[str] = []
-    operational_profile: Literal["WAITER", "CASHIER", "KITCHEN", "MANAGEMENT", "BACKOFFICE"] = (
+    operational_profile: Literal["WAITER", "CASHIER", "MANAGEMENT", "BACKOFFICE"] = (
         "WAITER"
     )
 

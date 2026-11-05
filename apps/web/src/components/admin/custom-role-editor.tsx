@@ -60,7 +60,7 @@ export function CustomRoleEditor({ roles }: { roles: Role[] }) {
       "BUSINESS_MANAGER",
     ].includes(sourceProfile)
       ? "MANAGEMENT"
-      : ["WAITER", "CASHIER", "KITCHEN", "MANAGEMENT", "BACKOFFICE"].includes(
+      : ["WAITER", "CASHIER", "MANAGEMENT", "BACKOFFICE"].includes(
             sourceProfile,
           )
         ? sourceProfile
@@ -200,7 +200,6 @@ export function CustomRoleEditor({ roles }: { roles: Role[] }) {
                 >
                   <option value="WAITER">Garson</option>
                   <option value="CASHIER">Kasiyer</option>
-                  <option value="KITCHEN">Hazırlık / mutfak</option>
                   <option value="MANAGEMENT">Yönetim</option>
                   <option value="BACKOFFICE">Ofis / rapor</option>
                 </select>

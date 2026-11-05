@@ -365,8 +365,7 @@ export type PrintBridgeEnrollment = {
 };
 
 export type RoleCreateInput = {
-  operational_profile?:
-    "WAITER" | "CASHIER" | "KITCHEN" | "MANAGEMENT" | "BACKOFFICE";
+  operational_profile?: "WAITER" | "CASHIER" | "MANAGEMENT" | "BACKOFFICE";
   code: string;
   name: string;
   permission_codes: string[];

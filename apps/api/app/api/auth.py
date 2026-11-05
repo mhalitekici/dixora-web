@@ -59,7 +59,7 @@ from app.security import (
     verify_password,
 )
 from app.services.audit import add_audit_log
-from app.services.branch_access import resolve_accessible_branches
+from app.services.branch_access import default_accessible_branch, resolve_accessible_branches
 from app.services.subscriptions import enforce_trial_expiry, tenant_access_blocked
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
@@ -325,18 +325,11 @@ async def _validate_branch(
     selected = branch_id or user.branch_id
     if user.tenant_id is None:
         return None
+    accessible, _ = await resolve_accessible_branches(db, user)
     if selected is None:
-        selected = (
-            await db.execute(
-                select(Branch.id)
-                .where(Branch.tenant_id == user.tenant_id, Branch.is_active.is_(True))
-                .order_by(Branch.created_at)
-                .limit(1)
-            )
-        ).scalar_one_or_none()
+        selected = await default_accessible_branch(db, accessible)
     if selected is None:
         raise DomainError("branch_required", "No active branch is available", status_code=403)
-    accessible, _ = await resolve_accessible_branches(db, user)
     if selected not in accessible:
         raise DomainError("branch_forbidden", "Branch access is not allowed", status_code=403)
     return selected
