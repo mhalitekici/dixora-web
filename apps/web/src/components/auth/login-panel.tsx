@@ -32,7 +32,10 @@ import { cn } from "@/lib/utils";
 const passwordSchema = z.object({
   business_slug: z.string().trim(),
   remember_me: z.boolean(),
-  identifier: z.string().trim().min(2, "Kullanıcı adınızı veya e-postanızı girin."),
+  identifier: z
+    .string()
+    .trim()
+    .min(2, "Kullanıcı adınızı veya e-postanızı girin."),
   password: z.string().min(6, "Parola en az 6 karakter olmalı."),
 });
 
@@ -47,8 +50,7 @@ type PasswordValues = z.infer<typeof passwordSchema>;
 type PinValues = z.infer<typeof pinSchema>;
 export type LoginMode = "password" | "pin";
 
-const pinLoginEnabled =
-  process.env.NEXT_PUBLIC_ENABLE_PIN_LOGIN === "true";
+const pinLoginEnabled = process.env.NEXT_PUBLIC_ENABLE_PIN_LOGIN === "true";
 
 // KITCHEN/BAR are retired role presets (the kitchen display was replaced by
 // printed tickets); any account still carrying one of them has no page left
@@ -163,7 +165,8 @@ export function LoginPanel({
       router.refresh();
     } catch (error) {
       toast.error("Giriş yapılamadı", {
-        description: error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
+        description:
+          error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
       });
     }
   }
@@ -190,9 +193,11 @@ export function LoginPanel({
           data?.error?.code === "trusted_device_required" ||
           data?.error?.code === "trusted_device_invalid";
         throw new Error(
-          deviceError
-            ? "Bu cihaz henüz PIN girişi için yetkili değil. Önce İşletme girişi sekmesinden parola ile bir kez giriş yapın."
-            : (data?.error?.message ??
+          data?.error?.code === "branch_forbidden"
+            ? "Seçilen şube bu çalışanın yetkisinde değil. Çalışanın atandığı şubeyi kontrol edin."
+            : deviceError
+              ? "Bu cihaz henüz PIN girişi için yetkili değil. Önce İşletme girişi sekmesinden parola ile bir kez giriş yapın."
+              : (data?.error?.message ??
                 data?.detail ??
                 data?.message ??
                 "PIN doğrulanamadı."),
@@ -210,7 +215,8 @@ export function LoginPanel({
       router.refresh();
     } catch (error) {
       toast.error("PIN girişi başarısız", {
-        description: error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
+        description:
+          error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
       });
     }
   }
@@ -238,8 +244,8 @@ export function LoginPanel({
             <span className="block text-brand">hazır.</span>
           </h1>
           <p className="mt-6 max-w-lg text-base leading-7 text-white/56">
-            Masa, sipariş, mutfak ve stok akışlarını güvenli bir çalışma alanından
-            yönetin. Her rol yalnız ihtiyaç duyduğu araçları görür.
+            Masa, sipariş, mutfak ve stok akışlarını güvenli bir çalışma
+            alanından yönetin. Her rol yalnız ihtiyaç duyduğu araçları görür.
           </p>
           <div className="mt-10 grid max-w-lg gap-3 sm:grid-cols-3">
             {[
@@ -249,10 +255,15 @@ export function LoginPanel({
             ].map(([Icon, title, detail]) => {
               const FeatureIcon = Icon as typeof Wifi;
               return (
-                <div key={String(title)} className="rounded-2xl border border-white/8 bg-white/[0.04] p-4">
+                <div
+                  key={String(title)}
+                  className="rounded-2xl border border-white/8 bg-white/[0.04] p-4"
+                >
                   <FeatureIcon className="size-4 text-brand" />
                   <p className="mt-4 text-sm font-semibold">{String(title)}</p>
-                  <p className="mt-1 text-[0.68rem] text-white/40">{String(detail)}</p>
+                  <p className="mt-1 text-[0.68rem] text-white/40">
+                    {String(detail)}
+                  </p>
                 </div>
               );
             })}
@@ -273,7 +284,10 @@ export function LoginPanel({
           Ana sayfa
         </Link>
         <div className="w-full max-w-[430px]">
-          <BrandLogo className="mx-auto mb-8 h-12 w-fit text-foreground lg:hidden" priority />
+          <BrandLogo
+            className="mx-auto mb-8 h-12 w-fit text-foreground lg:hidden"
+            priority
+          />
           <div className="mb-8">
             <div className="mb-4 flex size-12 items-center justify-center rounded-2xl border bg-card text-brand shadow-sm">
               {superAdmin ? (
@@ -356,7 +370,9 @@ export function LoginPanel({
               id="password-login-panel"
               role={!superAdmin && pinLoginEnabled ? "tabpanel" : undefined}
               aria-labelledby={
-                !superAdmin && pinLoginEnabled ? "password-login-tab" : undefined
+                !superAdmin && pinLoginEnabled
+                  ? "password-login-tab"
+                  : undefined
               }
               className="space-y-4"
               onSubmit={passwordForm.handleSubmit(onPasswordSubmit)}
@@ -641,7 +657,8 @@ export function LoginPanel({
           )}
 
           <p className="mt-7 text-center text-[0.68rem] leading-5 text-muted-foreground">
-            Devam ederek güvenli oturum ve denetim kaydı politikasını kabul etmiş olursunuz.
+            Devam ederek güvenli oturum ve denetim kaydı politikasını kabul
+            etmiş olursunuz.
           </p>
         </div>
       </section>

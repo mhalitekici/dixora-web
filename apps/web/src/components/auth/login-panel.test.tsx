@@ -30,6 +30,22 @@ vi.mock("sonner", () => ({
 }))
 
 describe("LoginPanel", () => {
+  it("explains a rejected employee branch without redirecting", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: false,
+      json: async () => ({error: {code: "branch_forbidden", message: "Branch access not allowed"}}),
+    } as Response)
+    const user = userEvent.setup()
+    render(<LoginPanel initialMode="pin" initialBusiness="sahil-restoran" initialEmail="ayse" />)
+    await user.type(screen.getByLabelText("Şube kodu"), "merkez")
+    await user.type(screen.getByLabelText("PIN"), "2468")
+    await user.click(screen.getByRole("button", {name: "PIN ile devam et"}))
+    await waitFor(() => expect(mocks.toastError).toHaveBeenCalledWith(
+      "PIN girişi başarısız",
+      {description: "Seçilen şube bu çalışanın yetkisinde değil. Çalışanın atandığı şubeyi kontrol edin."},
+    ))
+    expect(mocks.replace).not.toHaveBeenCalled()
+  })
   beforeEach(() => {
     vi.stubGlobal("fetch", vi.fn())
   })

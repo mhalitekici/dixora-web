@@ -28,6 +28,7 @@ import {
   type UseFormRegisterReturn,
 } from "react-hook-form";
 import { toast } from "sonner";
+import { useCurrentUser } from "@/hooks/use-auth";
 import { z } from "zod";
 
 import { EmptyState } from "@/components/shared/empty-state";
@@ -164,6 +165,7 @@ type PinState = "configured" | "removed";
 
 export function EmployeeManagement() {
   const queryClient = useQueryClient();
+  const currentUser = useCurrentUser();
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("ALL");
   const [editor, setEditor] = useState<EditorState>(null);
@@ -199,6 +201,8 @@ export function EmployeeManagement() {
       }
       toast.success("Çalışan hesabı oluşturuldu.");
       setEditor(null);
+      setSearch(employee.username);
+      setRoleFilter("ALL");
       await invalidateEmployees();
     },
     onError: () => toast.error("Çalışan oluşturulamadı."),
@@ -233,11 +237,15 @@ export function EmployeeManagement() {
   });
 
   const firstError =
-    employeesQuery.error ?? rolesQuery.error ?? branchesQuery.error;
+    employeesQuery.error ??
+    rolesQuery.error ??
+    branchesQuery.error ??
+    currentUser.error;
   if (
     employeesQuery.isLoading ||
     rolesQuery.isLoading ||
-    branchesQuery.isLoading
+    branchesQuery.isLoading ||
+    currentUser.isLoading
   ) {
     return <LoadingState label="Çalışanlar yükleniyor…" />;
   }
@@ -249,6 +257,7 @@ export function EmployeeManagement() {
           void employeesQuery.refetch();
           void rolesQuery.refetch();
           void branchesQuery.refetch();
+          void currentUser.refetch();
         }}
       />
     );
@@ -418,6 +427,11 @@ export function EmployeeManagement() {
           state={editor}
           roles={roles}
           branches={branches}
+          activeBranchId={
+            currentUser.data?.branch?.id ??
+            currentUser.data?.user.branchId ??
+            null
+          }
           pending={createEmployee.isPending || updateEmployee.isPending}
           onClose={() => setEditor(null)}
           onCreate={(values) =>
@@ -433,8 +447,9 @@ export function EmployeeManagement() {
                   ? null
                   : values.branch_id,
               preparation_station_id:
-                employeeRoleProfile(roles.find((role) => role.id === values.role_id)) ===
-                "KITCHEN"
+                employeeRoleProfile(
+                  roles.find((role) => role.id === values.role_id),
+                ) === "KITCHEN"
                   ? values.preparation_station_id || null
                   : null,
               temporary_password: values.temporary_password,
@@ -456,8 +471,9 @@ export function EmployeeManagement() {
                     ? null
                     : values.branch_id,
                 preparation_station_id:
-                  employeeRoleProfile(roles.find((role) => role.id === values.role_id)) ===
-                  "KITCHEN"
+                  employeeRoleProfile(
+                    roles.find((role) => role.id === values.role_id),
+                  ) === "KITCHEN"
                     ? values.preparation_station_id || null
                     : null,
                 is_active: values.is_active,
@@ -646,6 +662,7 @@ function EmployeeEditor({
   state,
   roles,
   branches,
+  activeBranchId,
   pending,
   onClose,
   onCreate,
@@ -654,6 +671,7 @@ function EmployeeEditor({
   state: Exclude<EditorState, null>;
   roles: Role[];
   branches: Branch[];
+  activeBranchId: string | null;
   pending: boolean;
   onClose: () => void;
   onCreate: (values: CreateValues) => void;
@@ -664,7 +682,9 @@ function EmployeeEditor({
   const defaultRole =
     roles.find((role) => role.code === "BUSINESS_MANAGER" && role.is_active) ??
     roles.find((role) => role.is_active);
-  const defaultBranchId = branches.find((branch) => branch.is_active)?.id ?? "";
+  const defaultBranchId =
+    branches.find((branch) => branch.id === activeBranchId && branch.is_active)
+      ?.id ?? "";
   const createForm = useForm<CreateValues>({
     resolver: zodResolver(createSchema),
     defaultValues: {

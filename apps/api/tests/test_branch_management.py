@@ -6,7 +6,8 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from app.models import Area, Branch, Subscription, SubscriptionPlan, Tenant
+from app.models import Area, Branch, Subscription, SubscriptionPlan, Tenant, User
+from app.rbac import ensure_role
 from tests.conftest import ApiContext, auth_headers, login
 
 
@@ -298,3 +299,82 @@ async def test_default_branch_prefers_catalogue_source_when_timestamps_are_reord
     )
     assert refreshed.status_code == 200, refreshed.text
     assert refreshed.json()["user"]["branch_id"] == str(first_id)
+
+
+async def test_roster_includes_all_manageable_branches_and_global_admin(api: ApiContext) -> None:
+    await _use_paid_plan(api)
+    owner = await login(api)
+    headers = auth_headers(owner)
+    second = await _add_branch(api, headers, "Alphabetical first", "aaa-roster")
+    roles = (await api.client.get("/api/v1/roles", headers=headers)).json()
+    created = {}
+    for code, branch_id in [("BUSINESS_MANAGER", second["id"]), ("BUSINESS_ADMIN", None)]:
+        role = next(r for r in roles if r["code"] == code)
+        response = await api.client.post(
+            "/api/v1/users",
+            headers=headers,
+            json={
+                "username": f"roster-{code.lower()}",
+                "display_name": f"Roster {code}",
+                "role_id": role["id"],
+                "branch_id": branch_id,
+                "temporary_password": "Temporary!2026",
+                "pin": "7246",
+            },
+        )
+        assert response.status_code == 201, response.text
+        created[code] = response.json()
+    roster = (await api.client.get("/api/v1/users", headers=headers)).json()
+    assert all(user["id"] in {row["id"] for row in roster} for user in created.values())
+    # Exercise a branch-pinned role explicitly authorized to manage users.
+    async with api.database.session_factory() as db:
+        role = await ensure_role(
+            db,
+            tenant_id=UUID(owner["user"]["tenant_id"]),
+            code="CUSTOM_ROSTER",
+            is_system=False,
+            permission_codes={"users.manage"},
+        )
+        role.operational_profile = "MANAGEMENT"
+        user = await db.get(User, UUID(created["BUSINESS_MANAGER"]["id"]))
+        assert user is not None
+        user.role_id = role.id
+        await db.commit()
+    manager = await login(api, username="roster-business_manager", password="Temporary!2026")
+    scoped = await api.client.get("/api/v1/users", headers=auth_headers(manager))
+    assert scoped.status_code == 200, scoped.text
+    assert created["BUSINESS_MANAGER"]["id"] in {u["id"] for u in scoped.json()}
+    assert all(u["branch_id"] == second["id"] for u in scoped.json())
+    assert created["BUSINESS_ADMIN"]["id"] not in {u["id"] for u in scoped.json()}
+    enrollment = await api.client.post(
+        "/api/v1/auth/login",
+        json={
+            "business": "dixora-lab",
+            "username": "roster-business_manager",
+            "password": "Temporary!2026",
+            "enroll_trusted_device": True,
+        },
+    )
+    assert enrollment.status_code == 200, enrollment.text
+    pin_login = await api.client.post(
+        "/api/v1/auth/pin-login",
+        json={
+            "business_slug": "dixora-lab",
+            "branch_slug": second["slug"],
+            "username": "roster-business_manager",
+            "pin": "7246",
+            "device_token": enrollment.json()["trusted_device"]["token"],
+        },
+    )
+    assert pin_login.status_code == 200, pin_login.text
+    forbidden = await api.client.post(
+        "/api/v1/auth/login",
+        json={
+            "business": "dixora-lab",
+            "username": "roster-business_manager",
+            "password": "Temporary!2026",
+            "branch_id": owner["user"]["branch_id"],
+        },
+    )
+    assert forbidden.status_code == 403, forbidden.text
+    assert forbidden.json()["error"]["code"] == "branch_forbidden"
