@@ -1,0 +1,77 @@
+{
+  "date": "2026-11-05",
+  "branch": "feat/dixora-operational-ux-rbac-reports",
+  "code_commit": "93a337b1ee817cf7ae61ffd2539ba69bf3738584",
+  "baseline": {
+    "api": 431,
+    "web": 412,
+    "bridge": 77
+  },
+  "api": {
+    "command": "pytest -q --maxfail=1",
+    "passed": 464,
+    "duration_seconds": 772.73,
+    "skipped": 0,
+    "failed": 0
+  },
+  "web": {
+    "command": "npm run test --workspace web",
+    "passed": 418,
+    "files": 85
+  },
+  "bridge": {
+    "passed": 80,
+    "windows_typescript_and_build": "passed",
+    "physical_printing": "not performed"
+  },
+  "operations": {
+    "passed": 25,
+    "tls_unit_tests": 6,
+    "production_tls": "not performed"
+  },
+  "browser": {
+    "passed": 11,
+    "mocks": false,
+    "android": "Pixel 7 Chromium emulation",
+    "ios": "iPhone 13 WebKit emulation",
+    "widths": [320, 360, 375, 390, 412, 430, 768, 1024, 1440],
+    "responsive_route_width_checks": 54,
+    "extended_image_crop_flow": "passed separately"
+  },
+  "static_checks": {
+    "ruff": "passed",
+    "mypy_source_files": 115,
+    "typescript": "passed",
+    "eslint_errors": 0,
+    "next_production_build": "passed",
+    "eslint_warnings": 2
+  },
+  "postgres": {
+    "fresh_migration_head": "0044_active_bridge_names",
+    "upgrade": "0040 to 0044; historical PAID 123.45 preserved",
+    "business_day_checks": 9,
+    "parallel_retries": 20,
+    "resulting_orders": 1,
+    "resulting_payments": 1,
+    "resulting_print_jobs": 1,
+    "changed_payload_http_status": 409
+  },
+  "npm_audit_snapshot": {
+    "date": "2026-11-04",
+    "critical": 0,
+    "high": 12,
+    "moderate": 40,
+    "low": 1
+  },
+  "manual_acceptance_pending": [
+    "physical printers",
+    "real iOS/Android hardware and soft keyboard",
+    "native macOS/CUPS acceptance",
+    "actual encrypted offsite restore",
+    "actual alarm delivery",
+    "production TLS renewal/reload",
+    "local production runtime: automatic approval review rejected start command with blocked by policy"
+  ],
+  "production_deployed": false,
+  "pushed_or_merged": false
+}
