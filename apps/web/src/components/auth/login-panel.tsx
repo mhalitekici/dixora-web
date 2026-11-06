@@ -228,7 +228,7 @@ export function LoginPanel({
       ].includes(String(profile));
       router.replace(
         management
-          ? "/admin/panels"
+          ? "/panels"
           : (safeReturnTo(returnTo) ??
               targetForRole(
                 data?.user?.operationalProfile ??

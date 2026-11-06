@@ -48,6 +48,7 @@ export function OperationPanels() {
       await Promise.all([current.refetch(), options.refetch()]);
       setVerified(true);
       setChangeAccount(false);
+      router.replace("/panels");
       router.refresh();
     },
     onError: () => setPin(""),

@@ -52,10 +52,16 @@ test("manager enters from admin and employee PIN login with a personal cashier s
   await admin.getByLabel("Kullanıcı adı", { exact: true }).fill(username);
   await admin.getByLabel("PIN", { exact: true }).fill("9999");
   await admin.getByRole("button", { name: "Giriş yap", exact: true }).click();
-  await expect(admin.locator("form").getByRole("alert")).toContainText("Kullanıcı adı veya PIN hatalı");
-  expect((await (await admin.request.get(`${origin}/api/auth/me`)).json()).user.username).toBe("owner@dixora.test");
+  await expect(admin.locator("form").getByRole("alert")).toContainText(
+    "Kullanıcı adı veya PIN hatalı",
+  );
+  expect(
+    (await (await admin.request.get(`${origin}/api/auth/me`)).json()).user
+      .username,
+  ).toBe("owner@dixora.test");
   await admin.getByLabel("PIN", { exact: true }).fill("7246");
   await admin.getByRole("button", { name: "Giriş yap", exact: true }).click();
+  await admin.waitForURL("**/panels");
   await expect(
     admin.getByText("Hangi panele girmek istersiniz?", { exact: true }),
   ).toBeVisible();
@@ -65,6 +71,9 @@ test("manager enters from admin and employee PIN login with a personal cashier s
   ).toBe(username);
   await admin.getByRole("button", { name: /Kasiyer paneli/ }).click();
   await admin.waitForURL("**/cashier");
+  await expect(
+    admin.getByRole("link", { name: "Yönetim paneli", exact: true }),
+  ).toHaveCount(0);
   await expect(
     admin.getByRole("heading", { name: "Kendi kasa vardiyanızı açın" }),
   ).toBeVisible();
@@ -92,9 +101,12 @@ test("manager enters from admin and employee PIN login with a personal cashier s
   );
   expect(forbidden.status()).toBe(403);
   await admin.getByRole("button", { name: "Panel seçimine dön" }).click();
-  await admin.waitForURL("**/admin/panels");
+  await admin.waitForURL("**/panels");
   await admin.getByRole("button", { name: /Garson paneli/ }).click();
   await admin.waitForURL("**/waiter/tables");
+  await expect(
+    admin.getByRole("link", { name: "Yönetim paneli", exact: true }),
+  ).toHaveCount(0);
   const employeeContext = await browser.newContext();
   await employeeContext.addCookies(
     (await page.context().cookies()).filter(
@@ -111,7 +123,15 @@ test("manager enters from admin and employee PIN login with a personal cashier s
   await employee.getByLabel("Kullanıcı adı", { exact: true }).fill(username);
   await employee.getByLabel("PIN", { exact: true }).fill("7246");
   await employee.getByRole("button", { name: "PIN ile devam et" }).click();
-  await employee.waitForURL("**/admin/panels");
+  await employee.waitForURL("**/panels");
+  await expect(
+    employee.getByRole("navigation", { name: "Yönetim menüsü" }),
+  ).toHaveCount(0);
+  await employee.goto(`${origin}/admin/employees`);
+  await employee.waitForURL("**/panels");
+  await expect(
+    employee.getByRole("navigation", { name: "Yönetim menüsü" }),
+  ).toHaveCount(0);
   await expect(
     employee.getByRole("button", { name: /Garson paneli/ }),
   ).toBeVisible();

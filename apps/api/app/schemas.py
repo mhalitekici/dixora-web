@@ -245,6 +245,7 @@ class RoleOut(ORMModel):
 
 
 class MeOut(BaseModel):
+    staff_session: bool = False
     id: UUID
     tenant_id: UUID | None
     branch_id: UUID | None
@@ -464,9 +465,7 @@ class RoleCreate(BaseModel):
     code: str = Field(pattern=r"^[A-Z][A-Z0-9_]{2,49}$")
     name: str = Field(min_length=1, max_length=100)
     permission_codes: list[str] = []
-    operational_profile: Literal["WAITER", "CASHIER", "MANAGEMENT", "BACKOFFICE"] = (
-        "WAITER"
-    )
+    operational_profile: Literal["WAITER", "CASHIER", "MANAGEMENT", "BACKOFFICE"] = "WAITER"
 
 
 class RoleUpdate(BaseModel):

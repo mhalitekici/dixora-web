@@ -78,6 +78,10 @@ def trusted_device_token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def is_staff_session(device_name: str | None) -> bool:
+    return device_name == "panel-pin" or (device_name or "").startswith("trusted-device:")
+
+
 def _encode_token(
     settings: Settings,
     *,
@@ -89,6 +93,7 @@ def _encode_token(
     branch_id: UUID | None,
     family: UUID,
     remember_me: bool,
+    staff_session: bool = False,
 ) -> str:
     now = utcnow()
     payload: dict[str, Any] = {
@@ -106,6 +111,7 @@ def _encode_token(
         "is_super_admin": user.is_super_admin,
         "family": str(family),
         "remember_me": remember_me,
+        "staff_session": staff_session,
         "iss": "dixora-api",
         "aud": "dixora-app",
     }
@@ -182,6 +188,7 @@ async def issue_token_pair(
         branch_id=branch_id,
         family=family,
         remember_me=remember_me,
+        staff_session=is_staff_session(device_name),
     )
     refresh_token = _encode_token(
         settings,
@@ -193,6 +200,7 @@ async def issue_token_pair(
         branch_id=branch_id,
         family=family,
         remember_me=remember_me,
+        staff_session=is_staff_session(device_name),
     )
     return TokenPair(
         access_token=access_token,
@@ -392,6 +400,7 @@ def _rotate_session_tokens(
         branch_id=branch_id,
         family=auth_session.token_family,
         remember_me=remember_me,
+        staff_session=is_staff_session(auth_session.device_name),
     )
     refresh_token = _encode_token(
         settings,
@@ -403,6 +412,7 @@ def _rotate_session_tokens(
         branch_id=branch_id,
         family=auth_session.token_family,
         remember_me=remember_me,
+        staff_session=is_staff_session(auth_session.device_name),
     )
     return TokenPair(
         access_token=access_token,

@@ -52,9 +52,7 @@ describe("LoginPanel", () => {
     await user.type(screen.getByLabelText("Şube kodu"), "merkez");
     await user.type(screen.getByLabelText("PIN"), "7246");
     await user.click(screen.getByRole("button", { name: "PIN ile devam et" }));
-    await waitFor(() =>
-      expect(mocks.replace).toHaveBeenCalledWith("/admin/panels"),
-    );
+    await waitFor(() => expect(mocks.replace).toHaveBeenCalledWith("/panels"));
   });
   it("explains a rejected employee branch without redirecting", async () => {
     vi.mocked(fetch).mockResolvedValue({

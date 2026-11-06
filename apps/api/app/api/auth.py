@@ -140,7 +140,8 @@ async def panel_login(
     )
     await db.commit()
     return AuthResponse(
-        **tokens.model_dump(), user=await user_payload(db, employee, identity.branch_id)
+        **tokens.model_dump(),
+        user=await user_payload(db, employee, identity.branch_id, staff_session=True),
     )
 
 
@@ -434,11 +435,14 @@ async def user_payload(
     db: AsyncSession,
     user: User,
     branch_id: UUID | None = None,
+    *,
+    staff_session: bool = False,
 ) -> MeOut:
     selected_branch_id = branch_id or user.branch_id
     tenant = await db.get(Tenant, user.tenant_id) if user.tenant_id else None
     branch = await db.get(Branch, selected_branch_id) if selected_branch_id else None
     return MeOut(
+        staff_session=staff_session,
         id=user.id,
         tenant_id=user.tenant_id,
         branch_id=selected_branch_id,
@@ -695,7 +699,13 @@ async def login(
     await db.commit()
     return AuthResponse(
         **tokens.model_dump(),
-        user=await user_payload(db, user, branch_id),
+        user=await user_payload(
+            db,
+            user,
+            branch_id,
+            staff_session=decode_token(settings, tokens.access_token, "access").get("staff_session")
+            is True,
+        ),
         trusted_device=trusted_device,
     )
 
@@ -856,7 +866,7 @@ async def pin_login(
     await db.commit()
     return AuthResponse(
         **tokens.model_dump(),
-        user=await user_payload(db, user, branch.id),
+        user=await user_payload(db, user, branch.id, staff_session=True),
     )
 
 
@@ -870,7 +880,13 @@ async def refresh(
     await db.commit()
     return AuthResponse(
         **tokens.model_dump(),
-        user=await user_payload(db, user, branch_id),
+        user=await user_payload(
+            db,
+            user,
+            branch_id,
+            staff_session=decode_token(settings, tokens.access_token, "access").get("staff_session")
+            is True,
+        ),
     )
 
 
@@ -1063,7 +1079,7 @@ async def me(identity: CurrentIdentity, db: DbSession) -> MeOut:
             .options(selectinload(User.role).selectinload(Role.permissions))
         )
     ).scalar_one()
-    return await user_payload(db, user, identity.branch_id)
+    return await user_payload(db, user, identity.branch_id, staff_session=identity.staff_session)
 
 
 @router.get("/branches", response_model=AccessibleBranchesOut)
@@ -1148,7 +1164,13 @@ async def switch_branch(
     await db.commit()
     return AuthResponse(
         **tokens.model_dump(),
-        user=await user_payload(db, user, branch_id),
+        user=await user_payload(
+            db,
+            user,
+            branch_id,
+            staff_session=decode_token(settings, tokens.access_token, "access").get("staff_session")
+            is True,
+        ),
     )
 
 

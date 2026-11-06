@@ -15,7 +15,7 @@ from app.config import Settings
 from app.errors import DomainError
 from app.models import AuthSession, OperationGrant, Role, Tenant, User
 from app.rbac import authority_hash, effective_permission_codes, operational_profile
-from app.security import as_utc, decode_token, utcnow
+from app.security import as_utc, decode_token, is_staff_session, utcnow
 from app.services.branch_access import resolve_accessible_branches
 from app.services.subscriptions import enforce_trial_expiry, tenant_access_blocked
 
@@ -44,6 +44,7 @@ class Identity:
     operational_profile: str = ""
     operation_panel: str | None = None
     operation_mode: str | None = None
+    staff_session: bool = False
 
     def can_access_branch(self, branch_id: UUID) -> bool:
         return branch_id in self.accessible_branch_ids
@@ -161,6 +162,7 @@ async def get_current_identity(
         operational_profile=profile,
         operation_panel=grant.panel if grant else None,
         operation_mode=grant.mode if grant else None,
+        staff_session=is_staff_session(auth_session.device_name),
     )
 
 

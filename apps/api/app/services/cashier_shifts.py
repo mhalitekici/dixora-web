@@ -35,7 +35,11 @@ async def current_operator_shift(
         )
         .limit(1)
     )
-    if identity.operation_mode == "operator":
+    if identity.operation_mode == "operator" or (
+        identity.staff_session
+        and identity.operational_profile
+        in {"BUSINESS_OWNER", "BUSINESS_ADMIN", "BUSINESS_MANAGER", "MANAGEMENT"}
+    ):
         query = query.where(CashierShift.user_id == identity.user_id)
     return (await db.execute(query.with_for_update() if lock else query)).scalar_one_or_none()
 

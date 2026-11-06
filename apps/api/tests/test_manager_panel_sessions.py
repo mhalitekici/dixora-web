@@ -6,7 +6,7 @@ import pytest
 from sqlalchemy import select
 
 from app.models import User
-from app.security import hash_password
+from app.security import decode_token, hash_password
 from tests.conftest import ApiContext, auth_headers, login, seeded_resources
 from tests.test_orders import _create_burger_order
 
@@ -57,6 +57,10 @@ async def test_manager_owns_shift_and_payments_without_adopting_cashier(
     manager = auth_headers(authenticated.json())
     manager_id = authenticated.json()["user"]["id"]
     assert authenticated.json()["user"]["username"] == username
+    assert authenticated.json()["user"]["staff_session"] is True
+    assert (await api.client.get("/api/v1/auth/me", headers=manager)).json()[
+        "staff_session"
+    ] is True
     assert (await api.client.get("/api/v1/auth/operation-options", headers=manager)).json()["ready"]
     selected = await api.client.post(
         "/api/v1/auth/operation-select", headers=manager, json={"panel": "cashier"}
@@ -137,6 +141,16 @@ async def test_employee_pin_login_opens_panel_choice_and_wrong_credentials_do_no
     )
     assert authenticated.status_code == 200, authenticated.text
     headers = auth_headers(authenticated.json())
+    assert authenticated.json()["user"]["staff_session"] is True
+    refreshed = await api.client.post(
+        "/api/v1/auth/refresh", json={"refresh_token": authenticated.json()["refresh_token"]}
+    )
+    assert refreshed.status_code == 200, refreshed.text
+    assert refreshed.json()["user"]["staff_session"] is True
+    assert (
+        decode_token(api.settings, refreshed.json()["access_token"], "access")["staff_session"]
+        is True
+    )
     assert (await api.client.get("/api/v1/auth/operation-options", headers=headers)).json()["ready"]
     assert (
         await api.client.post(
@@ -159,6 +173,9 @@ async def test_employee_pin_login_opens_panel_choice_and_wrong_credentials_do_no
     )
     assert staff.status_code == 403
     password_session = auth_headers(await login(api))
+    assert (await api.client.get("/api/v1/auth/me", headers=password_session)).json()[
+        "staff_session"
+    ] is False
     assert (
         await api.client.post(
             "/api/v1/auth/operation-select", headers=password_session, json={"panel": "cashier"}

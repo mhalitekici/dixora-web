@@ -36,7 +36,7 @@ export function OperationAccess({
     mutationFn: () => api.delete("auth/operation-grant"),
     onSuccess: async () => {
       await cache.invalidateQueries();
-      router.replace("/admin/panels");
+      router.replace("/panels");
     },
   });
   if (access.isPending)
@@ -48,7 +48,7 @@ export function OperationAccess({
           error={access.error}
           onRetry={() => void access.refetch()}
         />
-        <Link className={buttonVariants()} href="/admin/panels">
+        <Link className={buttonVariants()} href="/panels">
           Panellerden yetkili giriş yap
         </Link>
       </div>
