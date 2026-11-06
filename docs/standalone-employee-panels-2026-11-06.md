@@ -25,3 +25,8 @@ proxy, gezinme ve giriş bileşenleri 28/28. TypeScript, ilgili ESLint, Ruff ve
 mypy kontrolleri geçti. Tarayıcı akışı geliştirme sunucusunda ve Docker üretim
 web imajında geçti: bağımsız seçim, admin menüsünün yokluğu, elle admin URL’sine
 gitmenin seçime dönmesi, iki panel, ayrı vardiya ve aynı vardiyaya devam.
+
+Yerel Docker API/web güncellendi; servisler healthy, `/ready` 200, giriş ekranı
+tarayıcıda 200 ve sıfır sayfa hatasıyla doğrulandı. Sipariş, ödeme, kasa vardiyası
+ve yazdırma işi satır sayıları ve tam satır özetleri güncelleme öncesiyle aynı.
+Geçici üretim doğrulama web servisi durduruldu.
