@@ -64,6 +64,7 @@ export function canNavigate(
         "BUSINESS_ADMIN",
         "BUSINESS_MANAGER",
         "CASHIER",
+        "MANAGEMENT",
       ].includes(role) && hasPermission(context, "payments.manage")
     )
   }
@@ -74,6 +75,7 @@ export function canNavigate(
         "BUSINESS_ADMIN",
         "BUSINESS_MANAGER",
         "WAITER",
+        "MANAGEMENT",
       ].includes(role) && hasPermission(context, "orders.create")
     )
   }

@@ -18,7 +18,7 @@ from app.dependencies import (
     require_tenant,
 )
 from app.errors import DomainError
-from app.models import CashierShift, Order, OrderItem, Payment, Receipt, TableSession, User
+from app.models import Order, OrderItem, Payment, Receipt, TableSession, User
 from app.models.enums import (
     ApprovalStatus,
     ApprovalType,
@@ -56,6 +56,7 @@ from app.schemas import (
     TableTransferRequest,
 )
 from app.services.audit import add_audit_log
+from app.services.cashier_shifts import current_operator_shift
 from app.services.orders import (
     accept_order,
     add_payment,
@@ -539,25 +540,7 @@ async def record_payment(
     db: DbSession,
 ) -> PaymentOut:
     order = await _scoped_order(identity, db, order_id, lock=True)
-    shift = (
-        await db.execute(
-            select(CashierShift)
-            .where(
-                CashierShift.tenant_id == order.tenant_id,
-                CashierShift.branch_id == order.branch_id,
-                or_(
-                    CashierShift.opened_by_user_id == identity.user_id,
-                    CashierShift.user_id == identity.user_id,
-                ),
-                CashierShift.status == "OPEN",
-            )
-            .order_by(
-                (CashierShift.user_id == identity.user_id).desc(),
-                CashierShift.opened_at.desc(),
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    shift = await current_operator_shift(db, identity, lock=True, branch_id=order.branch_id)
     if identity.requires_cashier_shift and shift is None:
         raise DomainError(
             "cashier_shift_required",
@@ -616,25 +599,7 @@ async def refund_payment(
         return PaymentOut.model_validate(payment)
     if payment.status != PaymentStatus.COMPLETED:
         raise DomainError("payment_not_refundable", "Payment cannot be refunded", status_code=409)
-    shift = (
-        await db.execute(
-            select(CashierShift)
-            .where(
-                CashierShift.tenant_id == order.tenant_id,
-                CashierShift.branch_id == order.branch_id,
-                or_(
-                    CashierShift.opened_by_user_id == identity.user_id,
-                    CashierShift.user_id == identity.user_id,
-                ),
-                CashierShift.status == "OPEN",
-            )
-            .order_by(
-                (CashierShift.user_id == identity.user_id).desc(),
-                CashierShift.opened_at.desc(),
-            )
-            .limit(1)
-        )
-    ).scalar_one_or_none()
+    shift = await current_operator_shift(db, identity, lock=True, branch_id=order.branch_id)
     if identity.requires_cashier_shift and shift is None:
         raise DomainError(
             "cashier_shift_required",

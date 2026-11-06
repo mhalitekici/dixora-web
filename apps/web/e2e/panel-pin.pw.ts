@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 
-test("manager enters both panels with own PIN and cashier stays observation only", async ({
+test("manager enters from admin and employee PIN login with a personal cashier shift", async ({
   page,
   browser,
 }) => {
@@ -10,65 +10,120 @@ test("manager enters both panels with own PIN and cashier stays observation only
   await page.getByLabel("Parola", { exact: true }).fill("DixoraLab!2026");
   await page.getByRole("button", { name: "Güvenli giriş yap" }).click();
   await page.waitForURL("**/admin");
+  const origin = new URL(page.url()).origin;
   const me = await (await page.request.get("/api/auth/me")).json();
   const roles = await (await page.request.get("/api/backend/roles")).json();
   const username = `panelmanager${Date.now()}`;
   const created = await page.request.post("/api/backend/users", {
-    headers: { origin: new URL(page.url()).origin },
+    headers: { origin },
     data: {
       username,
       display_name: username,
       role_id: roles.find(
-        (role: { code: string }) => role.code === "BUSINESS_MANAGER",
+        (r: { code: string }) => r.code === "BUSINESS_MANAGER",
       ).id,
       branch_id: me.branch.id,
       temporary_password: "Temporary!2026",
       pin: "7246",
     },
   });
-  expect(created.status()).toBe(201);
-  const context = await browser.newContext();
-  const manager = await context.newPage();
-  await manager.goto(new URL("/login", page.url()).href);
-  await manager.getByLabel("İşletme kodu", { exact: true }).fill("dixora-lab");
-  await manager.getByLabel("Kullanıcı adı veya e-posta").fill(username);
-  await manager.getByLabel("Parola", { exact: true }).fill("Temporary!2026");
-  await manager.getByRole("button", { name: "Güvenli giriş yap" }).click();
-  await manager.waitForURL("**/admin");
-  await manager.goto(new URL("/admin/panels", page.url()).href);
+  expect(created.status(), await created.text()).toBe(201);
+  const managerId = (await created.json()).id;
+  let existing = await (
+    await page.request.get("/api/backend/shifts/current")
+  ).json();
+  if (!existing) {
+    const opened = await page.request.post("/api/backend/shifts/open", {
+      headers: { origin },
+      data: {
+        username: "cashier@dixora.test",
+        pin: "1357",
+        opening_cash: "50",
+      },
+    });
+    expect(opened.status(), await opened.text()).toBe(201);
+    existing = await opened.json();
+  }
+  const adminContext = await browser.newContext({
+    storageState: await page.context().storageState(),
+  });
+  const admin = await adminContext.newPage();
+  await admin.goto(`${origin}/admin/panels`);
+  await admin.getByLabel("Kullanıcı adı", { exact: true }).fill(username);
+  await admin.getByLabel("PIN", { exact: true }).fill("9999");
+  await admin.getByRole("button", { name: "Giriş yap", exact: true }).click();
+  await expect(admin.locator("form").getByRole("alert")).toContainText("Kullanıcı adı veya PIN hatalı");
+  expect((await (await admin.request.get(`${origin}/api/auth/me`)).json()).user.username).toBe("owner@dixora.test");
+  await admin.getByLabel("PIN", { exact: true }).fill("7246");
+  await admin.getByRole("button", { name: "Giriş yap", exact: true }).click();
   await expect(
-    manager.getByLabel("Kullanıcı adı", { exact: true }),
-  ).toHaveValue(username);
-  await manager.getByLabel("Doğrulama yöntemi").selectOption("pin");
-  await manager.getByLabel("Kasiyer", { exact: true }).check();
-  await manager.getByLabel("PIN", { exact: true }).fill("9999");
-  await manager
-    .getByRole("button", { name: "Yetkili giriş", exact: true })
-    .click();
-  await expect(manager.locator("form").getByRole("alert")).toContainText("Aktif hesabınızın");
-  await expect(manager.getByLabel("PIN", { exact: true })).toHaveValue("");
-  await manager.getByLabel("PIN", { exact: true }).fill("7246");
-  await manager
-    .getByRole("button", { name: "Yetkili giriş", exact: true })
-    .click();
-  await manager.waitForURL("**/cashier");
-  await expect(
-    manager.getByRole("heading", { name: "Kasa gözlem ekranı" }),
+    admin.getByText("Hangi panele girmek istersiniz?", { exact: true }),
   ).toBeVisible();
+  expect(
+    (await (await admin.request.get(`${origin}/api/auth/me`)).json()).user
+      .username,
+  ).toBe(username);
+  await admin.getByRole("button", { name: /Kasiyer paneli/ }).click();
+  await admin.waitForURL("**/cashier");
   await expect(
-    manager.getByRole("button", { name: /Ödeme al|Vardiya aç/ }),
-  ).toHaveCount(0);
-  await manager.getByRole("button", { name: "Destek modundan çık" }).click();
-  await manager.waitForURL("**/admin/panels");
-  await manager.getByLabel("Doğrulama yöntemi").selectOption("pin");
-  await manager.getByLabel("Garson", { exact: true }).check();
-  await manager.getByLabel("PIN", { exact: true }).fill("7246");
-  await manager
-    .getByRole("button", { name: "Yetkili giriş", exact: true })
-    .click();
-  await manager.waitForURL("**/waiter/tables");
-  await expect(
-    manager.getByRole("status").filter({ hasText: "Operasyon destek modu" }),
+    admin.getByRole("heading", { name: "Kendi kasa vardiyanızı açın" }),
   ).toBeVisible();
-  await context.close();
+  await admin.getByLabel("Açılış nakdi", { exact: true }).fill("0");
+  await admin
+    .getByRole("button", { name: "Kendi vardiyamı aç", exact: true })
+    .click();
+  await expect(
+    admin.getByRole("heading", { name: "Kendi kasa vardiyanızı açın" }),
+  ).not.toBeVisible();
+  const own = await (
+    await admin.request.get(`${origin}/api/backend/shifts/current`)
+  ).json();
+  expect(own.id).not.toBe(existing.id);
+  expect(own.user_id).toBe(managerId);
+  expect(
+    await (await page.request.get(`/api/backend/shifts/${existing.id}`)).json(),
+  ).toEqual(existing);
+  const forbidden = await admin.request.post(
+    `${origin}/api/backend/shifts/${existing.id}/close`,
+    {
+      headers: { origin },
+      data: { username, pin: "7246", closing_cash: "50" },
+    },
+  );
+  expect(forbidden.status()).toBe(403);
+  await admin.getByRole("button", { name: "Panel seçimine dön" }).click();
+  await admin.waitForURL("**/admin/panels");
+  await admin.getByRole("button", { name: /Garson paneli/ }).click();
+  await admin.waitForURL("**/waiter/tables");
+  const employeeContext = await browser.newContext();
+  await employeeContext.addCookies(
+    (await page.context().cookies()).filter(
+      (cookie) => cookie.name === "dixora_trusted_device",
+    ),
+  );
+  const employee = await employeeContext.newPage();
+  await employee.goto(`${origin}/login`);
+  await employee
+    .getByRole("tab", { name: "Çalışan girişi", exact: true })
+    .click();
+  await employee.getByLabel("İşletme kodu", { exact: true }).fill("dixora-lab");
+  await employee.getByLabel("Şube kodu", { exact: true }).fill("merkez");
+  await employee.getByLabel("Kullanıcı adı", { exact: true }).fill(username);
+  await employee.getByLabel("PIN", { exact: true }).fill("7246");
+  await employee.getByRole("button", { name: "PIN ile devam et" }).click();
+  await employee.waitForURL("**/admin/panels");
+  await expect(
+    employee.getByRole("button", { name: /Garson paneli/ }),
+  ).toBeVisible();
+  await employee.getByRole("button", { name: /Kasiyer paneli/ }).click();
+  await employee.waitForURL("**/cashier");
+  expect(
+    (
+      await (
+        await employee.request.get(`${origin}/api/backend/shifts/current`)
+      ).json()
+    ).id,
+  ).toBe(own.id);
+  await adminContext.close();
+  await employeeContext.close();
 });

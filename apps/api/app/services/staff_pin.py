@@ -31,7 +31,7 @@ async def verify_staff_pin(
     branch_id: UUID,
     username: str,
     pin: str,
-    permission: str,
+    permission: str | None,
     explicit_branch_assignment: bool,
 ) -> User:
     """Reauthenticate an employee without ever persisting or returning their PIN."""
@@ -93,7 +93,11 @@ async def verify_staff_pin(
 
     assert user is not None
     permission_codes = effective_permission_codes(user.role)
-    if permission not in permission_codes and "*" not in permission_codes:
+    if (
+        permission is not None
+        and permission not in permission_codes
+        and "*" not in permission_codes
+    ):
         raise DomainError(
             "staff_permission_required",
             "This employee is not authorized for this operation",

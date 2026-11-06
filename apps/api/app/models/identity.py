@@ -218,6 +218,9 @@ class OperationGrant(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     )
     token_family: Mapped[UUID] = mapped_column(nullable=False)
     panel: Mapped[str] = mapped_column(String(12), nullable=False)
+    mode: Mapped[str] = mapped_column(
+        String(12), default="support", server_default="support", nullable=False
+    )
     authority_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     expires_at: Mapped[datetime] = mapped_column(nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(nullable=True)

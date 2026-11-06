@@ -60,9 +60,181 @@ from app.security import (
 )
 from app.services.audit import add_audit_log
 from app.services.branch_access import default_accessible_branch, resolve_accessible_branches
+from app.services.staff_pin import verify_staff_pin
 from app.services.subscriptions import enforce_trial_expiry, tenant_access_blocked
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
+
+MANAGEMENT_PROFILES = {"BUSINESS_OWNER", "BUSINESS_ADMIN", "BUSINESS_MANAGER", "MANAGEMENT"}
+
+
+class PanelLogin(BaseModel):
+    username: str = Field(min_length=1, max_length=255)
+    pin: str = Field(pattern=r"^[0-9]{4,12}$")
+
+
+class PanelSelection(BaseModel):
+    panel: Literal["waiter", "cashier"]
+
+
+@router.post("/panel-login", response_model=AuthResponse)
+async def panel_login(
+    payload: PanelLogin,
+    identity: CurrentIdentity,
+    db: DbSession,
+    request: Request,
+    settings: Settings = Depends(get_app_settings),
+) -> AuthResponse:
+    if (
+        identity.operational_profile not in MANAGEMENT_PROFILES
+        or not identity.tenant_id
+        or not identity.branch_id
+    ):
+        raise DomainError(
+            "operation_grant_forbidden", "Yetkili hesapla giriş yapın.", status_code=403
+        )
+    if not settings.pin_login_enabled:
+        raise DomainError("pin_login_disabled", "PIN girişi kapalı.", status_code=403)
+    # The authenticated business/branch determines the lookup scope. Credentials
+    # create a real session for the verified employee, never an impersonation.
+    try:
+        employee = await verify_staff_pin(
+            db,
+            settings=settings,
+            request=request,
+            tenant_id=identity.tenant_id,
+            branch_id=identity.branch_id,
+            username=payload.username,
+            pin=payload.pin,
+            permission=None,
+            explicit_branch_assignment=False,
+        )
+    except DomainError as error:
+        if error.code == "invalid_credentials":
+            raise DomainError(
+                "invalid_credentials", "Kullanıcı adı veya PIN hatalı.", status_code=403
+            ) from error
+        raise
+    if operational_profile(employee.role) not in MANAGEMENT_PROFILES:
+        raise DomainError(
+            "operation_grant_forbidden", "Yönetici veya müdür hesabı kullanın.", status_code=403
+        )
+    await _validate_branch(db, employee, identity.branch_id)
+    tokens = await issue_token_pair(
+        db,
+        settings,
+        employee,
+        branch_id=identity.branch_id,
+        device_name="panel-pin",
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    employee.last_login_at = utcnow()
+    add_audit_log(
+        db,
+        identity=identity,
+        action="auth.panel_login",
+        resource_type="user",
+        resource_id=employee.id,
+        new_value={"authenticated_user_id": str(employee.id)},
+    )
+    await db.commit()
+    return AuthResponse(
+        **tokens.model_dump(), user=await user_payload(db, employee, identity.branch_id)
+    )
+
+
+@router.get("/operation-options")
+async def operation_options(identity: CurrentIdentity, db: DbSession) -> dict[str, object]:
+    if identity.operational_profile not in MANAGEMENT_PROFILES:
+        raise DomainError(
+            "operation_grant_forbidden", "Yönetici veya müdür hesabı kullanın.", status_code=403
+        )
+    session = await db.get(AuthSession, identity.session_id)
+    return {
+        "ready": bool(
+            session
+            and (
+                session.device_name == "panel-pin"
+                or (session.device_name or "").startswith("trusted-device:")
+            )
+        ),
+        "waiter": "orders.create" in identity.permissions,
+        "cashier": {"payments.manage", "cashier.shift.manage"}.issubset(identity.permissions),
+    }
+
+
+@router.post("/operation-select")
+async def select_operation_panel(
+    payload: PanelSelection, identity: CurrentIdentity, db: DbSession
+) -> dict[str, object]:
+    if (
+        identity.operational_profile not in MANAGEMENT_PROFILES
+        or not identity.tenant_id
+        or not identity.branch_id
+    ):
+        raise DomainError(
+            "operation_grant_forbidden", "Yetkili hesapla giriş yapın.", status_code=403
+        )
+    needed = (
+        {"orders.create"}
+        if payload.panel == "waiter"
+        else {"payments.manage", "cashier.shift.manage"}
+    )
+    if not needed.issubset(identity.permissions):
+        raise DomainError("permission_denied", "Seçilen panel için yetkiniz yok.", status_code=403)
+    session = (
+        await db.execute(
+            select(AuthSession).where(AuthSession.id == identity.session_id).with_for_update()
+        )
+    ).scalar_one()
+    if not (
+        session.device_name == "panel-pin"
+        or (session.device_name or "").startswith("trusted-device:")
+    ):
+        raise DomainError(
+            "operation_reauthentication_required",
+            "Önce kullanıcı adı ve PIN ile giriş yapın.",
+            status_code=403,
+        )
+    await db.execute(
+        update(OperationGrant)
+        .where(
+            OperationGrant.auth_session_id == identity.session_id,
+            OperationGrant.revoked_at.is_(None),
+        )
+        .values(revoked_at=utcnow())
+    )
+    user = (
+        await db.execute(
+            select(User)
+            .where(User.id == identity.user_id)
+            .options(selectinload(User.role).selectinload(Role.permissions))
+        )
+    ).scalar_one()
+    db.add(
+        OperationGrant(
+            tenant_id=identity.tenant_id,
+            branch_id=identity.branch_id,
+            user_id=identity.user_id,
+            auth_session_id=identity.session_id,
+            token_family=identity.token_family,
+            panel=payload.panel,
+            mode="operator",
+            authority_hash=authority_hash(user.role),
+            expires_at=session.expires_at,
+        )
+    )
+    add_audit_log(
+        db,
+        identity=identity,
+        action="auth.operation_entered",
+        resource_type="user",
+        resource_id=identity.user_id,
+        new_value={"panel": payload.panel, "mode": "operator"},
+    )
+    await db.commit()
+    return {"panel": payload.panel, "mode": "operator"}
 
 
 class OperationAuthorization(BaseModel):
@@ -201,7 +373,7 @@ async def operation_panel_access(
             "Paneller sayfasından kendi parolanız veya PIN’inizle yetkili giriş yapın.",
             status_code=403,
         )
-    return {"panel": panel, "mode": "support"}
+    return {"panel": panel, "mode": identity.operation_mode or "support"}
 
 
 @router.delete("/operation-grant", status_code=204)

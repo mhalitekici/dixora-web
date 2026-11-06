@@ -43,15 +43,21 @@ class Identity:
     has_all_branch_access: bool = False
     operational_profile: str = ""
     operation_panel: str | None = None
+    operation_mode: str | None = None
 
     def can_access_branch(self, branch_id: UUID) -> bool:
         return branch_id in self.accessible_branch_ids
 
     @property
     def requires_cashier_shift(self) -> bool:
-        return self.operational_profile == "CASHIER" or (
-            self.role not in {"BUSINESS_OWNER", "BUSINESS_ADMIN", "BUSINESS_MANAGER", "SUPER_ADMIN"}
-            and "payments.manage" in self.permissions
+        return (
+            (self.operation_panel == "cashier" and self.operation_mode == "operator")
+            or self.operational_profile == "CASHIER"
+            or (
+                self.role
+                not in {"BUSINESS_OWNER", "BUSINESS_ADMIN", "BUSINESS_MANAGER", "SUPER_ADMIN"}
+                and "payments.manage" in self.permissions
+            )
         )
 
 
@@ -154,6 +160,7 @@ async def get_current_identity(
         has_all_branch_access=has_all_branch_access,
         operational_profile=profile,
         operation_panel=grant.panel if grant else None,
+        operation_mode=grant.mode if grant else None,
     )
 
 
@@ -163,11 +170,16 @@ DbSession = Annotated[AsyncSession, Depends(get_db)]
 
 def require_permissions(*required: str) -> Callable[[Identity], Awaitable[Identity]]:
     async def dependency(identity: CurrentIdentity) -> Identity:
-        if identity.operation_panel == "cashier" and set(required) & {
-            "payments.manage",
-            "cashier.shift.manage",
-            "cashier.day.close",
-        }:
+        if (
+            identity.operation_panel == "cashier"
+            and identity.operation_mode != "operator"
+            and set(required)
+            & {
+                "payments.manage",
+                "cashier.shift.manage",
+                "cashier.day.close",
+            }
+        ):
             raise DomainError(
                 "operation_observation_only",
                 "Destek modu yalnız gözlem içindir. "

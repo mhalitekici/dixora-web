@@ -28,8 +28,8 @@ class CashierShift(UUIDPrimaryKeyMixin, TimestampMixin, Base):
             "branch_id",
             "opened_by_user_id",
             unique=True,
-            postgresql_where=text("status = 'OPEN'"),
-            sqlite_where=text("status = 'OPEN'"),
+            postgresql_where=text("status = 'OPEN' AND opened_by_user_id <> user_id"),
+            sqlite_where=text("status = 'OPEN' AND opened_by_user_id <> user_id"),
         ),
     )
 

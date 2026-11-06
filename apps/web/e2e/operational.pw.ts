@@ -46,7 +46,7 @@ test.beforeAll(async ({ request }) => {
     .toBe(200);
 });
 
-test("manager reauth enters cashier observation without adopting a shift", async ({
+test("manager must authenticate an employee before panel selection", async ({
   page,
 }) => {
   await login(page);
@@ -55,37 +55,11 @@ test("manager reauth enters cashier observation without adopting a shift", async
     page.getByRole("link", { name: "Panellerden yetkili giriş yap" }),
   ).toBeVisible();
   await page.goto("/admin/panels");
-  await page
-    .getByLabel("Kullanıcı adı", { exact: true })
-    .fill("owner@dixora.test");
-  await page.getByLabel("Parola", { exact: true }).fill("DixoraLab!2026");
-  await page.getByLabel("Kasiyer", { exact: true }).check();
-  await page
-    .getByRole("button", { name: "Yetkili giriş", exact: true })
-    .click();
+  await expect(page.getByLabel("Kullanıcı adı", { exact: true })).toBeVisible();
+  await expect(page.getByLabel("PIN", { exact: true })).toBeVisible();
   await expect(
-    page.getByRole("heading", { name: "Kasa gözlem ekranı" }),
-  ).toBeVisible();
-  await expect(
-    page.getByRole("button", { name: /Ödeme al|Vardiya aç/ }),
+    page.getByRole("button", { name: /Kasiyer paneli/ }),
   ).toHaveCount(0);
-  const denied = await page.request.post("/api/backend/shifts/open", {
-    data: {
-      username: "cashier@dixora.test",
-      pin: "1357",
-      opening_cash: "100.00",
-    },
-    headers: { origin: "http://localhost:13000" },
-  });
-  expect(denied.status()).toBe(403);
-  await page.screenshot({
-    path: path.join(evidence, "cashier-support.png"),
-    fullPage: true,
-    style:
-      'nextjs-portal, button[aria-label="Open Tanstack query devtools"] { visibility: hidden !important; }',
-  });
-  await page.getByRole("button", { name: "Destek modundan çık" }).click();
-  await page.waitForURL("**/admin/panels");
 });
 
 test("report PDF downloads with applied date filters", async ({ page }) => {
@@ -407,7 +381,10 @@ test("product images upload, refresh in admin and QR, and delete", async ({
     const row = page.getByRole("row").filter({ hasText: "Classic Burger" });
     const image = row.locator("img");
     await expect(image).toBeVisible();
-    await expect(image).toHaveJSProperty("src", `http://localhost:13000${currentPath}`);
+    await expect(image).toHaveJSProperty(
+      "src",
+      `http://localhost:13000${currentPath}`,
+    );
     await expect
       .poll(() =>
         image.evaluate(
@@ -420,14 +397,20 @@ test("product images upload, refresh in admin and QR, and delete", async ({
     const preview = page.getByRole("img", {
       name: "Classic Burger görsel önizlemesi",
     });
-    await expect(preview).toHaveJSProperty("src", `http://localhost:13000${currentPath}`);
+    await expect(preview).toHaveJSProperty(
+      "src",
+      `http://localhost:13000${currentPath}`,
+    );
     await page.getByRole("button", { name: "Vazgeç", exact: true }).click();
     await page.goto("/m/dixora-lab/merkez");
     const qrImage = page
       .getByRole("button", { name: /Classic Burger/ })
       .locator("img");
     await expect(qrImage).toBeVisible();
-    await expect(qrImage).toHaveJSProperty("src", `http://localhost:13000${currentPath}`);
+    await expect(qrImage).toHaveJSProperty(
+      "src",
+      `http://localhost:13000${currentPath}`,
+    );
     await expect
       .poll(() =>
         qrImage.evaluate(

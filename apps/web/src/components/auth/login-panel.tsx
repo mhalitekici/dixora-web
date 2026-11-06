@@ -22,6 +22,9 @@ import { useState, useSyncExternalStore } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCartStore } from "@/stores/cart-store";
+import { useUiStore } from "@/stores/ui-store";
 
 import { BrandLogo } from "@/components/brand/brand-logo";
 import { Button } from "@/components/ui/button";
@@ -85,6 +88,7 @@ export function LoginPanel({
     () => false,
   );
   const router = useRouter();
+  const cache = useQueryClient();
   const [mode, setMode] = useState<LoginMode>(() =>
     !superAdmin && pinLoginEnabled ? initialMode : "password",
   );
@@ -158,6 +162,10 @@ export function LoginPanel({
       toast.success("Giriş başarılı", {
         description: "Güvenli çalışma alanınız hazırlanıyor.",
       });
+      await cache.cancelQueries();
+      cache.clear();
+      useCartStore.getState().clear();
+      useUiStore.getState().reset();
       router.replace(
         safeReturnTo(returnTo) ??
           (superAdmin ? "/super-admin" : targetForRole(role)),
@@ -204,13 +212,29 @@ export function LoginPanel({
         );
       }
       toast.success("Hızlı giriş tamamlandı");
+      await cache.cancelQueries();
+      cache.clear();
+      useCartStore.getState().clear();
+      useUiStore.getState().reset();
+      const profile =
+        data?.user?.operationalProfile ??
+        data?.user?.roleCode ??
+        data?.user?.role;
+      const management = [
+        "BUSINESS_OWNER",
+        "BUSINESS_ADMIN",
+        "BUSINESS_MANAGER",
+        "MANAGEMENT",
+      ].includes(String(profile));
       router.replace(
-        safeReturnTo(returnTo) ??
-          targetForRole(
-            data?.user?.operationalProfile ??
-              data?.user?.roleCode ??
-              data?.user?.role,
-          ),
+        management
+          ? "/admin/panels"
+          : (safeReturnTo(returnTo) ??
+              targetForRole(
+                data?.user?.operationalProfile ??
+                  data?.user?.roleCode ??
+                  data?.user?.role,
+              )),
       );
       router.refresh();
     } catch (error) {

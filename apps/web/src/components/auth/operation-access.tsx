@@ -22,9 +22,12 @@ export function OperationAccess({
   const access = useQuery({
     queryKey: ["operation-access", panel],
     queryFn: () =>
-      api.get<{ mode: "staff" | "support" }>("auth/operation-access", {
-        search: { panel },
-      }),
+      api.get<{ mode: "staff" | "support" | "operator" }>(
+        "auth/operation-access",
+        {
+          search: { panel },
+        },
+      ),
     refetchInterval: 5_000,
     retry: false,
     staleTime: 0,
@@ -52,24 +55,30 @@ export function OperationAccess({
     );
   return (
     <>
-      {access.data.mode === "support" ? (
+      {access.data.mode === "support" || access.data.mode === "operator" ? (
         <div
           role="status"
           className="flex flex-wrap items-center justify-between gap-3 border-b border-primary/30 bg-primary/10 p-3 text-sm"
         >
           <p>
-            <strong>Operasyon destek modu</strong> · Gerçek hesabınızla işlem
-            yapıyorsunuz.
-            {panel === "cashier"
-              ? " Kasa yalnız gözlem içindir; vardiya ve tahsilat işlemleri kapalıdır."
-              : " Erişim 10 dakika geçerlidir."}
+            <strong>
+              {access.data.mode === "operator"
+                ? "Yönetici / müdür paneli"
+                : "Operasyon destek modu"}
+            </strong>{" "}
+            · Gerçek hesabınızla işlem yapıyorsunuz.
+            {access.data.mode === "operator"
+              ? " Kendi işlemleriniz kendi hesabınıza kaydedilir."
+              : panel === "cashier"
+                ? " Kasa yalnız gözlem içindir; vardiya ve tahsilat işlemleri kapalıdır."
+                : " Erişim 10 dakika geçerlidir."}
           </p>
           <Button
             variant="outline"
             disabled={exit.isPending}
             onClick={() => exit.mutate()}
           >
-            Destek modundan çık
+            Panel seçimine dön
           </Button>
           {exit.error ? <p role="alert">{exit.error.message}</p> : null}
         </div>
