@@ -51,4 +51,16 @@ Gerçek kullanıcıların PIN’leri alınmadı veya değiştirilmedi. Aktif ana
 yönetici/müdür kayıtlarında PIN ve iki panel yetkisinin mevcut olduğu yalnız
 metadata üzerinden doğrulandı. Devre dışı hesapların durumu değiştirilmedi.
 Güncelleme öncesi PostgreSQL yedeği Git dışında alınıp `pg_restore --list` ile
-doğrulandı. Docker güncellemesinde kalıcı veri hacimleri korunur.
+doğrulandı.
+
+Yerel Docker `dixora` API/web güncellemesi tamamlandı; tüm servisler healthy.
+Gerçek PostgreSQL şeması `0045_operator_panels` başlığında. Sipariş, ödeme, kasa
+vardiyası ve yazdırma işi tablolarının satır sayıları ve tam satır özetleri önceki
+değerlerle aynı. `/ready` 200; giriş ekranı 200, etkin giriş düğmesi ve sıfır
+sayfa hatasıyla doğrulandı. Çalışan girişinden ve admin içinden aynı panel/ayrı
+vardiya akışı son Docker üretim web imajında yalıtılmış API’ye bağlı olarak da
+geçti. Geçici doğrulama web servisi durduruldu. Kalıcı veri hacimleri korundu.
+
+Mevcut kayıtlardan bir işletme yöneticisi pasif durumda; aktif müdür ve özel
+yönetici profili PIN’li ve iki panel yetkisine sahip. Pasif hesabın etkinliği
+kullanıcı talimatı olmadan değiştirilmedi; bu hesap etkinleştirilmeden giriş yapamaz.
