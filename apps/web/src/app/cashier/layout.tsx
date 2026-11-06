@@ -1,3 +1,4 @@
+import { OperationAccess } from "@/components/auth/operation-access";
 import type { ReactNode } from "react";
 
 import { OperationalShell } from "@/components/layout/operational-shell";
@@ -11,9 +12,11 @@ export default function CashierLayout({ children }: { children: ReactNode }) {
           session then confirms or corrects it. */}
       <ManagedThemeBootstrap useStored />
       <SessionManagedTheme />
-      <OperationalShell mode="cashier" userName="Kasiyer" fullBleed>
-        {children}
-      </OperationalShell>
+      <OperationAccess panel="cashier">
+        <OperationalShell mode="cashier" userName="Kasiyer" fullBleed>
+          {children}
+        </OperationalShell>
+      </OperationAccess>
     </>
   );
 }

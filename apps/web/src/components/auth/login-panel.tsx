@@ -18,10 +18,13 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useState, useSyncExternalStore } from "react";
 import { useForm } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
+import { useQueryClient } from "@tanstack/react-query";
+import { useCartStore } from "@/stores/cart-store";
+import { useUiStore } from "@/stores/ui-store";
 
 import { BrandLogo } from "@/components/brand/brand-logo";
 import { Button } from "@/components/ui/button";
@@ -32,7 +35,10 @@ import { cn } from "@/lib/utils";
 const passwordSchema = z.object({
   business_slug: z.string().trim(),
   remember_me: z.boolean(),
-  identifier: z.string().trim().min(2, "Kullanıcı adınızı veya e-postanızı girin."),
+  identifier: z
+    .string()
+    .trim()
+    .min(2, "Kullanıcı adınızı veya e-postanızı girin."),
   password: z.string().min(6, "Parola en az 6 karakter olmalı."),
 });
 
@@ -47,8 +53,7 @@ type PasswordValues = z.infer<typeof passwordSchema>;
 type PinValues = z.infer<typeof pinSchema>;
 export type LoginMode = "password" | "pin";
 
-const pinLoginEnabled =
-  process.env.NEXT_PUBLIC_ENABLE_PIN_LOGIN === "true";
+const pinLoginEnabled = process.env.NEXT_PUBLIC_ENABLE_PIN_LOGIN === "true";
 
 // KITCHEN/BAR are retired role presets (the kitchen display was replaced by
 // printed tickets); any account still carrying one of them has no page left
@@ -77,7 +82,13 @@ export function LoginPanel({
   initialEmail?: string;
   initialMode?: LoginMode;
 }) {
+  const hydrated = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
   const router = useRouter();
+  const cache = useQueryClient();
   const [mode, setMode] = useState<LoginMode>(() =>
     !superAdmin && pinLoginEnabled ? initialMode : "password",
   );
@@ -114,18 +125,17 @@ export function LoginPanel({
           business_slug: superAdmin ? null : values.business_slug,
         }),
       });
-      const data = (await response.json().catch(() => null)) as
-        | {
-            user?: {
-              role?: string;
-              roleCode?: string;
-              roles?: Array<{ code?: string } | string>;
-            };
-            error?: { code?: string; message?: string };
-            detail?: string;
-            message?: string;
-          }
-        | null;
+      const data = (await response.json().catch(() => null)) as {
+        user?: {
+          role?: string;
+          roleCode?: string;
+          operationalProfile?: string;
+          roles?: Array<{ code?: string } | string>;
+        };
+        error?: { code?: string; message?: string };
+        detail?: string;
+        message?: string;
+      } | null;
       if (!response.ok) {
         throw new Error(
           data?.error?.message ??
@@ -136,6 +146,7 @@ export function LoginPanel({
       }
 
       const role =
+        data?.user?.operationalProfile ??
         data?.user?.roleCode ??
         data?.user?.role ??
         (typeof data?.user?.roles?.[0] === "string"
@@ -151,6 +162,10 @@ export function LoginPanel({
       toast.success("Giriş başarılı", {
         description: "Güvenli çalışma alanınız hazırlanıyor.",
       });
+      await cache.cancelQueries();
+      cache.clear();
+      useCartStore.getState().clear();
+      useUiStore.getState().reset();
       router.replace(
         safeReturnTo(returnTo) ??
           (superAdmin ? "/super-admin" : targetForRole(role)),
@@ -158,7 +173,8 @@ export function LoginPanel({
       router.refresh();
     } catch (error) {
       toast.error("Giriş yapılamadı", {
-        description: error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
+        description:
+          error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
       });
     }
   }
@@ -170,36 +186,61 @@ export function LoginPanel({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(values),
       });
-      const data = (await response.json().catch(() => null)) as
-        | {
-            user?: { role?: string; roleCode?: string };
-            error?: { code?: string; message?: string };
-            detail?: string;
-            message?: string;
-          }
-        | null;
+      const data = (await response.json().catch(() => null)) as {
+        user?: {
+          role?: string;
+          roleCode?: string;
+          operationalProfile?: string;
+        };
+        error?: { code?: string; message?: string };
+        detail?: string;
+        message?: string;
+      } | null;
       if (!response.ok) {
         const deviceError =
           data?.error?.code === "trusted_device_required" ||
           data?.error?.code === "trusted_device_invalid";
         throw new Error(
-          deviceError
-            ? "Bu cihaz henüz PIN girişi için yetkili değil. Önce İşletme girişi sekmesinden parola ile bir kez giriş yapın."
-            : (data?.error?.message ??
+          data?.error?.code === "branch_forbidden"
+            ? "Seçilen şube bu çalışanın yetkisinde değil. Çalışanın atandığı şubeyi kontrol edin."
+            : deviceError
+              ? "Bu cihaz henüz PIN girişi için yetkili değil. Önce İşletme girişi sekmesinden parola ile bir kez giriş yapın."
+              : (data?.error?.message ??
                 data?.detail ??
                 data?.message ??
                 "PIN doğrulanamadı."),
         );
       }
       toast.success("Hızlı giriş tamamlandı");
+      await cache.cancelQueries();
+      cache.clear();
+      useCartStore.getState().clear();
+      useUiStore.getState().reset();
+      const profile =
+        data?.user?.operationalProfile ??
+        data?.user?.roleCode ??
+        data?.user?.role;
+      const management = [
+        "BUSINESS_OWNER",
+        "BUSINESS_ADMIN",
+        "BUSINESS_MANAGER",
+        "MANAGEMENT",
+      ].includes(String(profile));
       router.replace(
-        safeReturnTo(returnTo) ??
-          targetForRole(data?.user?.roleCode ?? data?.user?.role),
+        management
+          ? "/panels"
+          : (safeReturnTo(returnTo) ??
+              targetForRole(
+                data?.user?.operationalProfile ??
+                  data?.user?.roleCode ??
+                  data?.user?.role,
+              )),
       );
       router.refresh();
     } catch (error) {
       toast.error("PIN girişi başarısız", {
-        description: error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
+        description:
+          error instanceof Error ? error.message : "Lütfen tekrar deneyin.",
       });
     }
   }
@@ -227,8 +268,8 @@ export function LoginPanel({
             <span className="block text-brand">hazır.</span>
           </h1>
           <p className="mt-6 max-w-lg text-base leading-7 text-white/56">
-            Masa, sipariş, mutfak ve stok akışlarını güvenli bir çalışma alanından
-            yönetin. Her rol yalnız ihtiyaç duyduğu araçları görür.
+            Masa, sipariş, mutfak ve stok akışlarını güvenli bir çalışma
+            alanından yönetin. Her rol yalnız ihtiyaç duyduğu araçları görür.
           </p>
           <div className="mt-10 grid max-w-lg gap-3 sm:grid-cols-3">
             {[
@@ -238,10 +279,15 @@ export function LoginPanel({
             ].map(([Icon, title, detail]) => {
               const FeatureIcon = Icon as typeof Wifi;
               return (
-                <div key={String(title)} className="rounded-2xl border border-white/8 bg-white/[0.04] p-4">
+                <div
+                  key={String(title)}
+                  className="rounded-2xl border border-white/8 bg-white/[0.04] p-4"
+                >
                   <FeatureIcon className="size-4 text-brand" />
                   <p className="mt-4 text-sm font-semibold">{String(title)}</p>
-                  <p className="mt-1 text-[0.68rem] text-white/40">{String(detail)}</p>
+                  <p className="mt-1 text-[0.68rem] text-white/40">
+                    {String(detail)}
+                  </p>
                 </div>
               );
             })}
@@ -262,7 +308,10 @@ export function LoginPanel({
           Ana sayfa
         </Link>
         <div className="w-full max-w-[430px]">
-          <BrandLogo className="mx-auto mb-8 h-12 w-fit text-foreground lg:hidden" priority />
+          <BrandLogo
+            className="mx-auto mb-8 h-12 w-fit text-foreground lg:hidden"
+            priority
+          />
           <div className="mb-8">
             <div className="mb-4 flex size-12 items-center justify-center rounded-2xl border bg-card text-brand shadow-sm">
               {superAdmin ? (
@@ -341,249 +390,299 @@ export function LoginPanel({
 
           {!isPinMode ? (
             <form
+              method="post"
               id="password-login-panel"
               role={!superAdmin && pinLoginEnabled ? "tabpanel" : undefined}
               aria-labelledby={
-                !superAdmin && pinLoginEnabled ? "password-login-tab" : undefined
+                !superAdmin && pinLoginEnabled
+                  ? "password-login-tab"
+                  : undefined
               }
               className="space-y-4"
               onSubmit={passwordForm.handleSubmit(onPasswordSubmit)}
             >
-              {!superAdmin ? (
-                <div className="space-y-2">
-                  <Label htmlFor="business_slug">İşletme kodu</Label>
-                  <div className="relative">
-                    <Building2 className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      id="business_slug"
-                      autoComplete="organization"
-                      className="h-12 rounded-xl pl-10"
-                      aria-invalid={Boolean(passwordForm.formState.errors.business_slug)}
-                      {...passwordForm.register("business_slug")}
-                    />
+              <fieldset disabled={!hydrated} className="space-y-4">
+                {!superAdmin ? (
+                  <div className="space-y-2">
+                    <Label htmlFor="business_slug">İşletme kodu</Label>
+                    <div className="relative">
+                      <Building2 className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                      <Input
+                        id="business_slug"
+                        autoComplete="organization"
+                        className="h-12 rounded-xl pl-10"
+                        aria-invalid={Boolean(
+                          passwordForm.formState.errors.business_slug,
+                        )}
+                        {...passwordForm.register("business_slug")}
+                      />
+                    </div>
+                    {passwordForm.formState.errors.business_slug ? (
+                      <p className="text-xs text-destructive">
+                        {passwordForm.formState.errors.business_slug.message}
+                      </p>
+                    ) : null}
                   </div>
-                  {passwordForm.formState.errors.business_slug ? (
+                ) : null}
+                <div className="space-y-2">
+                  <Label htmlFor="identifier">Kullanıcı adı veya e-posta</Label>
+                  <Input
+                    id="identifier"
+                    autoComplete="username"
+                    className="h-12 rounded-xl"
+                    aria-invalid={Boolean(
+                      passwordForm.formState.errors.identifier,
+                    )}
+                    {...passwordForm.register("identifier")}
+                  />
+                  {passwordForm.formState.errors.identifier ? (
                     <p className="text-xs text-destructive">
-                      {passwordForm.formState.errors.business_slug.message}
+                      {passwordForm.formState.errors.identifier.message}
                     </p>
                   ) : null}
                 </div>
-              ) : null}
-              <div className="space-y-2">
-                <Label htmlFor="identifier">Kullanıcı adı veya e-posta</Label>
-                <Input
-                  id="identifier"
-                  autoComplete="username"
-                  className="h-12 rounded-xl"
-                  aria-invalid={Boolean(passwordForm.formState.errors.identifier)}
-                  {...passwordForm.register("identifier")}
-                />
-                {passwordForm.formState.errors.identifier ? (
-                  <p className="text-xs text-destructive">
-                    {passwordForm.formState.errors.identifier.message}
-                  </p>
-                ) : null}
-              </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <Label htmlFor="password">Parola</Label>
-                  <button
-                    type="button"
-                    disabled
-                    title="Parola sıfırlama için işletme yöneticinizle iletişime geçin"
-                    className="cursor-not-allowed text-xs font-medium text-muted-foreground"
-                  >
-                    Parolamı unuttum
-                  </button>
-                </div>
-                <div className="relative">
-                  <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                  <Input
-                    id="password"
-                    type={showPassword ? "text" : "password"}
-                    autoComplete="current-password"
-                    className="h-12 rounded-xl px-10"
-                    aria-invalid={Boolean(passwordForm.formState.errors.password)}
-                    {...passwordForm.register("password")}
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowPassword((value) => !value)}
-                    className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                    aria-label={showPassword ? "Parolayı gizle" : "Parolayı göster"}
-                  >
-                    {showPassword ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
-                  </button>
-                </div>
-                {passwordForm.formState.errors.password ? (
-                  <p className="text-xs text-destructive">
-                    {passwordForm.formState.errors.password.message}
-                  </p>
-                ) : null}
-              </div>
-              {!superAdmin ? (
-                <label
-                  htmlFor="remember_me"
-                  className="flex cursor-pointer items-start gap-3 rounded-xl border bg-card px-3.5 py-3 text-sm"
-                >
-                  <input
-                    id="remember_me"
-                    type="checkbox"
-                    className="mt-0.5 size-4 shrink-0 accent-brand"
-                    aria-describedby="remember_me_hint"
-                    {...passwordForm.register("remember_me")}
-                  />
-                  <span>
-                    <span className="block font-medium text-foreground">Beni hatırla</span>
-                    <span
-                      id="remember_me_hint"
-                      className="mt-0.5 block text-xs leading-5 text-muted-foreground"
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label htmlFor="password">Parola</Label>
+                    <button
+                      type="button"
+                      disabled
+                      title="Parola sıfırlama için işletme yöneticinizle iletişime geçin"
+                      className="cursor-not-allowed text-xs font-medium text-muted-foreground"
                     >
-                      Bu cihazda oturumunuzu 30 güne kadar güvenli tutar.
+                      Parolamı unuttum
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <LockKeyhole className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      autoComplete="current-password"
+                      className="h-12 rounded-xl px-10"
+                      aria-invalid={Boolean(
+                        passwordForm.formState.errors.password,
+                      )}
+                      {...passwordForm.register("password")}
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword((value) => !value)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                      aria-label={
+                        showPassword ? "Parolayı gizle" : "Parolayı göster"
+                      }
+                    >
+                      {showPassword ? (
+                        <EyeOff className="size-4" />
+                      ) : (
+                        <Eye className="size-4" />
+                      )}
+                    </button>
+                  </div>
+                  {passwordForm.formState.errors.password ? (
+                    <p className="text-xs text-destructive">
+                      {passwordForm.formState.errors.password.message}
+                    </p>
+                  ) : null}
+                </div>
+                {!superAdmin ? (
+                  <label
+                    htmlFor="remember_me"
+                    className="flex cursor-pointer items-start gap-3 rounded-xl border bg-card px-3.5 py-3 text-sm"
+                  >
+                    <input
+                      id="remember_me"
+                      type="checkbox"
+                      className="mt-0.5 size-4 shrink-0 accent-brand"
+                      aria-describedby="remember_me_hint"
+                      {...passwordForm.register("remember_me")}
+                    />
+                    <span>
+                      <span className="block font-medium text-foreground">
+                        Beni hatırla
+                      </span>
+                      <span
+                        id="remember_me_hint"
+                        className="mt-0.5 block text-xs leading-5 text-muted-foreground"
+                      >
+                        Bu cihazda oturumunuzu 30 güne kadar güvenli tutar.
+                      </span>
                     </span>
-                  </span>
-                </label>
-              ) : null}
-              <Button
-                type="submit"
-                className="h-12 w-full rounded-xl"
-                disabled={passwordForm.formState.isSubmitting}
-              >
-                {passwordForm.formState.isSubmitting ? (
-                  <Loader2 className="animate-spin" />
-                ) : (
-                  <LockKeyhole />
-                )}
-                Güvenli giriş yap
-                {!passwordForm.formState.isSubmitting ? <ArrowRight className="ml-auto" /> : null}
-              </Button>
+                  </label>
+                ) : null}
+                <Button
+                  type="submit"
+                  className="h-12 w-full rounded-xl"
+                  disabled={!hydrated || passwordForm.formState.isSubmitting}
+                >
+                  {passwordForm.formState.isSubmitting ? (
+                    <Loader2 className="animate-spin" />
+                  ) : (
+                    <LockKeyhole />
+                  )}
+                  Güvenli giriş yap
+                  {!passwordForm.formState.isSubmitting ? (
+                    <ArrowRight className="ml-auto" />
+                  ) : null}
+                </Button>
+              </fieldset>
             </form>
           ) : (
             <form
+              method="post"
               id="pin-login-panel"
               role="tabpanel"
               aria-labelledby="pin-login-tab"
               className="space-y-4"
               onSubmit={pinForm.handleSubmit(onPinSubmit)}
             >
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <fieldset disabled={!hydrated} className="space-y-4">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="pin_business_slug">İşletme kodu</Label>
+                    <Input
+                      id="pin_business_slug"
+                      autoComplete="organization"
+                      placeholder="ör. dixora-lab"
+                      className="h-12 rounded-xl"
+                      aria-invalid={Boolean(
+                        pinForm.formState.errors.business_slug,
+                      )}
+                      aria-describedby={
+                        pinForm.formState.errors.business_slug
+                          ? "pin_business_slug_error"
+                          : undefined
+                      }
+                      {...pinForm.register("business_slug")}
+                    />
+                    {pinForm.formState.errors.business_slug ? (
+                      <p
+                        id="pin_business_slug_error"
+                        className="text-xs text-destructive"
+                      >
+                        {pinForm.formState.errors.business_slug.message}
+                      </p>
+                    ) : null}
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="branch_slug">Şube kodu</Label>
+                    <Input
+                      id="branch_slug"
+                      autoComplete="off"
+                      placeholder="ör. merkez"
+                      className="h-12 rounded-xl"
+                      aria-invalid={Boolean(
+                        pinForm.formState.errors.branch_slug,
+                      )}
+                      aria-describedby={
+                        pinForm.formState.errors.branch_slug
+                          ? "branch_slug_error"
+                          : undefined
+                      }
+                      {...pinForm.register("branch_slug")}
+                    />
+                    {pinForm.formState.errors.branch_slug ? (
+                      <p
+                        id="branch_slug_error"
+                        className="text-xs text-destructive"
+                      >
+                        {pinForm.formState.errors.branch_slug.message}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
                 <div className="space-y-2">
-                  <Label htmlFor="pin_business_slug">İşletme kodu</Label>
+                  <Label htmlFor="pin_username">Kullanıcı adı</Label>
                   <Input
-                    id="pin_business_slug"
-                    autoComplete="organization"
-                    placeholder="ör. dixora-lab"
+                    id="pin_username"
+                    autoComplete="username"
+                    placeholder="ör. ahmet"
                     className="h-12 rounded-xl"
-                    aria-invalid={Boolean(pinForm.formState.errors.business_slug)}
+                    aria-invalid={Boolean(pinForm.formState.errors.username)}
                     aria-describedby={
-                      pinForm.formState.errors.business_slug
-                        ? "pin_business_slug_error"
+                      pinForm.formState.errors.username
+                        ? "pin_username_error"
                         : undefined
                     }
-                    {...pinForm.register("business_slug")}
+                    {...pinForm.register("username")}
                   />
-                  {pinForm.formState.errors.business_slug ? (
-                    <p id="pin_business_slug_error" className="text-xs text-destructive">
-                      {pinForm.formState.errors.business_slug.message}
+                  {pinForm.formState.errors.username ? (
+                    <p
+                      id="pin_username_error"
+                      className="text-xs text-destructive"
+                    >
+                      {pinForm.formState.errors.username.message}
                     </p>
                   ) : null}
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor="branch_slug">Şube kodu</Label>
+                  <Label htmlFor="pin">PIN</Label>
                   <Input
-                    id="branch_slug"
-                    autoComplete="off"
-                    placeholder="ör. merkez"
-                    className="h-12 rounded-xl"
-                    aria-invalid={Boolean(pinForm.formState.errors.branch_slug)}
-                    aria-describedby={
-                      pinForm.formState.errors.branch_slug ? "branch_slug_error" : undefined
-                    }
-                    {...pinForm.register("branch_slug")}
+                    id="pin"
+                    type="password"
+                    inputMode="numeric"
+                    pattern="[0-9]*"
+                    maxLength={12}
+                    autoComplete="current-password"
+                    className="h-14 rounded-xl text-center text-2xl font-semibold tracking-[0.5em]"
+                    aria-invalid={Boolean(pinForm.formState.errors.pin)}
+                    aria-describedby="pin_hint"
+                    {...pinForm.register("pin")}
                   />
-                  {pinForm.formState.errors.branch_slug ? (
-                    <p id="branch_slug_error" className="text-xs text-destructive">
-                      {pinForm.formState.errors.branch_slug.message}
+                  {pinForm.formState.errors.pin ? (
+                    <p id="pin_hint" className="text-xs text-destructive">
+                      {pinForm.formState.errors.pin.message}
                     </p>
-                  ) : null}
+                  ) : (
+                    <p id="pin_hint" className="text-xs text-muted-foreground">
+                      PIN’iniz işletme yöneticiniz tarafından çalışan hesabınıza
+                      tanımlanır.
+                    </p>
+                  )}
                 </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="pin_username">Kullanıcı adı</Label>
-                <Input
-                  id="pin_username"
-                  autoComplete="username"
-                  placeholder="ör. ahmet"
-                  className="h-12 rounded-xl"
-                  aria-invalid={Boolean(pinForm.formState.errors.username)}
-                  aria-describedby={
-                    pinForm.formState.errors.username ? "pin_username_error" : undefined
-                  }
-                  {...pinForm.register("username")}
-                />
-                {pinForm.formState.errors.username ? (
-                  <p id="pin_username_error" className="text-xs text-destructive">
-                    {pinForm.formState.errors.username.message}
-                  </p>
-                ) : null}
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="pin">PIN</Label>
-                <Input
-                  id="pin"
-                  type="password"
-                  inputMode="numeric"
-                  pattern="[0-9]*"
-                  maxLength={12}
-                  autoComplete="current-password"
-                  className="h-14 rounded-xl text-center text-2xl font-semibold tracking-[0.5em]"
-                  aria-invalid={Boolean(pinForm.formState.errors.pin)}
-                  aria-describedby="pin_hint"
-                  {...pinForm.register("pin")}
-                />
-                {pinForm.formState.errors.pin ? (
-                  <p id="pin_hint" className="text-xs text-destructive">
-                    {pinForm.formState.errors.pin.message}
-                  </p>
-                ) : (
-                  <p id="pin_hint" className="text-xs text-muted-foreground">
-                    PIN’iniz işletme yöneticiniz tarafından çalışan hesabınıza tanımlanır.
-                  </p>
-                )}
-              </div>
-              <div
-                role="note"
-                className="flex gap-3 rounded-xl border border-brand/20 bg-brand/[0.06] p-3.5 text-xs leading-5 text-muted-foreground"
-              >
-                <ShieldCheck className="mt-0.5 size-4 shrink-0 text-brand" />
-                <div>
-                  <p className="font-medium text-foreground">Bu cihazda ilk giriş mi?</p>
-                  <p className="mt-0.5">
-                    Yetkili bir işletme hesabıyla parola üzerinden bir kez giriş yapın. Çıkış
-                    sonrasında güvenli cihaz yetkisi korunur ve çalışanlar PIN kullanabilir.
-                  </p>
-                  <button
-                    type="button"
-                    onClick={() => setMode("password")}
-                    className="mt-1.5 font-semibold text-brand underline-offset-4 hover:underline"
-                  >
-                    İşletme girişine geç
-                  </button>
+                <div
+                  role="note"
+                  className="flex gap-3 rounded-xl border border-brand/20 bg-brand/[0.06] p-3.5 text-xs leading-5 text-muted-foreground"
+                >
+                  <ShieldCheck className="mt-0.5 size-4 shrink-0 text-brand" />
+                  <div>
+                    <p className="font-medium text-foreground">
+                      Bu cihazda ilk giriş mi?
+                    </p>
+                    <p className="mt-0.5">
+                      Yetkili bir işletme hesabıyla parola üzerinden bir kez
+                      giriş yapın. Çıkış sonrasında güvenli cihaz yetkisi
+                      korunur ve çalışanlar PIN kullanabilir.
+                    </p>
+                    <button
+                      type="button"
+                      onClick={() => setMode("password")}
+                      className="mt-1.5 font-semibold text-brand underline-offset-4 hover:underline"
+                    >
+                      İşletme girişine geç
+                    </button>
+                  </div>
                 </div>
-              </div>
-              <Button
-                type="submit"
-                className="h-12 w-full rounded-xl"
-                disabled={pinForm.formState.isSubmitting}
-              >
-                {pinForm.formState.isSubmitting ? <Loader2 className="animate-spin" /> : <Check />}
-                PIN ile devam et
-              </Button>
+                <Button
+                  type="submit"
+                  className="h-12 w-full rounded-xl"
+                  disabled={!hydrated || pinForm.formState.isSubmitting}
+                >
+                  {pinForm.formState.isSubmitting ? (
+                    <Loader2 className="animate-spin" />
+                  ) : (
+                    <Check />
+                  )}
+                  PIN ile devam et
+                </Button>
+              </fieldset>
             </form>
           )}
 
           <p className="mt-7 text-center text-[0.68rem] leading-5 text-muted-foreground">
-            Devam ederek güvenli oturum ve denetim kaydı politikasını kabul etmiş olursunuz.
+            Devam ederek güvenli oturum ve denetim kaydı politikasını kabul
+            etmiş olursunuz.
           </p>
         </div>
       </section>

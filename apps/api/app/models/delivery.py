@@ -98,6 +98,8 @@ class DeliveryOrder(UUIDPrimaryKeyMixin, TimestampMixin, Base):
     customer_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     customer_phone: Mapped[str | None] = mapped_column(String(32), nullable=True)
     address_line: Mapped[str | None] = mapped_column(Text, nullable=True)
+    city: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    request_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
     district: Mapped[str | None] = mapped_column(String(120), nullable=True)
     neighbourhood: Mapped[str | None] = mapped_column(String(120), nullable=True)
     address_note: Mapped[str | None] = mapped_column(Text, nullable=True)

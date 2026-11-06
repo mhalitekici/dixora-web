@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 from datetime import UTC
 from uuid import UUID
@@ -7,11 +8,16 @@ from uuid import UUID
 import jwt
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
-from app.models import AuthSession, RealtimeTicket, Tenant, User
+from app.models import AuthSession, RealtimeTicket, Role, Tenant, User
+from app.rbac import effective_permission_codes
 from app.security import as_utc, decode_token, utcnow
+from app.services.branch_access import resolve_accessible_branches
+from app.services.subscriptions import tenant_access_blocked
 
 router = APIRouter(tags=["realtime"])
+REVALIDATE_SECONDS = 15
 
 
 @router.websocket("/ws")
@@ -64,6 +70,7 @@ async def websocket_endpoint(
                         RealtimeTicket.tenant_id == tenant_id,
                         RealtimeTicket.user_id == user_id,
                         RealtimeTicket.auth_session_id == session_id,
+                        RealtimeTicket.branch_id == branch_id,
                         RealtimeTicket.nonce_hash == nonce_hash,
                         RealtimeTicket.used_at.is_(None),
                     )
@@ -82,11 +89,13 @@ async def websocket_endpoint(
             ticket_record.used_at = utcnow()
         user = (
             await db.execute(
-                select(User).where(
+                select(User)
+                .where(
                     User.id == user_id,
                     User.tenant_id == tenant_id,
                     User.is_active.is_(True),
                 )
+                .options(selectinload(User.role).selectinload(Role.permissions))
             )
         ).scalar_one_or_none()
         auth_session = await db.get(AuthSession, session_id)
@@ -95,16 +104,56 @@ async def websocket_endpoint(
             user is None
             or auth_session is None
             or auth_session.user_id != user.id
+            or auth_session.tenant_id != tenant_id
             or auth_session.token_family != token_family
             or auth_session.revoked_at is not None
             or as_utc(auth_session.expires_at) <= utcnow()
-            or tenant is None
-            or not tenant.is_active
+            or tenant_access_blocked(tenant)
+            or not user.role.is_active
         ):
             await websocket.close(code=4401)
             return
+        accessible, all_branches = await resolve_accessible_branches(db, user)
+        if (branch_id is None and not all_branches) or (
+            branch_id is not None and branch_id not in accessible
+        ):
+            await websocket.close(code=4403)
+            return
+        role_snapshot = (user.role_id, effective_permission_codes(user.role))
         if ticket_id is not None:
             await db.commit()
+
+    async def authorized() -> bool:
+        # A fresh session avoids identity-map caches hiding account/grant changes.
+        async with websocket.app.state.database.session_factory() as check_db:
+            current = (
+                await check_db.execute(
+                    select(User)
+                    .where(User.id == user_id, User.tenant_id == tenant_id)
+                    .options(selectinload(User.role).selectinload(Role.permissions))
+                )
+            ).scalar_one_or_none()
+            session = await check_db.get(AuthSession, session_id)
+            business = await check_db.get(Tenant, tenant_id)
+            if (
+                current is None
+                or not current.is_active
+                or not current.role.is_active
+                or session is None
+                or session.user_id != user_id
+                or session.tenant_id != tenant_id
+                or session.token_family != token_family
+                or session.revoked_at is not None
+                or as_utc(session.expires_at) <= utcnow()
+                or tenant_access_blocked(business)
+                or (current.role_id, effective_permission_codes(current.role)) != role_snapshot
+            ):
+                return False
+            grants, global_access = await resolve_accessible_branches(check_db, current)
+            return global_access if branch_id is None else branch_id in grants
+
+    # The delivery layer checks again before every outbound event, including Redis fan-out.
+    websocket.state.authorize_realtime = authorized
     hub = websocket.app.state.realtime
     await hub.connect(tenant_id, branch_id, websocket)
     await websocket.send_json(
@@ -117,7 +166,18 @@ async def websocket_endpoint(
     )
     try:
         while True:
-            message = await websocket.receive_json()
+            try:
+                message = await asyncio.wait_for(
+                    websocket.receive_json(), timeout=REVALIDATE_SECONDS
+                )
+            except TimeoutError:
+                if not await authorized():
+                    await websocket.close(code=4401)
+                    break
+                continue
+            if not await authorized():
+                await websocket.close(code=4401)
+                break
             if message.get("type") == "ping":
                 await websocket.send_json({"type": "pong"})
     except WebSocketDisconnect:

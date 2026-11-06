@@ -60,13 +60,15 @@ export type LoyaltyCustomer = {
 }
 
 export type LoyaltyAdminReward = {
-  redemption_code: string
-  membership_code: string
-  program_name: string
-  status: LoyaltyRewardStatus
-  issued_at: string
-  redeemed_at: string | null
-}
+  expires_at?: string | null;
+  is_expired?: boolean;
+  redemption_code: string;
+  membership_code: string;
+  program_name: string;
+  status: LoyaltyRewardStatus;
+  issued_at: string;
+  redeemed_at: string | null;
+};
 
 export type LoyaltyPublicOffer = {
   enabled: boolean

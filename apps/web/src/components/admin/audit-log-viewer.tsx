@@ -53,9 +53,10 @@ import {
   LoadingState,
   number,
   shortId,
-} from "./admin-utils"
-import { auditActionLabel, auditResourceLabel } from "./audit-labels"
-import type { AuditLog } from "./types"
+} from "./admin-utils";
+import { AuditChanges, redactAudit } from "./audit-changes";
+import { auditActionLabel, auditResourceLabel, auditRoleLabel } from "./audit-labels";
+import type { AuditLog } from "./types";
 
 const PAGE_SIZE = 25
 
@@ -99,8 +100,8 @@ export function AuditLogViewer() {
     const normalized = search.trim().toLocaleLowerCase("tr-TR")
     const fromTime = dateFrom
       ? new Date(`${dateFrom}T00:00:00`).getTime()
-      : null
-    const toTime = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null
+      : null;
+    const toTime = dateTo ? new Date(`${dateTo}T23:59:59.999`).getTime() : null;
     return logs.filter((log) => {
       if (role !== "ALL" && log.actor_role !== role) return false
       if (resourceType !== "ALL" && log.resource_type !== resourceType)
@@ -241,7 +242,7 @@ export function AuditLogViewer() {
               <SelectItem value="ALL">Tüm aktör rolleri</SelectItem>
               {roles.map((item) => (
                 <SelectItem key={item} value={item}>
-                  {item}
+                  {auditRoleLabel(item)}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -260,7 +261,7 @@ export function AuditLogViewer() {
               <SelectItem value="ALL">Tüm kaynaklar</SelectItem>
               {resourceTypes.map((item) => (
                 <SelectItem key={item} value={item}>
-                  {item}
+                  {auditResourceLabel(item) ?? item}
                 </SelectItem>
               ))}
             </SelectContent>
@@ -322,10 +323,10 @@ export function AuditLogViewer() {
                     </TableCell>
                     <TableCell>
                       <p className="font-medium">
-                        {log.actor_role ?? "SYSTEM"}
+                        {auditRoleLabel(log.actor_role)}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {shortId(log.actor_user_id)}
+                        {log.actor_name ?? shortId(log.actor_user_id)}
                       </p>
                     </TableCell>
                     <TableCell>
@@ -338,7 +339,7 @@ export function AuditLogViewer() {
                         {auditResourceLabel(log.resource_type) ?? "—"}
                       </p>
                       <p className="text-xs text-muted-foreground">
-                        {shortId(log.resource_id)}
+                        {log.resource_name ?? shortId(log.resource_id)}
                       </p>
                     </TableCell>
                     <TableCell className="max-w-52 truncate text-muted-foreground">
@@ -424,7 +425,7 @@ function AuditDetail({
           </DialogTitle>
           <DialogDescription>
             {log
-              ? `${dateTime(log.timestamp)} · ${log.actor_role ?? "SYSTEM"}`
+              ? `${dateTime(log.timestamp)} · ${auditRoleLabel(log.actor_role)}`
               : ""}
           </DialogDescription>
         </DialogHeader>
@@ -437,12 +438,12 @@ function AuditDetail({
               />
               <AuditMetric label="Teknik kod" value={log.action} />
               <AuditMetric
-                label="Kaynak kimliği"
-                value={log.resource_id ?? "—"}
+                label="Etkilenen kayıt"
+                value={log.resource_name ?? log.resource_id ?? "—"}
               />
               <AuditMetric
-                label="Aktör kimliği"
-                value={log.actor_user_id ?? "SYSTEM"}
+                label="İşlemi yapan"
+                value={log.actor_name ?? log.actor_user_id ?? "Sistem"}
               />
             </div>
             {log.reason ? (
@@ -451,10 +452,21 @@ function AuditDetail({
                 <p className="mt-1 text-sm">{log.reason}</p>
               </div>
             ) : null}
-            <div className="grid gap-3 lg:grid-cols-2">
-              <JsonPanel title="Önceki değer" value={log.previous_value} />
-              <JsonPanel title="Yeni değer" value={log.new_value} />
-            </div>
+            <p className="text-sm">
+              {log.actor_name ?? "Sistem"} · {auditActionLabel(log.action)} ·{" "}
+              {log.resource_name ?? auditResourceLabel(log.resource_type)} ·{" "}
+              {log.branch_name ?? "Şube belirtilmemiş"}
+            </p>
+            <AuditChanges previous={log.previous_value} next={log.new_value} />
+            <details>
+              <summary className="cursor-pointer py-2 text-sm font-medium">
+                Teknik detayları göster
+              </summary>
+              <div className="grid gap-3 lg:grid-cols-2">
+                <JsonPanel title="Önceki değer" value={log.previous_value} />
+                <JsonPanel title="Yeni değer" value={log.new_value} />
+              </div>
+            </details>
           </div>
         ) : null}
       </DialogContent>
@@ -478,23 +490,10 @@ function JsonPanel({ title, value }: { title: string; value: unknown }) {
       <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-all bg-muted/20 p-3 text-xs leading-5">
         {value === null || value === undefined
           ? "Kayıt yok"
-          : JSON.stringify(redactSecrets(value), null, 2)}
+          : JSON.stringify(redactAudit(value), null, 2)}
       </pre>
     </div>
-  )
-}
-
-function redactSecrets(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(redactSecrets)
-  if (typeof value !== "object" || value === null) return value
-  return Object.fromEntries(
-    Object.entries(value as Record<string, unknown>).map(([key, item]) => [
-      key,
-      /password|pin|token|secret/i.test(key)
-        ? "[REDACTED]"
-        : redactSecrets(item),
-    ]),
-  )
+  );
 }
 
 function actionTone(action: string) {

@@ -22,17 +22,20 @@ import {
   Tooltip,
   XAxis,
   YAxis,
-} from "recharts"
-import { z } from "zod"
+} from "recharts";
+import { z } from "zod";
+import { api } from "@/lib/api";
+import type { CashierShift } from "./types";
 
-import { EmptyState } from "@/components/shared/empty-state"
-import { PageHeader } from "@/components/shared/page-header"
-import { SectionCard } from "@/components/shared/section-card"
-import { StatCard } from "@/components/shared/stat-card"
-import { StatusBadge } from "@/components/shared/status-badge"
-import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
-import { Label } from "@/components/ui/label"
+import { EmptyState } from "@/components/shared/empty-state";
+import { PdfDownloadButton } from "@/components/reports/pdf-download-button";
+import { PageHeader } from "@/components/shared/page-header";
+import { SectionCard } from "@/components/shared/section-card";
+import { StatCard } from "@/components/shared/stat-card";
+import { StatusBadge } from "@/components/shared/status-badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
 import {
   Table,
   TableBody,
@@ -116,9 +119,24 @@ export function ReportDashboard() {
       adminApi.salesSummary(previousApiRange.from, previousApiRange.to, signal),
   })
   const shiftHistoryQuery = useQuery({
-    queryKey: adminKeys.shiftHistory(100),
-    queryFn: ({ signal }) => adminApi.shiftHistory(100, signal),
-  })
+    queryKey: ["report-shifts", range.from, range.to],
+    queryFn: async ({ signal }) => {
+      const result: CashierShift[] = [];
+      for (let offset = 0; ; offset += 200) {
+        const batch = await api.get<CashierShift[]>("shifts/history", {
+          search: {
+            date_from: range.from,
+            date_to: range.to,
+            limit: 200,
+            offset,
+          },
+          signal,
+        });
+        result.push(...batch);
+        if (batch.length < 200) return result;
+      }
+    },
+  });
 
   const applyPreset = (days: number) => {
     const next = {
@@ -174,6 +192,7 @@ export function ReportDashboard() {
         title="Satış raporları"
         description="Seçili dönemin ödenmiş siparişlerini önceki eş dönemle karşılaştırın."
         icon={BarChart3}
+        actions={<PdfDownloadButton from={range.from} to={range.to} />}
       />
 
       <form
@@ -376,6 +395,28 @@ export function ReportDashboard() {
 
       <SectionCard
         className="mt-5"
+        title="Tahsilat ve iadeler"
+        description="Tahsilatlar ödeme, iadeler iade tarihine göre seçili döneme yazılır. PDF aynı veri servisinden hazırlanır."
+      >
+        <dl className="grid gap-4 sm:grid-cols-3">
+          {[
+            ["Nakit tahsilat", summary?.collections?.CASH ?? "0"],
+            ["Kart tahsilat", summary?.collections?.CARD ?? "0"],
+            ["Nakit iade", summary?.refunds?.CASH ?? "0"],
+            ["Kart iade", summary?.refunds?.CARD ?? "0"],
+            ["Net tahsilat", summary?.net_collections ?? "0"],
+          ].map(([label, value]) => (
+            <div key={label}>
+              <dt className="text-sm text-muted-foreground">{label}</dt>
+              <dd className="mt-1 font-semibold tabular-nums">
+                {money(value)}
+              </dd>
+            </div>
+          ))}
+        </dl>
+      </SectionCard>
+      <SectionCard
+        className="mt-5"
         title="Vardiya geçmişi"
         description="Kasa açılış/kapanış hareketleri, beklenen ve sayılan nakit farkıyla birlikte."
       >
@@ -410,8 +451,7 @@ export function ReportDashboard() {
               </TableHeader>
               <TableBody>
                 {(shiftHistoryQuery.data ?? []).map((shift) => {
-                  const expected =
-                    Number(shift.opening_cash) + Number(shift.cash_sales)
+                  const expected = Number(shift.expected_cash);
                   const variance =
                     shift.cash_variance !== null
                       ? Number(shift.cash_variance)
@@ -493,21 +533,19 @@ function addDays(value: Date, amount: number) {
 }
 
 function dateInput(value: Date) {
-  const year = value.getFullYear()
-  const month = `${value.getMonth() + 1}`.padStart(2, "0")
-  const day = `${value.getDate()}`.padStart(2, "0")
-  return `${year}-${month}-${day}`
+  const year = value.getFullYear();
+  const month = `${value.getMonth() + 1}`.padStart(2, "0");
+  const day = `${value.getDate()}`.padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 function toApiRange(range: RangeValues) {
-  const from = new Date(`${range.from}T00:00:00`)
-  const to = new Date(`${range.to}T23:59:59.999`)
-  return { from: from.toISOString(), to: to.toISOString() }
+  return { from: range.from, to: range.to };
 }
 
 function previousPeriod(range: RangeValues): RangeValues {
-  const from = new Date(`${range.from}T00:00:00`)
-  const to = new Date(`${range.to}T00:00:00`)
+  const from = new Date(`${range.from}T00:00:00`);
+  const to = new Date(`${range.to}T00:00:00`);
   const durationDays =
     Math.round((to.getTime() - from.getTime()) / 86_400_000) + 1
   const previousTo = addDays(from, -1)

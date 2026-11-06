@@ -1,11 +1,8 @@
 import "server-only"
 
-import {
-  defaultErrorMessage,
-  normalizeErrorPayload,
-} from "@/lib/api/errors"
-import type { ApiErrorPayload } from "@/lib/api/types"
-import { BackendRequestError } from "@/lib/server/backend"
+import { defaultErrorMessage, normalizeErrorPayload } from "@/lib/api/errors";
+import type { ApiErrorPayload } from "@/lib/api/types";
+import { BackendRequestError } from "@/lib/server/backend";
 
 const RESPONSE_HEADERS = new Set([
   "cache-control",
@@ -23,9 +20,12 @@ const RESPONSE_HEADERS = new Set([
   "x-request-id",
 ])
 
-export async function backendResponse(
-  response: Response,
-): Promise<Response> {
+export async function backendResponse(response: Response): Promise<Response> {
+  if (response.status === 304)
+    return new Response(null, {
+      status: 304,
+      headers: copyResponseHeaders(response.headers),
+    });
   if (response.status >= 300 && response.status < 400) {
     return apiErrorResponse(
       502,

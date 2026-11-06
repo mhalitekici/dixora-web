@@ -23,10 +23,10 @@ describe("printer setup guidance", () => {
         onAddPrinter={vi.fn()}
         onRefresh={vi.fn()}
       />,
-    )
-    expect(screen.getAllByText("Bekleniyor")).toHaveLength(4)
-    expect(screen.queryByText("Tamamlandı")).not.toBeInTheDocument()
-  })
+    );
+    expect(screen.getAllByText("Tamamlanmadı")).toHaveLength(4);
+    expect(screen.queryByText("Tamamlandı")).not.toBeInTheDocument();
+  });
   it("guides an unconfigured branch and identifies the missing cashier route", () => {
     render(
       <PrinterSetupGuide
@@ -38,9 +38,9 @@ describe("printer setup guidance", () => {
         onAddPrinter={vi.fn()}
         onRefresh={vi.fn()}
       />,
-    )
-    expect(screen.getAllByText("Bekleniyor")).toHaveLength(4)
-    expect(screen.getByText(/Hesap fişi için/)).toBeVisible()
+    );
+    expect(screen.getAllByText("Tamamlanmadı")).toHaveLength(4);
+    expect(screen.getByText(/Hesap fişi için/)).toBeVisible();
     expect(
       screen.getByRole("button", { name: "API adresini kopyala" }),
     ).toBeVisible()

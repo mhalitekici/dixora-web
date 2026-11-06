@@ -28,6 +28,7 @@ import {
   type UseFormRegisterReturn,
 } from "react-hook-form";
 import { toast } from "sonner";
+import { useCurrentUser } from "@/hooks/use-auth";
 import { z } from "zod";
 
 import { EmptyState } from "@/components/shared/empty-state";
@@ -46,6 +47,12 @@ import {
   AlertDialogTrigger,
 } from "@/components/ui/alert-dialog";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import type { ComponentProps } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
@@ -79,23 +86,40 @@ import { adminApi, adminKeys } from "./admin-api";
 import { ErrorState, FieldError, LoadingState, number } from "./admin-utils";
 import type { Branch, Employee, Role, Station } from "./types";
 
+function employeeRoleProfile(role: Role | undefined) {
+  return role?.operational_profile ?? role?.code;
+}
+
 const createSchema = z.object({
-  display_name: z.string().trim().min(2, "Ad soyad en az 2 karakter olmalı.").max(160),
+  display_name: z
+    .string()
+    .trim()
+    .min(2, "Ad soyad en az 2 karakter olmalı.")
+    .max(160),
   username: z
     .string()
     .trim()
     .min(3, "Kullanıcı adı en az 3 karakter olmalı.")
     .max(100)
     .regex(/^[A-Za-z0-9._-]+$/, "Geçerli bir kullanıcı adı girin."),
-  email: z.union([z.literal(""), z.string().trim().email("Geçerli bir e-posta girin.")]),
+  email: z.union([
+    z.literal(""),
+    z.string().trim().email("Geçerli bir e-posta girin."),
+  ]),
   phone: z.union([
     z.literal(""),
-    z.string().trim().regex(/^[0-9+()\s.-]{7,32}$/, "Geçerli bir telefon girin."),
+    z
+      .string()
+      .trim()
+      .regex(/^[0-9+()\s.-]{7,32}$/, "Geçerli bir telefon girin."),
   ]),
   role_id: z.string().min(1, "Rol seçin."),
   branch_id: z.string(),
   preparation_station_id: z.string(),
-  temporary_password: z.string().min(10, "Parola en az 10 karakter olmalı.").max(256),
+  temporary_password: z
+    .string()
+    .min(10, "Parola en az 10 karakter olmalı.")
+    .max(256),
   pin: z.union([
     z.literal(""),
     z.string().regex(/^\d{4,12}$/, "PIN 4–12 rakam olmalı."),
@@ -104,11 +128,21 @@ const createSchema = z.object({
 });
 
 const editSchema = z.object({
-  display_name: z.string().trim().min(2, "Ad soyad en az 2 karakter olmalı.").max(160),
-  email: z.union([z.literal(""), z.string().trim().email("Geçerli bir e-posta girin.")]),
+  display_name: z
+    .string()
+    .trim()
+    .min(2, "Ad soyad en az 2 karakter olmalı.")
+    .max(160),
+  email: z.union([
+    z.literal(""),
+    z.string().trim().email("Geçerli bir e-posta girin."),
+  ]),
   phone: z.union([
     z.literal(""),
-    z.string().trim().regex(/^[0-9+()\s.-]{7,32}$/, "Geçerli bir telefon girin."),
+    z
+      .string()
+      .trim()
+      .regex(/^[0-9+()\s.-]{7,32}$/, "Geçerli bir telefon girin."),
   ]),
   role_id: z.string().min(1, "Rol seçin."),
   branch_id: z.string(),
@@ -125,15 +159,19 @@ const pinSchema = z.object({
 
 type CreateValues = z.infer<typeof createSchema>;
 type EditValues = z.infer<typeof editSchema>;
-type EditorState = { mode: "create" } | { mode: "edit"; employee: Employee } | null;
+type EditorState =
+  { mode: "create" } | { mode: "edit"; employee: Employee } | null;
 type PinState = "configured" | "removed";
 
 export function EmployeeManagement() {
   const queryClient = useQueryClient();
+  const currentUser = useCurrentUser();
   const [search, setSearch] = useState("");
   const [roleFilter, setRoleFilter] = useState("ALL");
   const [editor, setEditor] = useState<EditorState>(null);
-  const [passwordEmployee, setPasswordEmployee] = useState<Employee | null>(null);
+  const [passwordEmployee, setPasswordEmployee] = useState<Employee | null>(
+    null,
+  );
   const [pinEmployee, setPinEmployee] = useState<Employee | null>(null);
   const [pinStates, setPinStates] = useState<Record<string, PinState>>({});
 
@@ -156,10 +194,15 @@ export function EmployeeManagement() {
     mutationFn: adminApi.createEmployee,
     onSuccess: async (employee, variables) => {
       if (variables.pin) {
-        setPinStates((current) => ({ ...current, [employee.id]: "configured" }));
+        setPinStates((current) => ({
+          ...current,
+          [employee.id]: "configured",
+        }));
       }
       toast.success("Çalışan hesabı oluşturuldu.");
       setEditor(null);
+      setSearch(employee.username);
+      setRoleFilter("ALL");
       await invalidateEmployees();
     },
     onError: () => toast.error("Çalışan oluşturulamadı."),
@@ -183,14 +226,27 @@ export function EmployeeManagement() {
     mutationFn: ({ id, isActive }: { id: string; isActive: boolean }) =>
       adminApi.updateEmployee(id, { is_active: isActive }),
     onSuccess: async (_, variables) => {
-      toast.success(variables.isActive ? "Çalışan yeniden etkinleştirildi." : "Çalışan devre dışı bırakıldı.");
+      toast.success(
+        variables.isActive
+          ? "Çalışan yeniden etkinleştirildi."
+          : "Çalışan devre dışı bırakıldı.",
+      );
       await invalidateEmployees();
     },
     onError: () => toast.error("Hesap durumu değiştirilemedi."),
   });
 
-  const firstError = employeesQuery.error ?? rolesQuery.error ?? branchesQuery.error;
-  if (employeesQuery.isLoading || rolesQuery.isLoading || branchesQuery.isLoading) {
+  const firstError =
+    employeesQuery.error ??
+    rolesQuery.error ??
+    branchesQuery.error ??
+    currentUser.error;
+  if (
+    employeesQuery.isLoading ||
+    rolesQuery.isLoading ||
+    branchesQuery.isLoading ||
+    currentUser.isLoading
+  ) {
     return <LoadingState label="Çalışanlar yükleniyor…" />;
   }
   if (firstError) {
@@ -201,6 +257,7 @@ export function EmployeeManagement() {
           void employeesQuery.refetch();
           void rolesQuery.refetch();
           void branchesQuery.refetch();
+          void currentUser.refetch();
         }}
       />
     );
@@ -216,9 +273,12 @@ export function EmployeeManagement() {
   const filteredEmployees = employees.filter((employee) => {
     if (roleFilter !== "ALL" && employee.role_id !== roleFilter) return false;
     if (!normalized) return true;
-    return [employee.display_name, employee.username, employee.email ?? "", employee.role].some(
-      (value) => value.toLocaleLowerCase("tr-TR").includes(normalized),
-    );
+    return [
+      employee.display_name,
+      employee.username,
+      employee.email ?? "",
+      employee.role,
+    ].some((value) => value.toLocaleLowerCase("tr-TR").includes(normalized));
   });
 
   return (
@@ -246,21 +306,27 @@ export function EmployeeManagement() {
         />
         <StatCard
           title="Aktif hesap"
-          value={number(employees.filter((employee) => employee.is_active).length)}
+          value={number(
+            employees.filter((employee) => employee.is_active).length,
+          )}
           detail="Oturum açabilir"
           icon={UserCheck}
           tone="success"
         />
         <StatCard
           title="Devre dışı"
-          value={number(employees.filter((employee) => !employee.is_active).length)}
+          value={number(
+            employees.filter((employee) => !employee.is_active).length,
+          )}
           detail="Oturumları kapatılmış"
           icon={UserX}
           tone="warning"
         />
         <StatCard
           title="Rol çeşidi"
-          value={number(new Set(employees.map((employee) => employee.role_id)).size)}
+          value={number(
+            new Set(employees.map((employee) => employee.role_id)).size,
+          )}
           detail={`${roles.length} tanımlı rol`}
           icon={BadgeCheck}
           tone="brand"
@@ -280,7 +346,10 @@ export function EmployeeManagement() {
             className="h-10 rounded-xl pl-9"
           />
         </div>
-        <Select value={roleFilter} onValueChange={(value) => setRoleFilter(value ?? "ALL")}>
+        <Select
+          value={roleFilter}
+          onValueChange={(value) => setRoleFilter(value ?? "ALL")}
+        >
           <SelectTrigger className="h-10 min-w-48 rounded-xl">
             <SelectValue />
           </SelectTrigger>
@@ -315,7 +384,9 @@ export function EmployeeManagement() {
                     key={employee.id}
                     employee={employee}
                     role={roles.find((role) => role.id === employee.role_id)}
-                    branch={branches.find((branch) => branch.id === employee.branch_id)}
+                    branch={branches.find(
+                      (branch) => branch.id === employee.branch_id,
+                    )}
                     pinState={
                       pinStates[employee.id] ??
                       (employee.has_pin ? "configured" : "removed")
@@ -330,7 +401,8 @@ export function EmployeeManagement() {
                       })
                     }
                     togglePending={
-                      toggleEmployee.isPending && toggleEmployee.variables?.id === employee.id
+                      toggleEmployee.isPending &&
+                      toggleEmployee.variables?.id === employee.id
                     }
                   />
                 ))}
@@ -355,6 +427,11 @@ export function EmployeeManagement() {
           state={editor}
           roles={roles}
           branches={branches}
+          activeBranchId={
+            currentUser.data?.branch?.id ??
+            currentUser.data?.user.branchId ??
+            null
+          }
           pending={createEmployee.isPending || updateEmployee.isPending}
           onClose={() => setEditor(null)}
           onCreate={(values) =>
@@ -365,11 +442,14 @@ export function EmployeeManagement() {
               display_name: values.display_name,
               role_id: values.role_id,
               branch_id:
-                roles.find((role) => role.id === values.role_id)?.code === "BUSINESS_ADMIN"
+                roles.find((role) => role.id === values.role_id)?.code ===
+                "BUSINESS_ADMIN"
                   ? null
                   : values.branch_id,
               preparation_station_id:
-                roles.find((role) => role.id === values.role_id)?.code === "KITCHEN"
+                employeeRoleProfile(
+                  roles.find((role) => role.id === values.role_id),
+                ) === "KITCHEN"
                   ? values.preparation_station_id || null
                   : null,
               temporary_password: values.temporary_password,
@@ -386,11 +466,14 @@ export function EmployeeManagement() {
                 phone: values.phone || null,
                 role_id: values.role_id,
                 branch_id:
-                  roles.find((role) => role.id === values.role_id)?.code === "BUSINESS_ADMIN"
+                  roles.find((role) => role.id === values.role_id)?.code ===
+                  "BUSINESS_ADMIN"
                     ? null
                     : values.branch_id,
                 preparation_station_id:
-                  roles.find((role) => role.id === values.role_id)?.code === "KITCHEN"
+                  employeeRoleProfile(
+                    roles.find((role) => role.id === values.role_id),
+                  ) === "KITCHEN"
                     ? values.preparation_station_id || null
                     : null,
                 is_active: values.is_active,
@@ -411,7 +494,10 @@ export function EmployeeManagement() {
         onClose={() => setPinEmployee(null)}
         onChanged={(state) => {
           if (pinEmployee) {
-            setPinStates((current) => ({ ...current, [pinEmployee.id]: state }));
+            setPinStates((current) => ({
+              ...current,
+              [pinEmployee.id]: state,
+            }));
           }
         }}
       />
@@ -457,19 +543,24 @@ function EmployeeRow({
           <div>
             <p className="font-semibold">{employee.display_name}</p>
             <p className="text-xs text-muted-foreground">
-              @{employee.username} · {employee.phone || employee.email || "iletişim yok"}
+              @{employee.username} ·{" "}
+              {employee.phone || employee.email || "iletişim yok"}
             </p>
           </div>
         </div>
       </TableCell>
       <TableCell>
         <p className="font-medium">{role?.name ?? employee.role}</p>
-        <p className="text-xs text-muted-foreground">{employee.permissions.length} yetki</p>
+        <p className="text-xs text-muted-foreground">
+          {employee.permissions.length} yetki
+        </p>
       </TableCell>
       <TableCell>
         <p>{branch?.name ?? "Tüm şubeler"}</p>
         {employee.preparation_station_id ? (
-          <p className="text-xs text-muted-foreground">Hazırlık istasyonu atanmış</p>
+          <p className="text-xs text-muted-foreground">
+            Hazırlık istasyonu atanmış
+          </p>
         ) : null}
       </TableCell>
       <TableCell>
@@ -491,23 +582,47 @@ function EmployeeRow({
       </TableCell>
       <TableCell className="pr-4">
         <div className="flex justify-end gap-1">
-          <Button variant="ghost" size="icon-sm" aria-label="Çalışanı düzenle" onClick={onEdit}>
+          <EmployeeAction
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Çalışanı düzenle"
+            onClick={onEdit}
+          >
             <Edit3 />
-          </Button>
-          <Button variant="ghost" size="icon-sm" aria-label="Geçici parola ayarla" onClick={onPassword}>
+          </EmployeeAction>
+          <EmployeeAction
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Geçici parola ayarla"
+            onClick={onPassword}
+          >
             <KeyRound />
-          </Button>
-          <Button variant="ghost" size="icon-sm" aria-label="PIN yönet" onClick={onPin}>
+          </EmployeeAction>
+          <EmployeeAction
+            variant="ghost"
+            size="icon-sm"
+            aria-label="PIN yönet"
+            onClick={onPin}
+          >
             <LockKeyhole />
-          </Button>
+          </EmployeeAction>
           <AlertDialog>
             <AlertDialogTrigger
               render={
-                <Button
+                <EmployeeAction
+                  title={
+                    employee.is_active
+                      ? "Çalışanı devre dışı bırak"
+                      : "Çalışanı etkinleştir"
+                  }
                   variant="ghost"
                   size="icon-sm"
                   disabled={togglePending}
-                  aria-label={employee.is_active ? "Çalışanı devre dışı bırak" : "Çalışanı etkinleştir"}
+                  aria-label={
+                    employee.is_active
+                      ? "Çalışanı devre dışı bırak"
+                      : "Çalışanı etkinleştir"
+                  }
                 />
               }
             >
@@ -516,7 +631,9 @@ function EmployeeRow({
             <AlertDialogContent>
               <AlertDialogHeader>
                 <AlertDialogTitle>
-                  {employee.is_active ? "Hesabı devre dışı bırak?" : "Hesabı yeniden etkinleştir?"}
+                  {employee.is_active
+                    ? "Hesabı devre dışı bırak?"
+                    : "Hesabı yeniden etkinleştir?"}
                 </AlertDialogTitle>
                 <AlertDialogDescription>
                   {employee.is_active
@@ -545,6 +662,7 @@ function EmployeeEditor({
   state,
   roles,
   branches,
+  activeBranchId,
   pending,
   onClose,
   onCreate,
@@ -553,6 +671,7 @@ function EmployeeEditor({
   state: Exclude<EditorState, null>;
   roles: Role[];
   branches: Branch[];
+  activeBranchId: string | null;
   pending: boolean;
   onClose: () => void;
   onCreate: (values: CreateValues) => void;
@@ -563,7 +682,9 @@ function EmployeeEditor({
   const defaultRole =
     roles.find((role) => role.code === "BUSINESS_MANAGER" && role.is_active) ??
     roles.find((role) => role.is_active);
-  const defaultBranchId = branches.find((branch) => branch.is_active)?.id ?? "";
+  const defaultBranchId =
+    branches.find((branch) => branch.id === activeBranchId && branch.is_active)
+      ?.id ?? "";
   const createForm = useForm<CreateValues>({
     resolver: zodResolver(createSchema),
     defaultValues: {
@@ -572,7 +693,8 @@ function EmployeeEditor({
       email: "",
       phone: "",
       role_id: defaultRole?.id ?? "",
-      branch_id: defaultRole?.code === "BUSINESS_ADMIN" ? "ALL" : defaultBranchId,
+      branch_id:
+        defaultRole?.code === "BUSINESS_ADMIN" ? "ALL" : defaultBranchId,
       preparation_station_id: "",
       temporary_password: generatePassword(),
       pin: "",
@@ -591,24 +713,38 @@ function EmployeeEditor({
       is_active: employee?.is_active ?? true,
     },
   });
-  const createRoleId = useWatch({ control: createForm.control, name: "role_id" });
+  const createRoleId = useWatch({
+    control: createForm.control,
+    name: "role_id",
+  });
   const editRoleId = useWatch({ control: editForm.control, name: "role_id" });
-  const createBranchId = useWatch({ control: createForm.control, name: "branch_id" });
-  const editBranchId = useWatch({ control: editForm.control, name: "branch_id" });
+  const createBranchId = useWatch({
+    control: createForm.control,
+    name: "branch_id",
+  });
+  const editBranchId = useWatch({
+    control: editForm.control,
+    name: "branch_id",
+  });
   const selectedRoleId = isCreate ? createRoleId : editRoleId;
   const selectedBranchId = isCreate ? createBranchId : editBranchId;
-  const selectedRoleCode = roles.find((role) => role.id === selectedRoleId)?.code;
+  const selectedRole = roles.find((role) => role.id === selectedRoleId);
+  const selectedRoleCode = employeeRoleProfile(selectedRole);
   const stationsQuery = useQuery({
     queryKey: adminKeys.stations(selectedBranchId || "none"),
     queryFn: ({ signal }) => adminApi.stations(signal, selectedBranchId),
-    enabled: selectedRoleCode === "KITCHEN" && Boolean(selectedBranchId && selectedBranchId !== "ALL"),
+    enabled:
+      selectedRoleCode === "KITCHEN" &&
+      Boolean(selectedBranchId && selectedBranchId !== "ALL"),
   });
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-lg">
         <DialogHeader>
-          <DialogTitle>{isCreate ? "Yeni çalışan" : "Çalışanı düzenle"}</DialogTitle>
+          <DialogTitle>
+            {isCreate ? "Yeni çalışan" : "Çalışanı düzenle"}
+          </DialogTitle>
           <DialogDescription>
             {isCreate
               ? "Rol, şube ve ilk giriş kimlik bilgilerini belirleyin."
@@ -628,7 +764,9 @@ function EmployeeEditor({
               phoneRegistration={createForm.register("phone")}
               roleRegistration={createForm.register("role_id")}
               branchRegistration={createForm.register("branch_id")}
-              stationRegistration={createForm.register("preparation_station_id")}
+              stationRegistration={createForm.register(
+                "preparation_station_id",
+              )}
               nameError={createForm.formState.errors.display_name?.message}
               emailError={createForm.formState.errors.email?.message}
               phoneError={createForm.formState.errors.phone?.message}
@@ -647,7 +785,9 @@ function EmployeeEditor({
                 className="mt-1.5"
                 {...createForm.register("username")}
               />
-              <FieldError>{createForm.formState.errors.username?.message}</FieldError>
+              <FieldError>
+                {createForm.formState.errors.username?.message}
+              </FieldError>
             </div>
             <div>
               <div className="flex items-center justify-between">
@@ -657,7 +797,10 @@ function EmployeeEditor({
                   variant="ghost"
                   size="sm"
                   onClick={() =>
-                    void copyText(createForm.getValues("temporary_password"), "Parola kopyalandı.")
+                    void copyText(
+                      createForm.getValues("temporary_password"),
+                      "Parola kopyalandı.",
+                    )
                   }
                 >
                   <Copy />
@@ -670,7 +813,9 @@ function EmployeeEditor({
                 className="mt-1.5 font-mono"
                 {...createForm.register("temporary_password")}
               />
-              <FieldError>{createForm.formState.errors.temporary_password?.message}</FieldError>
+              <FieldError>
+                {createForm.formState.errors.temporary_password?.message}
+              </FieldError>
             </div>
             <div>
               <Label htmlFor="employee-pin">İlk PIN (isteğe bağlı)</Label>
@@ -682,15 +827,22 @@ function EmployeeEditor({
                 placeholder="4–12 rakam"
                 {...createForm.register("pin")}
               />
-              <FieldError>{createForm.formState.errors.pin?.message}</FieldError>
+              <FieldError>
+                {createForm.formState.errors.pin?.message}
+              </FieldError>
             </div>
-            <EmployeeActiveField control={createForm.control} id="employee-create-active" />
+            <EmployeeActiveField
+              control={createForm.control}
+              id="employee-create-active"
+            />
           </form>
         ) : (
           <form
             id="employee-editor"
             className="space-y-4"
-            onSubmit={editForm.handleSubmit((values) => employee && onUpdate(employee, values))}
+            onSubmit={editForm.handleSubmit(
+              (values) => employee && onUpdate(employee, values),
+            )}
           >
             <EmployeeCommonFields
               nameRegistration={editForm.register("display_name")}
@@ -709,7 +861,10 @@ function EmployeeEditor({
               stations={stationsQuery.data ?? []}
               stationsLoading={stationsQuery.isLoading}
             />
-            <EmployeeActiveField control={editForm.control} id="employee-edit-active" />
+            <EmployeeActiveField
+              control={editForm.control}
+              id="employee-edit-active"
+            />
           </form>
         )}
 
@@ -718,7 +873,11 @@ function EmployeeEditor({
             Vazgeç
           </Button>
           <Button type="submit" form="employee-editor" disabled={pending}>
-            {pending ? <LoaderCircle className="animate-spin" /> : <UserRoundCog />}
+            {pending ? (
+              <LoaderCircle className="animate-spin" />
+            ) : (
+              <UserRoundCog />
+            )}
             {isCreate ? "Hesabı oluştur" : "Değişiklikleri kaydet"}
           </Button>
         </DialogFooter>
@@ -727,13 +886,9 @@ function EmployeeEditor({
   );
 }
 
-function EmployeeActiveField<TValues extends FieldValues & { is_active: boolean }>({
-  control,
-  id,
-}: {
-  control: Control<TValues>;
-  id: string;
-}) {
+function EmployeeActiveField<
+  TValues extends FieldValues & { is_active: boolean },
+>({ control, id }: { control: Control<TValues>; id: string }) {
   return (
     <Controller
       control={control}
@@ -746,7 +901,11 @@ function EmployeeActiveField<TValues extends FieldValues & { is_active: boolean 
               Pasif hesap giriş yapamaz; mevcut oturumları kapatılır.
             </p>
           </div>
-          <Switch id={id} checked={Boolean(field.value)} onCheckedChange={field.onChange} />
+          <Switch
+            id={id}
+            checked={Boolean(field.value)}
+            onCheckedChange={field.onChange}
+          />
         </div>
       )}
     />
@@ -864,7 +1023,11 @@ function EmployeeCommonFields({
         <div>
           <Label htmlFor="employee-station">Hazırlık istasyonu</Label>
           <select
-            key={selectedRoleCode === "KITCHEN" ? stations[0]?.branch_id ?? "no-branch" : "none"}
+            key={
+              selectedRoleCode === "KITCHEN"
+                ? (stations[0]?.branch_id ?? "no-branch")
+                : "none"
+            }
             id="employee-station"
             required
             disabled={stationsLoading || stations.length === 0}
@@ -907,7 +1070,8 @@ function PasswordDialog({
     defaultValues: { value: generatePassword() },
   });
   const mutation = useMutation({
-    mutationFn: (password: string) => adminApi.resetEmployeePassword(employee?.id ?? "", password),
+    mutationFn: (password: string) =>
+      adminApi.resetEmployeePassword(employee?.id ?? "", password),
     onSuccess: () => {
       toast.success("Geçici parola kaydedildi; açık oturumlar kapatıldı.");
       onClose();
@@ -917,12 +1081,16 @@ function PasswordDialog({
   });
 
   return (
-    <Dialog open={Boolean(employee)} onOpenChange={(open) => !open && onClose()}>
+    <Dialog
+      open={Boolean(employee)}
+      onOpenChange={(open) => !open && onClose()}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Geçici parola oluştur</DialogTitle>
           <DialogDescription>
-            {employee?.display_name} için parola değişecek ve mevcut oturumlar kapatılacak.
+            {employee?.display_name} için parola değişecek ve mevcut oturumlar
+            kapatılacak.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -941,7 +1109,9 @@ function PasswordDialog({
               type="button"
               variant="outline"
               size="icon"
-              onClick={() => void copyText(form.getValues("value"), "Parola kopyalandı.")}
+              onClick={() =>
+                void copyText(form.getValues("value"), "Parola kopyalandı.")
+              }
             >
               <Copy />
               <span className="sr-only">Parolayı kopyala</span>
@@ -953,8 +1123,16 @@ function PasswordDialog({
           <Button variant="outline" onClick={onClose}>
             Vazgeç
           </Button>
-          <Button type="submit" form="password-form" disabled={mutation.isPending}>
-            {mutation.isPending ? <LoaderCircle className="animate-spin" /> : <KeyRound />}
+          <Button
+            type="submit"
+            form="password-form"
+            disabled={mutation.isPending}
+          >
+            {mutation.isPending ? (
+              <LoaderCircle className="animate-spin" />
+            ) : (
+              <KeyRound />
+            )}
             Parolayı kaydet
           </Button>
         </DialogFooter>
@@ -977,7 +1155,8 @@ function PinDialog({
     defaultValues: { value: "" },
   });
   const mutation = useMutation({
-    mutationFn: (pin: string | null) => adminApi.setEmployeePin(employee?.id ?? "", pin),
+    mutationFn: (pin: string | null) =>
+      adminApi.setEmployeePin(employee?.id ?? "", pin),
     onSuccess: (_, pin) => {
       onChanged(pin ? "configured" : "removed");
       toast.success(pin ? "PIN kaydedildi." : "PIN kaldırıldı.");
@@ -988,12 +1167,16 @@ function PinDialog({
   });
 
   return (
-    <Dialog open={Boolean(employee)} onOpenChange={(open) => !open && onClose()}>
+    <Dialog
+      open={Boolean(employee)}
+      onOpenChange={(open) => !open && onClose()}
+    >
       <DialogContent>
         <DialogHeader>
           <DialogTitle>Cihaz PIN’ini yönet</DialogTitle>
           <DialogDescription>
-            {employee?.display_name} için 4–12 rakamlı yeni PIN belirleyin veya mevcut PIN’i kaldırın.
+            {employee?.display_name} için 4–12 rakamlı yeni PIN belirleyin veya
+            mevcut PIN’i kaldırın.
           </DialogDescription>
         </DialogHeader>
         <form
@@ -1023,7 +1206,11 @@ function PinDialog({
             Vazgeç
           </Button>
           <Button type="submit" form="pin-form" disabled={mutation.isPending}>
-            {mutation.isPending ? <LoaderCircle className="animate-spin" /> : <LockKeyhole />}
+            {mutation.isPending ? (
+              <LoaderCircle className="animate-spin" />
+            ) : (
+              <LockKeyhole />
+            )}
             PIN’i kaydet
           </Button>
         </DialogFooter>
@@ -1049,4 +1236,27 @@ async function copyText(value: string, successMessage: string) {
   } catch {
     toast.error("Panoya kopyalanamadı. Metni elle seçebilirsiniz.");
   }
+}
+
+function EmployeeAction(props: ComponentProps<typeof Button>) {
+  const label = props["aria-label"] ?? props.title ?? "İşlem";
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        render={
+          <Button
+            {...props}
+            title={label}
+            className="min-h-11 min-w-11 [@media(hover:none)]:w-auto [@media(hover:none)]:px-2"
+          />
+        }
+      >
+        {props.children}
+        <span className="hidden text-xs [@media(hover:none)]:inline">
+          {label}
+        </span>
+      </TooltipTrigger>
+      <TooltipContent>{label}</TooltipContent>
+    </Tooltip>
+  );
 }

@@ -1,5 +1,5 @@
-import type { AuthContext } from "@/lib/api/types"
-import { hasPermission } from "@/lib/permissions"
+import type { AuthContext } from "@/lib/api/types";
+import { hasPermission } from "@/lib/permissions";
 
 const requirements: Array<[string, string]> = [
   ["/super-admin/system", "platform.system.read"],
@@ -30,23 +30,38 @@ const requirements: Array<[string, string]> = [
   ["/admin/orders", "orders.read"],
   ["/admin/live", "dashboard.read"],
   ["/admin", "dashboard.read"],
-]
+];
 
 export function permissionForNavigation(href: string): string | null {
   return (
     requirements.find(
       ([prefix]) => href === prefix || href.startsWith(`${prefix}/`),
     )?.[1] ?? null
-  )
+  );
 }
 
 export function canNavigate(
   context: AuthContext | null | undefined,
   href: string,
 ) {
-  if (!context) return false
-  const role = context.user.roleCode
-  if (href.startsWith("/super-admin") && role !== "SUPER_ADMIN") return false
+  if (!context) return false;
+  if (
+    context.user.staffSession &&
+    (href === "/admin" || href.startsWith("/admin/"))
+  )
+    return false;
+  const role = context.user.operationalProfile ?? context.user.roleCode;
+  if (href === "/admin/panels")
+    return (
+      [
+        "BUSINESS_OWNER",
+        "BUSINESS_ADMIN",
+        "BUSINESS_MANAGER",
+        "MANAGEMENT",
+      ].includes(role) &&
+      hasPermission(context, ["orders.create", "payments.manage"], "any")
+    );
+  if (href.startsWith("/super-admin") && role !== "SUPER_ADMIN") return false;
   if (href.startsWith("/cashier")) {
     return (
       [
@@ -54,8 +69,9 @@ export function canNavigate(
         "BUSINESS_ADMIN",
         "BUSINESS_MANAGER",
         "CASHIER",
+        "MANAGEMENT",
       ].includes(role) && hasPermission(context, "payments.manage")
-    )
+    );
   }
   if (href.startsWith("/waiter")) {
     return (
@@ -64,8 +80,9 @@ export function canNavigate(
         "BUSINESS_ADMIN",
         "BUSINESS_MANAGER",
         "WAITER",
+        "MANAGEMENT",
       ].includes(role) && hasPermission(context, "orders.create")
-    )
+    );
   }
   if (href.startsWith("/admin")) {
     if (
@@ -74,9 +91,11 @@ export function canNavigate(
         "BUSINESS_ADMIN",
         "BUSINESS_MANAGER",
         "ACCOUNTANT",
+        "MANAGEMENT",
+        "BACKOFFICE",
       ].includes(role)
     )
-      return false
+      return false;
     if (
       role === "ACCOUNTANT" &&
       href !== "/admin" &&
@@ -87,8 +106,8 @@ export function canNavigate(
         "/admin/order-activity",
       ].some((path) => href === path || href.startsWith(`${path}/`))
     )
-      return false
+      return false;
   }
-  const requirement = permissionForNavigation(href)
-  return requirement === null || hasPermission(context, requirement)
+  const requirement = permissionForNavigation(href);
+  return requirement === null || hasPermission(context, requirement);
 }

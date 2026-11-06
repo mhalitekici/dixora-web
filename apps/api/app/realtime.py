@@ -92,11 +92,18 @@ class RealtimeHub:
         stale: list[WebSocket] = []
         for websocket in targets:
             try:
+                authorize = getattr(getattr(websocket, "state", None), "authorize_realtime", None)
+                if authorize is not None and not await authorize():
+                    await websocket.close(code=4401)
+                    stale.append(websocket)
+                    continue
                 await websocket.send_json(event)
             except Exception:
                 stale.append(websocket)
         for websocket in stale:
             await self.disconnect(tenant_id, branch_id, websocket)
+            if branch_id is not None:
+                await self.disconnect(tenant_id, None, websocket)
 
 
 class RedisRealtimeHub:
@@ -141,9 +148,7 @@ class RedisRealtimeHub:
                 await self._redis.aclose()
             self._redis = None
 
-    async def connect(
-        self, tenant_id: UUID, branch_id: UUID | None, websocket: WebSocket
-    ) -> None:
+    async def connect(self, tenant_id: UUID, branch_id: UUID | None, websocket: WebSocket) -> None:
         await self._local.connect(tenant_id, branch_id, websocket)
         async with self._lock:
             if tenant_id not in self._subscribed and self._pubsub is not None:

@@ -1,28 +1,28 @@
-import { NextRequest } from "next/server"
-import { beforeEach, describe, expect, it, vi } from "vitest"
+import { NextRequest } from "next/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const mocks = vi.hoisted(() => ({
   backendFetch: vi.fn(),
   clearTrustedDeviceCookie: vi.fn(),
   mutationOriginError: vi.fn(),
   setAuthCookies: vi.fn(),
-}))
+}));
 
 vi.mock("@/lib/server/auth-cookies", () => ({
   clearTrustedDeviceCookie: mocks.clearTrustedDeviceCookie,
   setAuthCookies: mocks.setAuthCookies,
   TRUSTED_DEVICE_COOKIE: "dixora_trusted_device",
-}))
+}));
 vi.mock("@/lib/server/backend", () => ({
   backendFetch: mocks.backendFetch,
-}))
+}));
 vi.mock("@/lib/server/request-security", () => ({
   mutationOriginError: mocks.mutationOriginError,
-}))
+}));
 
-import { POST } from "@/app/api/auth/pin-login/route"
+import { POST } from "@/app/api/auth/pin-login/route";
 
-const DEVICE_TOKEN = `tdv_${"c".repeat(43)}`
+const DEVICE_TOKEN = `tdv_${"c".repeat(43)}`;
 
 function pinRequest(withDevice = true) {
   return new NextRequest("http://localhost/api/auth/pin-login", {
@@ -40,7 +40,7 @@ function pinRequest(withDevice = true) {
       origin: "http://localhost",
     },
     method: "POST",
-  })
+  });
 }
 
 function backendAuthResponse() {
@@ -60,30 +60,47 @@ function backendAuthResponse() {
       role: "WAITER",
       is_super_admin: false,
     },
-  }
+  };
 }
 
 describe("POST /api/auth/pin-login trusted-device policy", () => {
+  it("preserves the trusted device when the employee chooses a forbidden branch", async () => {
+    mocks.backendFetch.mockResolvedValue(
+      Response.json(
+        {
+          error: {
+            code: "branch_forbidden",
+            message: "Branch access not allowed",
+          },
+        },
+        { status: 403 },
+      ),
+    );
+    const response = await POST(pinRequest());
+    expect(response.status).toBe(403);
+    expect(mocks.clearTrustedDeviceCookie).not.toHaveBeenCalled();
+    expect(mocks.setAuthCookies).not.toHaveBeenCalled();
+  });
   beforeEach(() => {
-    mocks.mutationOriginError.mockReturnValue(null)
-  })
+    mocks.mutationOriginError.mockReturnValue(null);
+  });
 
   it("forwards only the server-readable device credential", async () => {
-    mocks.backendFetch.mockResolvedValue(Response.json(backendAuthResponse()))
+    mocks.backendFetch.mockResolvedValue(Response.json(backendAuthResponse()));
 
-    const response = await POST(pinRequest())
+    const response = await POST(pinRequest());
 
-    expect(response.status).toBe(200)
-    const [, options] = mocks.backendFetch.mock.calls[0] ?? []
+    expect(response.status).toBe(200);
+    const [, options] = mocks.backendFetch.mock.calls[0] ?? [];
     expect(JSON.parse(String(options?.body))).toEqual({
       business_slug: "dixora-lab",
       branch_slug: "merkez",
       username: "waiter@dixora.test",
       pin: "2468",
       device_token: DEVICE_TOKEN,
-    })
-    expect(mocks.setAuthCookies).toHaveBeenCalledTimes(1)
-  })
+    });
+    expect(mocks.setAuthCookies).toHaveBeenCalledTimes(1);
+  });
 
   it("never manufactures a credential when the cookie is missing", async () => {
     mocks.backendFetch.mockResolvedValue(
@@ -96,16 +113,16 @@ describe("POST /api/auth/pin-login trusted-device policy", () => {
         },
         { status: 403 },
       ),
-    )
+    );
 
-    const response = await POST(pinRequest(false))
-    const [, options] = mocks.backendFetch.mock.calls[0] ?? []
+    const response = await POST(pinRequest(false));
+    const [, options] = mocks.backendFetch.mock.calls[0] ?? [];
 
-    expect(response.status).toBe(403)
+    expect(response.status).toBe(403);
     expect(JSON.parse(String(options?.body))).toEqual(
       expect.objectContaining({ device_token: null }),
-    )
-    expect(mocks.clearTrustedDeviceCookie).toHaveBeenCalledTimes(1)
-    expect(mocks.setAuthCookies).not.toHaveBeenCalled()
-  })
-})
+    );
+    expect(mocks.clearTrustedDeviceCookie).toHaveBeenCalledTimes(1);
+    expect(mocks.setAuthCookies).not.toHaveBeenCalled();
+  });
+});

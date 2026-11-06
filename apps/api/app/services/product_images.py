@@ -6,6 +6,7 @@ from hashlib import sha256
 from io import BytesIO
 from re import Pattern, compile
 from typing import Literal
+from urllib.parse import urlsplit
 from uuid import UUID, uuid4
 
 from fastapi import UploadFile
@@ -250,36 +251,47 @@ def public_media_url(settings: Settings, object_key: str) -> str:
     return f"{settings.media_public_base_url.rstrip('/')}/{object_key}"
 
 
-def safe_public_image_url(settings: Settings, image_url: str | None) -> str | None:
-    """Return a same-origin public path for a managed, opaque media object.
-
-    The database keeps the canonical absolute URL so ownership checks and object
-    replacement remain stable. Public web clients receive a relative URL that is
-    served through the web BFF, avoiding broken images when the API and web app use
-    different public hosts. Legacy keys and unmanaged URLs are never exposed.
-    """
-
-    if image_url is None:
+def managed_image_key(settings: Settings, image_url: str | None) -> str | None:
+    if not image_url:
         return None
-    prefix = f"{settings.media_public_base_url.rstrip('/')}/"
-    if not image_url.startswith(prefix):
-        return None
-    object_key = image_url[len(prefix) :]
-    product_key = parse_product_image_key(object_key)
-    qr_key = parse_qr_menu_image_key(object_key)
-    if product_key is not None:
-        return (
-            f"/api/v1/media/{product_key.value}"
-            if product_key.legacy_tenant_id is None
-            else None
-        )
-    if qr_key is not None:
-        return (
-            f"/api/v1/media/{qr_key.value}"
-            if qr_key.legacy_tenant_id is None
-            else None
-        )
+    try:
+        parsed = urlsplit(image_url)
+        if parsed.scheme not in {"", "http", "https"} or parsed.query or parsed.fragment:
+            return None
+        if parsed.username or parsed.password:
+            return None
+        base_path = urlsplit(settings.media_public_base_url).path.rstrip("/") + "/"
+        prefixes = {base_path, "/api/v1/media/"}
+        for prefix in prefixes:
+            if parsed.path.startswith(prefix):
+                key = parsed.path[len(prefix) :]
+                if parse_product_image_key(key) or parse_qr_menu_image_key(key):
+                    return key
+    except ValueError:
+        pass
     return None
+
+
+def public_image_key(object_key: str) -> str | None:
+    product = parse_product_image_key(object_key)
+    if product is not None:
+        return f"products/{product.tenant_scope}/{product.value.rsplit('/', 1)[-1]}"
+    qr = parse_qr_menu_image_key(object_key)
+    if qr is not None:
+        filename = qr.value.rsplit("/", 1)[-1]
+        return f"qr-menu/{qr.tenant_scope}/{qr.branch_scope}/{qr.asset_kind}/{filename}"
+    return None
+
+
+def safe_public_image_url(settings: Settings, image_url: str | None) -> str | None:
+    """Same-origin opaque URL, including aliases for legacy UUID-bearing keys.
+
+    Storage and historical references stay untouched. The media route verifies
+    ownership before resolving an alias to a private legacy object.
+    """
+    key = managed_image_key(settings, image_url)
+    public_key = public_image_key(key) if key else None
+    return f"/api/v1/media/{public_key}" if public_key else None
 
 
 def owned_product_image_key(
@@ -289,10 +301,9 @@ def owned_product_image_key(
 ) -> str | None:
     if image_url is None:
         return None
-    prefix = f"{settings.media_public_base_url.rstrip('/')}/"
-    if not image_url.startswith(prefix):
+    object_key = managed_image_key(settings, image_url)
+    if object_key is None:
         return None
-    object_key = image_url[len(prefix) :]
     parsed = parse_product_image_key(object_key)
     if parsed is None or parsed.tenant_scope != _opaque_scope(tenant_id):
         return None
@@ -308,10 +319,9 @@ def owned_qr_menu_image_key(
 ) -> str | None:
     if image_url is None:
         return None
-    prefix = f"{settings.media_public_base_url.rstrip('/')}/"
-    if not image_url.startswith(prefix):
+    object_key = managed_image_key(settings, image_url)
+    if object_key is None:
         return None
-    object_key = image_url[len(prefix) :]
     parsed = parse_qr_menu_image_key(object_key)
     if (
         parsed is None

@@ -2,7 +2,7 @@
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Loader2, Minus, Plus, Search } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import {
@@ -46,7 +46,6 @@ type Line = {
 };
 
 const CHANNELS = [
-  ["PHONE", "Telefon"],
   ["TAKEAWAY", "Gel-Al"],
   ["OWN_DELIVERY", "Paket Servis"],
 ] as const;
@@ -87,11 +86,20 @@ export function NewDeliveryOrderDialog({
   onOpenChange: (open: boolean) => void;
 }) {
   const queryClient = useQueryClient();
-  const [channel, setChannel] = useState<(typeof CHANNELS)[number][0]>("PHONE");
+  const [channel, setChannel] =
+    useState<(typeof CHANNELS)[number][0]>("TAKEAWAY");
   const [customerName, setCustomerName] = useState("");
   const [customerPhone, setCustomerPhone] = useState("");
   const [addressLine, setAddressLine] = useState("");
   const [district, setDistrict] = useState("");
+  const [city, setCity] = useState("");
+  const [neighbourhood, setNeighbourhood] = useState("");
+  const [addressNote, setAddressNote] = useState("");
+  const pendingIntent = useRef<{
+    key: string;
+    body: Record<string, unknown>;
+  } | null>(null);
+  const sending = useRef(false);
   const [note, setNote] = useState("");
   const [payment, setPayment] =
     useState<(typeof PAYMENTS)[number][0]>("CASH_ON_DELIVERY");
@@ -163,11 +171,15 @@ export function NewDeliveryOrderDialog({
   }
 
   function reset() {
-    setChannel("PHONE");
+    setChannel("TAKEAWAY");
     setCustomerName("");
     setCustomerPhone("");
     setAddressLine("");
     setDistrict("");
+    setCity("");
+    setNeighbourhood("");
+    setAddressNote("");
+    pendingIntent.current = null;
     setNote("");
     setPayment("CASH_ON_DELIVERY");
     setSearch("");
@@ -195,8 +207,11 @@ export function NewDeliveryOrderDialog({
   });
 
   const createMutation = useMutation({
-    mutationFn: () =>
-      api.post("delivery", {
+    mutationFn: async () => {
+      if (sending.current)
+        throw new Error("Sipariş gönderiliyor; sonucu bekleyin.");
+      sending.current = true;
+      const body: Record<string, unknown> = {
         channel,
         items: lines.map((line) => ({
           product_id: line.product.id,
@@ -210,17 +225,32 @@ export function NewDeliveryOrderDialog({
               }
             : {}),
         })),
-        // Generated per submission so a double-click cannot create two orders.
-        idempotency_key: `manual-${crypto.randomUUID()}`,
+
         customer_name: customerName.trim() || null,
         customer_phone: customerPhone.trim() || null,
-        address_line: addressLine.trim() || null,
-        district: district.trim() || null,
+        address_line:
+          channel === "OWN_DELIVERY" ? addressLine.trim() || null : null,
+        city: channel === "OWN_DELIVERY" ? city.trim() || null : null,
+        district: channel === "OWN_DELIVERY" ? district.trim() || null : null,
+        neighbourhood:
+          channel === "OWN_DELIVERY" ? neighbourhood.trim() || null : null,
+        address_note:
+          channel === "OWN_DELIVERY" ? addressNote.trim() || null : null,
         customer_note: note.trim() || null,
         payment_method: payment,
         payment_status: "UNPAID",
         auto_accept: true,
-      }),
+      };
+      pendingIntent.current ??= { key: `manual-${crypto.randomUUID()}`, body };
+      try {
+        return await api.post("delivery", {
+          ...pendingIntent.current.body,
+          idempotency_key: pendingIntent.current.key,
+        });
+      } finally {
+        sending.current = false;
+      }
+    },
     onSuccess: async () => {
       toast.success("Sipariş oluşturuldu ve mutfağa iletildi.");
       onOpenChange(false);
@@ -235,22 +265,27 @@ export function NewDeliveryOrderDialog({
 
   const needsAddress = channel === "OWN_DELIVERY";
   const canSubmit =
-    lines.length > 0 && (!needsAddress || addressLine.trim().length > 0);
+    lines.length > 0 &&
+    (!needsAddress ||
+      (addressLine.trim().length > 0 &&
+        city.trim().length >= 2 &&
+        district.trim().length >= 2));
 
   return (
     <Dialog
       open={open}
       onOpenChange={(next) => {
+        if (createMutation.isPending) return;
         onOpenChange(next);
-        if (!next) reset();
+        if (!next && !pendingIntent.current) reset();
       }}
     >
       <DialogContent className="sm:max-w-3xl">
         <DialogHeader>
           <DialogTitle>Yeni paket siparişi</DialogTitle>
           <DialogDescription>
-            Telefonla gelen siparişi buradan girin; sipariş doğrudan mutfağa
-            düşer.
+            Gel-Al veya Paket Servis siparişini hazırlayın; sipariş mutfağa
+            iletilir.
           </DialogDescription>
         </DialogHeader>
 
@@ -300,7 +335,35 @@ export function NewDeliveryOrderDialog({
             {needsAddress ? (
               <div className="space-y-2">
                 <div className="space-y-1.5">
-                  <Label htmlFor="delivery-address">Adres</Label>
+                  <Label htmlFor="delivery-city">İl (zorunlu)</Label>
+                  <Input
+                    id="delivery-city"
+                    value={city}
+                    maxLength={120}
+                    onChange={(e) => setCity(e.target.value)}
+                    autoComplete="address-level1"
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="delivery-neighbourhood">Mahalle</Label>
+                  <Input
+                    id="delivery-neighbourhood"
+                    value={neighbourhood}
+                    maxLength={120}
+                    onChange={(e) => setNeighbourhood(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="delivery-address-note">Adres tarifi</Label>
+                  <Input
+                    id="delivery-address-note"
+                    value={addressNote}
+                    maxLength={500}
+                    onChange={(e) => setAddressNote(e.target.value)}
+                  />
+                </div>
+                <div className="space-y-1.5">
+                  <Label htmlFor="delivery-address">Açık adres (zorunlu)</Label>
                   <Input
                     id="delivery-address"
                     value={addressLine}
@@ -310,7 +373,7 @@ export function NewDeliveryOrderDialog({
                   />
                 </div>
                 <div className="space-y-1.5">
-                  <Label htmlFor="delivery-district">Semt / mahalle</Label>
+                  <Label htmlFor="delivery-district">İlçe (zorunlu)</Label>
                   <Input
                     id="delivery-district"
                     value={district}
@@ -496,6 +559,21 @@ export function NewDeliveryOrderDialog({
           </div>
         </div>
 
+        {createMutation.error ? (
+          <div role="alert" className="space-y-2 text-sm text-destructive">
+            <p>
+              Yanıt alınamadı. Yeniden deneme aynı sipariş bilgilerini ve işlem
+              anahtarını kullanır.
+            </p>
+            <Button
+              variant="outline"
+              onClick={() => createMutation.mutate()}
+              disabled={createMutation.isPending}
+            >
+              Aynı siparişi yeniden dene
+            </Button>
+          </div>
+        ) : null}
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)}>
             Vazgeç

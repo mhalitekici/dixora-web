@@ -4,7 +4,7 @@ from typing import Annotated, Literal, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, File, Query, Request, Response, UploadFile, status
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from app.config import Settings
 from app.dependencies import (
@@ -32,6 +32,7 @@ from app.services.product_images import (
     owned_qr_menu_image_key,
     parse_product_image_key,
     parse_qr_menu_image_key,
+    public_image_key,
     public_media_url,
     validate_product_image_upload,
 )
@@ -124,6 +125,7 @@ async def upload_product_image(
             storage,
             previous_object_key,
             operation="replacement_cleanup",
+            db=db,
         )
     return ProductOut.model_validate(product)
 
@@ -179,6 +181,7 @@ async def delete_product_image(
             storage,
             object_key,
             operation="delete_cleanup",
+            db=db,
         )
 
 
@@ -275,6 +278,7 @@ async def upload_qr_menu_image(
             storage,
             previous_object_key,
             operation="replacement_cleanup",
+            db=db,
         )
     return QrConfigOut.model_validate(config)
 
@@ -327,7 +331,7 @@ async def delete_qr_menu_image(
     )
     await db.commit()
     if object_key is not None:
-        await _delete_object_safely(storage, object_key, operation="delete_cleanup")
+        await _delete_object_safely(storage, object_key, operation="delete_cleanup", db=db)
 
 
 @router.get("/{object_key:path}")
@@ -343,32 +347,34 @@ async def get_public_media(
     if parsed_product_key is None and parsed_qr_key is None:
         raise DomainError("media_not_found", "Media object not found", status_code=404)
 
+    storage_key: str | None = None
+    requested_public_key = public_image_key(object_key)
     if parsed_product_key is not None:
         parsed_value = parsed_product_key.value
-        image_url = public_media_url(settings, parsed_value)
         owner_conditions = [
-            Product.image_url == image_url,
+            Product.image_url.endswith("/" + parsed_value.rsplit("/", 1)[-1], autoescape=True),
             Product.is_active.is_(True),
         ]
         if parsed_product_key.legacy_tenant_id is not None:
-            owner_conditions.append(
-                Product.tenant_id == parsed_product_key.legacy_tenant_id
-            )
-        owner_id = (
-            await db.execute(
-                select(Product.id).where(*owner_conditions)
-            )
-        ).scalar_one_or_none()
+            owner_conditions.append(Product.tenant_id == parsed_product_key.legacy_tenant_id)
+        owners = (await db.execute(select(Product).where(*owner_conditions))).scalars().all()
+        owner_id = None
+        for owner in owners:
+            candidate = owned_product_image_key(settings, owner.image_url, owner.tenant_id)
+            if candidate and public_image_key(candidate) == requested_public_key:
+                owner_id, storage_key = owner.id, candidate
+                break
     else:
         assert parsed_qr_key is not None
         parsed_value = parsed_qr_key.value
-        image_url = public_media_url(settings, parsed_value)
         image_field = (
             QrMenuConfig.logo_url
             if parsed_qr_key.asset_kind == "logo"
             else QrMenuConfig.cover_image_url
         )
-        owner_conditions = [image_field == image_url]
+        owner_conditions = [
+            image_field.endswith("/" + parsed_value.rsplit("/", 1)[-1], autoescape=True)
+        ]
         if parsed_qr_key.legacy_tenant_id is not None:
             owner_conditions.extend(
                 (
@@ -376,16 +382,29 @@ async def get_public_media(
                     QrMenuConfig.branch_id == parsed_qr_key.legacy_branch_id,
                 )
             )
-        owner_id = (
-            await db.execute(
-                select(QrMenuConfig.id).where(*owner_conditions)
+        owners_qr = (
+            (await db.execute(select(QrMenuConfig).where(*owner_conditions))).scalars().all()
+        )
+        owner_id = None
+        for qr_owner in owners_qr:
+            candidate = owned_qr_menu_image_key(
+                settings,
+                getattr(
+                    qr_owner,
+                    "logo_url" if parsed_qr_key.asset_kind == "logo" else "cover_image_url",
+                ),
+                qr_owner.tenant_id,
+                qr_owner.branch_id,
+                parsed_qr_key.asset_kind,
             )
-        ).scalar_one_or_none()
-    if owner_id is None:
+            if candidate and public_image_key(candidate) == requested_public_key:
+                owner_id, storage_key = qr_owner.id, candidate
+                break
+    if owner_id is None or storage_key is None:
         raise DomainError("media_not_found", "Media object not found", status_code=404)
 
     try:
-        stored = await storage.get_object(parsed_value)
+        stored = await storage.get_object(storage_key)
     except MediaObjectNotFound as exc:
         raise DomainError("media_not_found", "Media object not found", status_code=404) from exc
     except MediaStorageError as exc:
@@ -418,7 +437,32 @@ async def _delete_object_safely(
     object_key: str,
     *,
     operation: str,
+    db: DbSession | None = None,
 ) -> None:
+    if db is not None:
+        # Branch catalogue copies can share an object. Retiring one reference
+        # must never erase the photograph still used by another product/config.
+        product_ref = (
+            await db.execute(
+                select(Product.id)
+                .where(Product.image_url.endswith("/" + object_key, autoescape=True))
+                .limit(1)
+            )
+        ).first()
+        qr_ref = (
+            await db.execute(
+                select(QrMenuConfig.id)
+                .where(
+                    or_(
+                        QrMenuConfig.logo_url.endswith("/" + object_key, autoescape=True),
+                        QrMenuConfig.cover_image_url.endswith("/" + object_key, autoescape=True),
+                    )
+                )
+                .limit(1)
+            )
+        ).first()
+        if product_ref or qr_ref:
+            return
     try:
         await storage.delete_object(object_key)
     except MediaObjectNotFound:

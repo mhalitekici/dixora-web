@@ -6,6 +6,7 @@ from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, Request, status
+from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
@@ -142,20 +143,35 @@ async def shift_history(
     identity: ShiftReader,
     db: DbSession,
     user_id: UUID | None = None,
+    employee: str | None = Query(default=None, max_length=160),
     branch_id: UUID | None = None,
     status_filter: str | None = Query(default=None, alias="status"),
     date_from: date | None = None,
     date_to: date | None = None,
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> list[ShiftOut]:
     predicates = [
         CashierShift.tenant_id == require_tenant(identity),
         CashierShift.branch_id == require_branch(identity, branch_id),
     ]
-    if identity.role == "CASHIER":
+    if identity.operational_profile == "CASHIER" or identity.operation_mode == "operator":
         predicates.append(CashierShift.user_id == identity.user_id)
     elif user_id:
         predicates.append(CashierShift.user_id == user_id)
+    if employee:
+        predicates.append(
+            CashierShift.user_id.in_(
+                select(User.id).where(
+                    User.tenant_id == require_tenant(identity),
+                    User.display_name.icontains(employee, autoescape=True),
+                )
+            )
+        )
+    if date_from and date_to and date_from > date_to:
+        raise DomainError(
+            "invalid_report_range", "Başlangıç tarihi bitişten sonra olamaz.", status_code=422
+        )
     if status_filter:
         predicates.append(CashierShift.status == status_filter.upper())
     if date_from:
@@ -167,8 +183,9 @@ async def shift_history(
             await db.execute(
                 select(CashierShift)
                 .where(*predicates)
-                .order_by(CashierShift.opened_at.desc())
+                .order_by(CashierShift.opened_at.desc(), CashierShift.id.desc())
                 .limit(limit)
+                .offset(offset)
             )
         )
         .scalars()
@@ -189,6 +206,9 @@ async def open_shift(
     db: DbSession,
     settings: Settings = Depends(get_app_settings),
 ) -> ShiftOut:
+    if identity.operation_mode == "operator":
+        raise DomainError("own_shift_required", "Kendi vardiyanızı açın.", status_code=403)
+    await db.execute(select(User.id).where(User.id == identity.user_id).with_for_update())
     employee = await _verify(db, settings, request, identity, payload)
     branch = await _branch(db, identity)
     if await current_operator_shift(db, identity):
@@ -239,6 +259,60 @@ async def open_shift(
             "cashier_user_id": str(employee.id),
             "opening_cash": str(shift.opening_cash),
             "business_date": str(business_date),
+        },
+    )
+    await db.commit()
+    return _out(shift, {employee.id: employee.display_name})
+
+
+class OwnShiftOpen(BaseModel):
+    opening_cash: Decimal = Field(ge=0, max_digits=14, decimal_places=2)
+    note: str | None = Field(default=None, max_length=500)
+
+
+@router.post("/open-own", response_model=ShiftOut, status_code=201)
+async def open_own_shift(payload: OwnShiftOpen, identity: ShiftOperator, db: DbSession) -> ShiftOut:
+    if identity.operation_panel != "cashier" or identity.operation_mode != "operator":
+        raise DomainError(
+            "operation_reauthentication_required",
+            "Panellerden kasiyer panelini seçin.",
+            status_code=403,
+        )
+    # Serialize duplicate clicks across sessions. The unique cashier index is
+    # the final database guard; other employees' shifts are never loaded here.
+    employee = (
+        await db.execute(select(User).where(User.id == identity.user_id).with_for_update())
+    ).scalar_one()
+    branch = await _branch(db, identity)
+    if await current_operator_shift(db, identity):
+        raise DomainError(
+            "shift_already_open", "Kendi açık vardiyanızdan devam edin.", status_code=409
+        )
+    business_date, _, _ = business_window(branch.timezone)
+    shift = CashierShift(
+        tenant_id=branch.tenant_id,
+        branch_id=branch.id,
+        user_id=employee.id,
+        opened_by_user_id=employee.id,
+        cashier_name=employee.display_name,
+        business_date=business_date,
+        opening_cash=money(payload.opening_cash),
+        expected_cash=money(payload.opening_cash),
+        opening_note=payload.note,
+        opened_at=datetime.now(UTC),
+    )
+    db.add(shift)
+    await db.flush()
+    add_audit_log(
+        db,
+        identity=identity,
+        action="shift.opened",
+        resource_type="cashier_shift",
+        resource_id=shift.id,
+        new_value={
+            "cashier_user_id": str(employee.id),
+            "opening_cash": str(shift.opening_cash),
+            "mode": "operator",
         },
     )
     await db.commit()
@@ -328,6 +402,12 @@ async def close_shift(
     ).scalar_one_or_none()
     if shift is None:
         raise DomainError("shift_not_found", "Shift not found", status_code=404)
+    if identity.operation_mode == "operator" and shift.user_id != identity.user_id:
+        raise DomainError(
+            "shift_close_forbidden",
+            "Yalnız kendi vardiyanızda işlem yapabilirsiniz.",
+            status_code=403,
+        )
     if shift.status != "OPEN":
         raise DomainError("shift_already_closed", "This shift is already closed", status_code=409)
     closer = await _verify(
@@ -384,6 +464,12 @@ async def handoff_shift(
     ).scalar_one_or_none()
     if shift is None:
         raise DomainError("shift_not_found", "Shift not found", status_code=404)
+    if identity.operation_mode == "operator" and shift.user_id != identity.user_id:
+        raise DomainError(
+            "shift_close_forbidden",
+            "Yalnız kendi vardiyanızda işlem yapabilirsiniz.",
+            status_code=403,
+        )
     if shift.status != "OPEN":
         raise DomainError("shift_already_closed", "This shift is already closed", status_code=409)
     closer = await _verify(
@@ -611,6 +697,7 @@ async def day_history(
     date_from: date | None = None,
     date_to: date | None = None,
     limit: int = Query(default=50, ge=1, le=200),
+    offset: int = Query(default=0, ge=0),
 ) -> list[BusinessDayCloseOut]:
     predicates = [
         BusinessDayClose.tenant_id == require_tenant(identity),
@@ -627,6 +714,7 @@ async def day_history(
                 .where(*predicates)
                 .order_by(BusinessDayClose.business_date.desc())
                 .limit(limit)
+                .offset(offset)
             )
         )
         .scalars()
@@ -674,7 +762,10 @@ async def shift_detail(shift_id: UUID, identity: ShiftReader, db: DbSession) -> 
             )
         )
     ).scalar_one_or_none()
-    if shift is None or (identity.role == "CASHIER" and shift.user_id != identity.user_id):
+    if shift is None or (
+        (identity.operational_profile == "CASHIER" or identity.operation_mode == "operator")
+        and shift.user_id != identity.user_id
+    ):
         raise DomainError("shift_not_found", "Shift not found", status_code=404)
     ids = {shift.user_id} | ({shift.closed_by_user_id} if shift.closed_by_user_id else set())
     return _out(shift, await _names(db, require_tenant(identity), ids))

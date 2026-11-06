@@ -119,6 +119,8 @@ class LoyaltyAdminRewardOut(BaseModel):
     redemption_code: str
     membership_code: str
     program_name: str
+    expires_at: datetime | None = None
+    is_expired: bool = False
     status: LoyaltyRewardStatus
     issued_at: datetime
     redeemed_at: datetime | None

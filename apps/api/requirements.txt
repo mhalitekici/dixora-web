@@ -20,3 +20,5 @@ sentry-sdk[fastapi]>=2.20,<3
 # Payment provider SDK. The stored-card + charge flow was verified against
 # their sandbox before this was added.
 iyzipay==1.0.46
+
+reportlab>=4.4,<5

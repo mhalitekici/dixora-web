@@ -1,5 +1,5 @@
-import { MapPin } from "lucide-react"
-import Image from "next/image"
+import { MapPin } from "lucide-react";
+import { MediaImage as Image } from "@/components/shared/media-image";
 
 import { BrandLogo } from "@/components/brand/brand-logo"
 import { QR_LOCALES, translate, type QrLocale } from "@/components/qr/qr-i18n"
@@ -12,8 +12,12 @@ interface PublicMenuHeaderProps {
   onLocaleChange: (locale: QrLocale) => void
 }
 
-export function PublicMenuHeader({ menu, locale, onLocaleChange }: PublicMenuHeaderProps) {
-  const menuName = menu.config.menu_name || menu.business
+export function PublicMenuHeader({
+  menu,
+  locale,
+  onLocaleChange,
+}: PublicMenuHeaderProps) {
+  const menuName = menu.config.menu_name || menu.business;
 
   return (
     <header className="relative isolate overflow-hidden text-white">

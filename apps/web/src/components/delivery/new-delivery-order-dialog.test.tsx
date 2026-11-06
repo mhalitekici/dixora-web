@@ -79,7 +79,7 @@ const coffeeDetail = {
   ],
 };
 
-function setup() {
+function setup(failFirst = false) {
   const posted: unknown[] = [];
   vi.stubGlobal(
     "fetch",
@@ -87,6 +87,8 @@ function setup() {
       const url = String(input);
       if (init?.method === "POST") {
         posted.push(JSON.parse(String(init.body)));
+        if (failFirst && posted.length === 1)
+          return Promise.reject(new TypeError("connection lost"));
         return Promise.resolve(jsonResponse({ id: "created" }, 201));
       }
       const detail = products.find((product) => url.endsWith(product.id));
@@ -158,7 +160,12 @@ describe("NewDeliveryOrderDialog", () => {
     const submit = screen.getByRole("button", { name: /Siparişi oluştur/ });
     expect(submit).toBeDisabled();
 
-    await user.type(screen.getByLabelText("Adres"), "Bağdat Cad. No:5");
+    await user.type(
+      screen.getByLabelText("Açık adres (zorunlu)"),
+      "Bağdat Cad. No:5",
+    );
+    await user.type(screen.getByLabelText("İl (zorunlu)"), "İstanbul");
+    await user.type(screen.getByLabelText("İlçe (zorunlu)"), "Kadıköy");
     expect(submit).toBeEnabled();
   });
 
@@ -175,13 +182,28 @@ describe("NewDeliveryOrderDialog", () => {
 
     expect(posted).toHaveLength(1);
     const body = posted[0] as Record<string, unknown>;
-    expect(body.channel).toBe("PHONE");
+    expect(body.channel).toBe("TAKEAWAY");
     expect(body.customer_name).toBe("Ahmet");
     expect(body.customer_note).toBe("Soğansız");
     expect(body.payment_method).toBe("CARD_ON_DELIVERY");
     expect(body.items).toEqual([{ product_id: products[0].id, quantity: "1" }]);
     // The backend requires at least 8 characters for the idempotency key.
     expect(String(body.idempotency_key).length).toBeGreaterThanOrEqual(8);
+  });
+
+  it("keeps the same intent and body when retrying after a lost response", async () => {
+    const user = userEvent.setup();
+    const { posted } = setup(true);
+    await user.click(await screen.findByText("Cheeseburger"));
+    await user.click(screen.getByRole("button", { name: /Siparişi oluştur/ }));
+    await user.click(
+      await screen.findByRole("button", { name: "Aynı siparişi yeniden dene" }),
+    );
+    expect(posted).toHaveLength(2);
+    expect(posted[1]).toEqual(posted[0]);
+    expect(
+      screen.queryByRole("button", { name: "Telefon" }),
+    ).not.toBeInTheDocument();
   });
 
   it("requires package modifiers and includes their price in the total", async () => {

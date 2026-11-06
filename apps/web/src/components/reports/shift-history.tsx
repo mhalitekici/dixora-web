@@ -8,9 +8,9 @@ import {
   CreditCard,
   Loader2,
   MonitorDot,
-} from "lucide-react"
-import { useMemo, useState } from "react"
-import { toast } from "sonner"
+} from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 
 import { EmptyState } from "@/components/shared/empty-state"
 import { PageHeader } from "@/components/shared/page-header"
@@ -111,37 +111,43 @@ function State({ value }: { value: number }) {
 }
 
 export function ShiftHistory() {
-  const currentUser = useCurrentUser()
-  const canCloseDay = hasPermission(currentUser.data, "cashier.day.close")
-  const client = useQueryClient()
-  const [from, setFrom] = useState("")
-  const [to, setTo] = useState("")
-  const [status, setStatus] = useState("")
-  const [employee, setEmployee] = useState("")
-  const [expanded, setExpanded] = useState<string | null>(null)
-  const [username, setUsername] = useState("")
-  const [pin, setPin] = useState("")
-  const [counted, setCounted] = useState("")
-  const [cardZ, setCardZ] = useState("")
-  const [note, setNote] = useState("")
-  const [closingShiftId, setClosingShiftId] = useState<string | null>(null)
+  const currentUser = useCurrentUser();
+  const canCloseDay = hasPermission(currentUser.data, "cashier.day.close");
+  const client = useQueryClient();
+  const [tab, setTab] = useState("history");
+  const [page, setPage] = useState(0);
+  const [dayPage, setDayPage] = useState(0);
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [status, setStatus] = useState("");
+  const [employee, setEmployee] = useState("");
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [username, setUsername] = useState("");
+  const [pin, setPin] = useState("");
+  const [counted, setCounted] = useState("");
+  const [cardZ, setCardZ] = useState("");
+  const [note, setNote] = useState("");
+  const [closingShiftId, setClosingShiftId] = useState<string | null>(null);
   const search = {
-    limit: 100,
+    limit: 50,
+    offset: page * 50,
+    employee: employee || undefined,
     date_from: from || undefined,
     date_to: to || undefined,
-    status: status || undefined,
-  }
+    status: tab === "open" ? "OPEN" : status || undefined,
+  };
   const shifts = useQuery({
     queryKey: ["shifts", "history", search],
     queryFn: ({ signal }) =>
       api.get<Shift[]>("shifts/history", { search, signal }),
   })
   const days = useQuery({
-    queryKey: ["shifts", "day-history", from, to],
+    queryKey: ["shifts", "day-history", from, to, dayPage],
     queryFn: ({ signal }) =>
       api.get<Day[]>("shifts/day/history", {
         search: {
-          limit: 100,
+          limit: 50,
+          offset: dayPage * 50,
           date_from: from || undefined,
           date_to: to || undefined,
         },
@@ -161,22 +167,15 @@ export function ShiftHistory() {
         search: { limit: 100, status: "OPEN" },
         signal,
       }),
-  })
-  const filtered = useMemo(
-    () =>
-      (shifts.data ?? []).filter((row) =>
-        (row.cashier_name ?? row.user_display_name ?? "")
-          .toLocaleLowerCase("tr")
-          .includes(employee.toLocaleLowerCase("tr")),
-      ),
-    [shifts.data, employee],
-  )
+  });
+  const filtered = shifts.data ?? [];
   const openRows = (openShifts.data ?? []).filter(
     (shift) => shift.status === "OPEN",
   )
   const closingShift =
-    openRows.find((shift) => shift.id === closingShiftId) ??
-    (openRows.length === 1 ? openRows[0] : null)
+    tab === "open"
+      ? (openRows.find((shift) => shift.id === closingShiftId) ?? null)
+      : null;
   const expectedCash =
     closingShift?.expected_cash ?? preview.data?.expected_cash
   const expectedCard = closingShift
@@ -244,19 +243,58 @@ export function ShiftHistory() {
         description="Çalışan bazlı kasa sayımları ile şube iş günü mutabakatını ayrı izleyin."
         icon={MonitorDot}
       />
+      <div className="flex flex-wrap gap-2" aria-label="Vardiya bölümleri">
+        {[
+          ["history", "Vardiya geçmişi"],
+          ["open", "Açık vardiyalar"],
+          ["day", "Gün sonu kayıtları"],
+        ].map(([value, label]) => (
+          <Button
+            key={value}
+            variant={tab === value ? "default" : "outline"}
+            aria-pressed={tab === value}
+            onClick={() => {
+              setTab(value);
+              setPage(0);
+            }}
+          >
+            {label}
+          </Button>
+        ))}
+      </div>
+      <p className="text-sm text-muted-foreground">
+        Şube: {currentUser.data?.branch?.name ?? "Seçili şube"}. Vardiya kapatma
+        ve işletme günü kapatma ayrı işlemlerdir.
+      </p>
       <Card>
         <CardContent className="grid gap-3 pt-6 sm:grid-cols-4">
           <Field
             label="Başlangıç"
             type="date"
             value={from}
-            onChange={setFrom}
+            onChange={(value) => {
+              setFrom(value);
+              setPage(0);
+              setDayPage(0);
+            }}
           />
-          <Field label="Bitiş" type="date" value={to} onChange={setTo} />
+          <Field
+            label="Bitiş"
+            type="date"
+            value={to}
+            onChange={(value) => {
+              setTo(value);
+              setPage(0);
+              setDayPage(0);
+            }}
+          />
           <Field
             label="Çalışan"
             value={employee}
-            onChange={setEmployee}
+            onChange={(value) => {
+              setEmployee(value);
+              setPage(0);
+            }}
             placeholder="Ada göre filtrele"
           />
           <div>
@@ -274,8 +312,10 @@ export function ShiftHistory() {
           </div>
         </CardContent>
       </Card>
-      <section>
-        <h2 className="mb-3 text-base font-semibold">Vardiya raporları</h2>
+      <section hidden={tab === "day"}>
+        <h2 className="mb-3 text-base font-semibold">
+          {tab === "open" ? "Açık vardiyalar" : "Vardiya geçmişi"}
+        </h2>
         {shifts.isError ? (
           <ErrorState
             error={shifts.error}
@@ -331,11 +371,31 @@ export function ShiftHistory() {
                     <div className="grid grid-cols-3 gap-2">
                       <Metric label="Açılış" value={shift.opening_cash} />
                       <Metric label="Beklenen" value={shift.expected_cash} />
-                      <Metric
-                        label="Sayılan"
-                        value={shift.closing_cash ?? "0"}
-                      />
+                      <Metric label="Nakit satış" value={shift.cash_sales} />
+                      <Metric label="Kart satış" value={shift.card_sales} />
+                      <Metric label="Nakit iade" value={shift.cash_refunds} />
+                      <Metric label="Kart iade" value={shift.card_refunds} />
+                      <Metric label="Kasa farkı" value={shift.cash_variance} />
+                      <Metric label="POS farkı" value={shift.card_variance} />
+                      <Metric label="Sayılan" value={shift.closing_cash} />
                     </div>
+                    {tab === "open" &&
+                    canCloseDay &&
+                    shift.status === "OPEN" ? (
+                      <Button
+                        className="mt-3 w-full"
+                        variant="outline"
+                        onClick={() => {
+                          setClosingShiftId(shift.id);
+                          setCounted("");
+                          setCardZ("");
+                          setPin("");
+                        }}
+                      >
+                        Vardiyayı kapat:{" "}
+                        {shift.cashier_name ?? shift.user_display_name}
+                      </Button>
+                    ) : null}
                     <Button
                       variant="ghost"
                       className="mt-2 w-full"
@@ -404,12 +464,35 @@ export function ShiftHistory() {
           </div>
         )}
       </section>
-      {canCloseDay && preview.data ? (
+      <div
+        hidden={tab === "day"}
+        className="flex items-center justify-between gap-2"
+      >
+        <Button
+          variant="outline"
+          disabled={page === 0 || shifts.isFetching}
+          onClick={() => setPage(page - 1)}
+        >
+          Önceki
+        </Button>
+        <span className="text-sm">Sayfa {page + 1}</span>
+        <Button
+          variant="outline"
+          disabled={filtered.length < 50 || shifts.isFetching}
+          onClick={() => setPage(page + 1)}
+        >
+          Sonraki
+        </Button>
+      </div>
+      {(tab === "day" || (tab === "open" && closingShift)) &&
+      canCloseDay &&
+      preview.data ? (
         <Card className="border-brand/25">
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <CalendarCheck2 className="size-5" />
-              Gün sonu · {preview.data.business_date}
+              {closingShift ? "Vardiya kapatma" : "İşletme günü kapatma"} ·{" "}
+              {preview.data.business_date}
             </CardTitle>
             <CardDescription>
               {openRows.length > 0
@@ -531,9 +614,7 @@ export function ShiftHistory() {
                   (preview.data.open_shift_count > 0 && !closingShift)
                 }
                 onClick={() =>
-                  preview.data.open_shift_count > 0
-                    ? closeShift.mutate()
-                    : closeDay.mutate()
+                  closingShift ? closeShift.mutate() : closeDay.mutate()
                 }
               >
                 {closeDay.isPending || closeShift.isPending ? (
@@ -549,7 +630,7 @@ export function ShiftHistory() {
           </CardContent>
         </Card>
       ) : null}
-      <section>
+      <section hidden={tab !== "day"}>
         <h2 className="mb-3 text-base font-semibold">İşletme günü kayıtları</h2>
         <div className="grid gap-3 lg:grid-cols-2">
           {(days.data ?? []).map((day) => (
@@ -599,6 +680,31 @@ export function ShiftHistory() {
             </Card>
           ))}
         </div>
+        {days.error ? (
+          <ErrorState error={days.error} onRetry={() => void days.refetch()} />
+        ) : null}
+        {!days.isPending && !days.error && days.data?.length === 0 ? (
+          <p className="py-5 text-sm text-muted-foreground">
+            Bu dönemde gün sonu kaydı yok.
+          </p>
+        ) : null}
+        <div className="mt-4 flex items-center justify-between">
+          <Button
+            variant="outline"
+            disabled={!dayPage}
+            onClick={() => setDayPage(dayPage - 1)}
+          >
+            Önceki
+          </Button>
+          <span>Sayfa {dayPage + 1}</span>
+          <Button
+            variant="outline"
+            disabled={(days.data?.length ?? 0) < 50}
+            onClick={() => setDayPage(dayPage + 1)}
+          >
+            Sonraki
+          </Button>
+        </div>
       </section>
     </div>
   )
@@ -613,7 +719,7 @@ function Field({
   React.ComponentProps<typeof Input>,
   "value" | "onChange"
 >) {
-  const id = `report-${label.toLowerCase().replaceAll(" ", "-")}`
+  const id = `report-${label.toLowerCase().replaceAll(" ", "-")}`;
   return (
     <div>
       <Label htmlFor={id}>{label}</Label>
@@ -632,9 +738,9 @@ function Metric({
   value,
   icon,
 }: {
-  label: string
-  value: string
-  icon?: React.ReactNode
+  label: string;
+  value: string | null;
+  icon?: React.ReactNode;
 }) {
   return (
     <div className="rounded-xl bg-muted/45 p-3">
@@ -643,7 +749,7 @@ function Metric({
         {label}
       </p>
       <p className="mt-1 text-sm font-bold tabular-nums">
-        {value.includes("₺") ? value : m(value)}
+        {value == null ? "Veri yok" : value.includes("₺") ? value : m(value)}
       </p>
     </div>
   )

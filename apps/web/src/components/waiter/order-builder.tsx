@@ -84,7 +84,12 @@ type OrderItem = {
   line_total: string | number;
   status: string;
   note?: string | null;
-  modifiers?: Array<{ id: string; name_snapshot: string; price_delta_snapshot: string | number; quantity: number }>;
+  modifiers?: Array<{
+    id: string;
+    name_snapshot: string;
+    price_delta_snapshot: string | number;
+    quantity: number;
+  }>;
 };
 type Order = {
   id: string;
@@ -113,7 +118,11 @@ const currency = new Intl.NumberFormat("tr-TR", {
 
 function unwrap<T>(value: unknown): T[] {
   if (Array.isArray(value)) return value as T[];
-  if (value && typeof value === "object" && Array.isArray((value as { items?: unknown }).items)) {
+  if (
+    value &&
+    typeof value === "object" &&
+    Array.isArray((value as { items?: unknown }).items)
+  ) {
     return (value as { items: T[] }).items;
   }
   return [];
@@ -133,7 +142,10 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
 function itemUnitPrice(item: PendingItem) {
   return (
     Number(item.product.selling_price) +
-    item.modifiers.reduce((sum, modifier) => sum + Number(modifier.price_delta), 0)
+    item.modifiers.reduce(
+      (sum, modifier) => sum + Number(modifier.price_delta),
+      0,
+    )
   );
 }
 
@@ -148,15 +160,21 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
   const [pending, setPending] = useState<PendingItem[]>([]);
   const [selectedProduct, setSelectedProduct] = useState<Product | null>(null);
   const [productDetailLoading, setProductDetailLoading] = useState(false);
-  const [selectedModifiers, setSelectedModifiers] = useState<Set<string>>(new Set());
+  const [selectedModifiers, setSelectedModifiers] = useState<Set<string>>(
+    new Set(),
+  );
   const [productQuantity, setProductQuantity] = useState(1);
   const [productNote, setProductNote] = useState("");
   const [customerName, setCustomerName] = useState("");
   const [cartOpen, setCartOpen] = useState(false);
-  const [cancellationItem, setCancellationItem] = useState<OrderItem | null>(null);
+  const [cancellationItem, setCancellationItem] = useState<OrderItem | null>(
+    null,
+  );
   const [cancellationReason, setCancellationReason] = useState("");
   const [noteTarget, setNoteTarget] = useState<
-    { kind: "pending"; item: PendingItem } | { kind: "sent"; item: OrderItem } | null
+    | { kind: "pending"; item: PendingItem }
+    | { kind: "sent"; item: OrderItem }
+    | null
   >(null);
   const [itemNote, setItemNote] = useState("");
   const submissionKey = useRef<string | null>(null);
@@ -174,9 +192,9 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
   const productsQuery = useQuery({
     queryKey: ["waiter", "products"],
     queryFn: async () =>
-      unwrap<Product>(
-        await api<unknown>("/catalog/products?limit=200"),
-      ).filter((product) => product.waiter_visible && product.is_available),
+      unwrap<Product>(await api<unknown>("/catalog/products?limit=200")).filter(
+        (product) => product.waiter_visible && product.is_available,
+      ),
   });
   const orderQuery = useQuery({
     queryKey: ["waiter", "table", tableId, "active-order"],
@@ -202,13 +220,20 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
 
   const table = tableQuery.data;
   const order = orderQuery.data;
-  const categories = [{ id: "all", name: "Tüm ürünler" }, ...(categoriesQuery.data ?? [])];
-  const products = useMemo(() => productsQuery.data ?? [], [productsQuery.data]);
+  const categories = [
+    { id: "all", name: "Tüm ürünler" },
+    ...(categoriesQuery.data ?? []),
+  ];
+  const products = useMemo(
+    () => productsQuery.data ?? [],
+    [productsQuery.data],
+  );
 
   const visibleProducts = useMemo(
     () =>
       products.filter((product) => {
-        const matchesCategory = category === "all" || product.category_id === category;
+        const matchesCategory =
+          category === "all" || product.category_id === category;
         const query = search.toLocaleLowerCase("tr-TR");
         const matchesSearch =
           product.name.toLocaleLowerCase("tr-TR").includes(query) ||
@@ -262,11 +287,14 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
       setPending([]);
       submissionKey.current = null;
       setCartOpen(false);
-      void queryClient.invalidateQueries({ queryKey: ["waiter", "table", tableId] });
+      void queryClient.invalidateQueries({
+        queryKey: ["waiter", "table", tableId],
+      });
     },
     onError: (error) =>
       toast.error("Sipariş gönderilemedi", {
-        description: error instanceof Error ? error.message : "Bağlantıyı kontrol edin.",
+        description:
+          error instanceof Error ? error.message : "Bağlantıyı kontrol edin.",
       }),
   });
 
@@ -277,9 +305,14 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
     },
     onSuccess: () => {
       toast.success("Hesap talebi kasaya iletildi");
-      void queryClient.invalidateQueries({ queryKey: ["waiter", "table", tableId] });
+      void queryClient.invalidateQueries({
+        queryKey: ["waiter", "table", tableId],
+      });
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Hesap talebi iletilemedi."),
+    onError: (error) =>
+      toast.error(
+        error instanceof Error ? error.message : "Hesap talebi iletilemedi.",
+      ),
   });
 
   const printBillMutation = useMutation({
@@ -300,7 +333,9 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
     },
     onSuccess: async () => {
       toast.success("Müşteri bilgi fişi yazıcı kuyruğuna alındı");
-      await queryClient.invalidateQueries({ queryKey: ["waiter", "table", tableId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["waiter", "table", tableId],
+      });
     },
     onError: (error) =>
       toast.error(
@@ -310,49 +345,70 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
 
   const cancellationMutation = useMutation({
     mutationFn: async () => {
-      if (!order || !cancellationItem) throw new Error("Canlı sipariş kalemi bulunamadı.");
+      if (!order || !cancellationItem)
+        throw new Error("Canlı sipariş kalemi bulunamadı.");
       const trimmedReason = cancellationReason.trim();
       if (trimmedReason.length < 3) {
         throw new Error("İptal nedeni en az 3 karakter olmalıdır.");
       }
       return api(`/orders/${order.id}/cancellation-requests`, {
         method: "POST",
-        body: JSON.stringify({ order_item_id: cancellationItem.id, reason: trimmedReason }),
+        body: JSON.stringify({
+          order_item_id: cancellationItem.id,
+          reason: trimmedReason,
+        }),
       });
     },
     onSuccess: () => {
       toast.success("İptal talebi kasaya/yöneticiye gönderildi");
       setCancellationItem(null);
       setCancellationReason("");
-      void queryClient.invalidateQueries({ queryKey: ["waiter", "table", tableId] });
+      void queryClient.invalidateQueries({
+        queryKey: ["waiter", "table", tableId],
+      });
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "İptal talebi oluşturulamadı."),
+      toast.error(
+        error instanceof Error ? error.message : "İptal talebi oluşturulamadı.",
+      ),
   });
 
   const noteMutation = useMutation({
     mutationFn: async () => {
-      if (!order || noteTarget?.kind !== "sent") throw new Error("Sipariş kalemi bulunamadı.");
-      return api<Order>(`/orders/${order.id}/items/${noteTarget.item.id}/note`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          expected_version: order.version,
-          idempotency_key: crypto.randomUUID(),
-          note: itemNote.trim() || null,
-        }),
-      });
+      if (!order || noteTarget?.kind !== "sent")
+        throw new Error("Sipariş kalemi bulunamadı.");
+      return api<Order>(
+        `/orders/${order.id}/items/${noteTarget.item.id}/note`,
+        {
+          method: "PATCH",
+          body: JSON.stringify({
+            expected_version: order.version,
+            idempotency_key: crypto.randomUUID(),
+            note: itemNote.trim() || null,
+          }),
+        },
+      );
     },
     onSuccess: async (updatedOrder) => {
-      queryClient.setQueryData(["waiter", "table", tableId, "active-order"], updatedOrder);
+      queryClient.setQueryData(
+        ["waiter", "table", tableId, "active-order"],
+        updatedOrder,
+      );
       setNoteTarget(null);
       toast.success("Ürün açıklaması kaydedildi.");
       await Promise.all([
-        queryClient.invalidateQueries({ queryKey: ["waiter", "table", tableId] }),
+        queryClient.invalidateQueries({
+          queryKey: ["waiter", "table", tableId],
+        }),
         queryClient.invalidateQueries({ queryKey: ["cashier", "orders"] }),
       ]);
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "Ürün açıklaması kaydedilemedi.");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Ürün açıklaması kaydedilemedi.",
+      );
       void orderQuery.refetch();
     },
   });
@@ -372,7 +428,9 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
       setSelectedProduct(null);
       toast.error("Ürün seçenekleri yüklenemedi", {
         description:
-          error instanceof Error ? error.message : "Lütfen bağlantınızı kontrol edip tekrar deneyin.",
+          error instanceof Error
+            ? error.message
+            : "Lütfen bağlantınızı kontrol edip tekrar deneyin.",
       });
     } finally {
       if (requestId === detailRequest.current) setProductDetailLoading(false);
@@ -383,13 +441,17 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
     if (!selectedProduct) return;
     const groups = selectedProduct.modifier_groups ?? [];
     for (const group of groups) {
-      const count = group.modifiers.filter((modifier) => selectedModifiers.has(modifier.id)).length;
+      const count = group.modifiers.filter((modifier) =>
+        selectedModifiers.has(modifier.id),
+      ).length;
       if (group.is_required && count < Math.max(1, group.minimum_selection)) {
         toast.error(`${group.name} seçimi zorunlu.`);
         return;
       }
       if (group.maximum_selection !== null && count > group.maximum_selection) {
-        toast.error(`${group.name} için en fazla ${group.maximum_selection} seçim yapabilirsiniz.`);
+        toast.error(
+          `${group.name} için en fazla ${group.maximum_selection} seçim yapabilirsiniz.`,
+        );
         return;
       }
     }
@@ -440,9 +502,12 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
     return (
       <div className="flex min-h-72 flex-col items-center justify-center rounded-2xl border border-dashed px-6 text-center">
         <AlertTriangle className="size-7 text-destructive" />
-        <h1 className="mt-4 text-base font-semibold">Sipariş ekranı yüklenemedi</h1>
+        <h1 className="mt-4 text-base font-semibold">
+          Sipariş ekranı yüklenemedi
+        </h1>
         <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">
-          Masa, katalog veya aktif sipariş verilerine ulaşılamıyor. Bağlantınızı kontrol edip yeniden deneyin.
+          Masa, katalog veya aktif sipariş verilerine ulaşılamıyor. Bağlantınızı
+          kontrol edip yeniden deneyin.
         </p>
         <div className="mt-4 flex gap-2">
           <Button variant="outline" render={<Link href="/waiter/tables" />}>
@@ -478,22 +543,31 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                 <h3 className="text-xs font-semibold uppercase tracking-[0.13em] text-muted-foreground">
                   Gönderilenler
                 </h3>
-                <span className="text-[0.65rem] text-muted-foreground">{order.items.length} kalem</span>
+                <span className="text-[0.65rem] text-muted-foreground">
+                  {order.items.length} kalem
+                </span>
               </div>
               <div className="space-y-2">
                 {order.items.map((item) => {
                   const cancelled = terminalItemStatuses.has(item.status);
                   return (
-                    <div key={item.id} className="rounded-xl border bg-muted/20 p-3">
+                    <div
+                      key={item.id}
+                      className="rounded-xl border bg-muted/20 p-3"
+                    >
                       <div className="flex items-start gap-2">
                         <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-muted text-xs font-bold">
                           {Number(item.quantity)}×
                         </span>
                         <div className="min-w-0 flex-1">
-                          <p className="truncate text-xs font-semibold">{item.product_name_snapshot}</p>
+                          <p className="truncate text-xs font-semibold">
+                            {item.product_name_snapshot}
+                          </p>
                           {item.modifiers?.length ? (
-                            <p className="mt-0.5 truncate text-[0.62rem] text-muted-foreground">
-                              {item.modifiers.map((modifier) => modifier.name_snapshot).join(" · ")}
+                            <p className="mt-0.5 break-words text-xs text-muted-foreground">
+                              {item.modifiers
+                                .map((modifier) => modifier.name_snapshot)
+                                .join(" · ")}
                             </p>
                           ) : null}
                           {item.note ? (
@@ -503,17 +577,27 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                             </p>
                           ) : null}
                           {cancelled ? (
-                            <StatusBadge tone="danger" dot={false} className="mt-1.5 h-5 px-1.5 text-[0.56rem]">
+                            <StatusBadge
+                              tone="danger"
+                              dot={false}
+                              className="mt-1.5 h-5 px-1.5 text-[0.56rem]"
+                            >
                               İptal
                             </StatusBadge>
                           ) : null}
                         </div>
                         <div className="flex flex-col items-end gap-1.5 text-right">
-                          <p className="text-xs font-semibold">{currency.format(Number(item.line_total))}</p>
+                          <p className="text-xs font-semibold">
+                            {currency.format(Number(item.line_total))}
+                          </p>
                           {!cancelled ? (
                             <button
                               type="button"
-                              disabled={["PAID", "CANCELLED", "VOIDED"].includes(order.status)}
+                              disabled={[
+                                "PAID",
+                                "CANCELLED",
+                                "VOIDED",
+                              ].includes(order.status)}
                               onClick={() => {
                                 setNoteTarget({ kind: "sent", item });
                                 setItemNote(item.note ?? "");
@@ -521,7 +605,9 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                               className="inline-flex items-center gap-1 text-[0.62rem] font-medium text-muted-foreground hover:text-foreground disabled:opacity-50"
                             >
                               <MessageSquareText className="size-3" />
-                              {item.note ? "Açıklamayı düzenle" : "Açıklama ekle"}
+                              {item.note
+                                ? "Açıklamayı düzenle"
+                                : "Açıklama ekle"}
                             </button>
                           ) : null}
                           {!cancelled ? (
@@ -551,12 +637,17 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
               <h3 className="text-xs font-semibold uppercase tracking-[0.13em] text-brand">
                 Yeni kalemler
               </h3>
-              <span className="text-[0.65rem] text-muted-foreground">{pending.length} kalem</span>
+              <span className="text-[0.65rem] text-muted-foreground">
+                {pending.length} kalem
+              </span>
             </div>
             {pending.length ? (
               <div className="space-y-2">
                 {pending.map((item) => (
-                  <div key={item.lineId} className="rounded-xl border border-brand/20 bg-brand/[0.035] p-3">
+                  <div
+                    key={item.lineId}
+                    className="rounded-xl border border-brand/20 bg-brand/[0.035] p-3"
+                  >
                     <div className="flex items-start gap-2">
                       <div className="flex shrink-0 items-center rounded-lg border bg-card">
                         <button
@@ -572,38 +663,49 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                                 .filter((line) => line.quantity > 0),
                             )
                           }
-                          className="flex size-7 items-center justify-center"
+                          className="flex size-11 touch-manipulation items-center justify-center"
                           aria-label="Adedi azalt"
                         >
                           <Minus className="size-3" />
                         </button>
-                        <span className="w-6 text-center text-xs font-bold">{item.quantity}</span>
+                        <span className="w-6 text-center text-xs font-bold">
+                          {item.quantity}
+                        </span>
                         <button
                           type="button"
                           onClick={() =>
                             setPending((items) =>
                               items.map((line) =>
                                 line.lineId === item.lineId
-                                  ? { ...line, quantity: Math.min(99, line.quantity + 1) }
+                                  ? {
+                                      ...line,
+                                      quantity: Math.min(99, line.quantity + 1),
+                                    }
                                   : line,
                               ),
                             )
                           }
-                          className="flex size-7 items-center justify-center"
+                          className="flex size-11 touch-manipulation items-center justify-center"
                           aria-label="Adedi artır"
                         >
                           <Plus className="size-3" />
                         </button>
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-xs font-semibold">{item.product.name}</p>
+                        <p className="break-words text-sm font-semibold">
+                          {item.product.name}
+                        </p>
                         {item.modifiers.length ? (
-                          <p className="mt-0.5 truncate text-[0.62rem] text-muted-foreground">
-                            {item.modifiers.map((modifier) => modifier.name).join(" · ")}
+                          <p className="mt-0.5 break-words text-xs text-muted-foreground">
+                            {item.modifiers
+                              .map((modifier) => modifier.name)
+                              .join(" · ")}
                           </p>
                         ) : null}
                         {item.note ? (
-                          <p className="mt-1 text-[0.62rem] text-amber-700 dark:text-amber-300">{item.note}</p>
+                          <p className="mt-1 text-[0.62rem] text-amber-700 dark:text-amber-300">
+                            {item.note}
+                          </p>
                         ) : null}
                         <button
                           type="button"
@@ -611,7 +713,7 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                             setNoteTarget({ kind: "pending", item });
                             setItemNote(item.note);
                           }}
-                          className="mt-1 inline-flex items-center gap-1 text-[0.62rem] font-medium text-muted-foreground hover:text-foreground"
+                          className="mt-1 inline-flex min-h-11 items-center gap-1 text-xs font-medium text-muted-foreground hover:text-foreground"
                         >
                           <MessageSquareText className="size-3" />
                           {item.note ? "Açıklamayı düzenle" : "Açıklama ekle"}
@@ -623,8 +725,14 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                         </p>
                         <button
                           type="button"
-                          onClick={() => setPending((items) => items.filter((line) => line.lineId !== item.lineId))}
-                          className="mt-1 inline-flex text-muted-foreground hover:text-destructive"
+                          onClick={() =>
+                            setPending((items) =>
+                              items.filter(
+                                (line) => line.lineId !== item.lineId,
+                              ),
+                            )
+                          }
+                          className="mt-1 inline-flex min-h-11 min-w-11 items-center justify-center text-muted-foreground hover:text-destructive"
                           aria-label={`${item.product.name} kaldır`}
                         >
                           <Trash2 className="size-3.5" />
@@ -637,8 +745,12 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
             ) : (
               <div className="flex min-h-28 flex-col items-center justify-center rounded-xl border border-dashed text-center">
                 <ShoppingBag className="size-5 text-muted-foreground" />
-                <p className="mt-2 text-xs font-semibold">Henüz yeni kalem yok</p>
-                <p className="mt-1 text-[0.62rem] text-muted-foreground">Menüden bir ürün seçin.</p>
+                <p className="mt-2 text-xs font-semibold">
+                  Henüz yeni kalem yok
+                </p>
+                <p className="mt-1 text-[0.62rem] text-muted-foreground">
+                  Menüden bir ürün seçin.
+                </p>
               </div>
             )}
           </section>
@@ -666,15 +778,21 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
           disabled={!pending.length || submitMutation.isPending}
           onClick={() => submitMutation.mutate()}
         >
-          {submitMutation.isPending ? <Loader2 className="animate-spin" /> : <Send />}
-          {pending.length ? `${pending.length} yeni kalemi gönder` : "Yeni kalem yok"}
+          {submitMutation.isPending ? (
+            <Loader2 className="animate-spin" />
+          ) : (
+            <Send />
+          )}
+          {pending.length
+            ? `${pending.length} yeni kalemi gönder`
+            : "Yeni kalem yok"}
         </Button>
       </div>
     </div>
   );
 
   return (
-    <div className="grid min-h-[calc(100dvh-6.5rem)] gap-3 lg:grid-cols-[minmax(0,1fr)_390px]">
+    <div className="grid min-w-0 min-h-[calc(100dvh-6.5rem)] gap-3 pb-24 lg:pb-0 lg:grid-cols-[minmax(0,1fr)_390px]">
       <section className="min-w-0">
         <div className="mb-3 flex items-center gap-2">
           <Link
@@ -702,20 +820,28 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
             <div className="flex items-center gap-2">
               <Button
                 variant="outline"
-                className="h-10 rounded-xl"
+                className="min-h-11 rounded-xl"
                 disabled={billMutation.isPending}
                 onClick={() => billMutation.mutate()}
               >
-                {billMutation.isPending ? <Loader2 className="animate-spin" /> : <ReceiptText />}
+                {billMutation.isPending ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <ReceiptText />
+                )}
                 <span className="hidden sm:inline">Hesap iste</span>
               </Button>
               <Button
                 variant="outline"
-                className="h-10 rounded-xl"
+                className="min-h-11 rounded-xl"
                 disabled={printBillMutation.isPending}
                 onClick={() => printBillMutation.mutate()}
               >
-                {printBillMutation.isPending ? <Loader2 className="animate-spin" /> : <Printer />}
+                {printBillMutation.isPending ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <Printer />
+                )}
                 <span className="hidden sm:inline">Bilgi fişi</span>
               </Button>
             </div>
@@ -791,7 +917,9 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                 <span className="mb-3 flex size-10 items-center justify-center rounded-xl bg-brand-soft text-brand">
                   <ChefHat className="size-4" />
                 </span>
-                <span className="line-clamp-2 text-sm font-semibold leading-5">{product.name}</span>
+                <span className="line-clamp-2 text-sm font-semibold leading-5">
+                  {product.name}
+                </span>
                 <span className="mt-1 line-clamp-1 text-[0.62rem] text-muted-foreground">
                   {product.description ?? "Hızlı sipariş"}
                 </span>
@@ -810,7 +938,14 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
           <div className="flex min-h-60 flex-col items-center justify-center rounded-2xl border border-dashed">
             <Search className="size-5 text-muted-foreground" />
             <p className="mt-3 text-sm font-semibold">Ürün bulunamadı</p>
-            <Button variant="ghost" className="mt-2" onClick={() => { setSearch(""); setCategory("all"); }}>
+            <Button
+              variant="ghost"
+              className="mt-2"
+              onClick={() => {
+                setSearch("");
+                setCategory("all");
+              }}
+            >
               Filtreleri temizle
             </Button>
           </div>
@@ -832,11 +967,11 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
         {cartContent}
       </aside>
 
-      <div className="fixed inset-x-3 bottom-[4.4rem] z-30 lg:hidden">
+      <div className="fixed inset-x-3 bottom-[calc(4.4rem+env(safe-area-inset-bottom))] z-30 lg:hidden">
         <button
           type="button"
           onClick={() => setCartOpen(true)}
-          className="flex h-14 w-full items-center gap-3 rounded-2xl bg-primary px-4 text-primary-foreground shadow-2xl shadow-black/20"
+          className="flex h-14 w-full items-center gap-3 rounded-2xl bg-primary px-4 text-primary-foreground shadow-md"
         >
           <span className="relative flex size-9 items-center justify-center rounded-xl bg-white/10">
             <ShoppingBag className="size-4" />
@@ -848,13 +983,17 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
           </span>
           <span className="min-w-0 flex-1 text-left">
             <span className="block text-xs font-semibold">
-              {pending.length ? `${pending.length} yeni kalem` : "Masa siparişini aç"}
+              {pending.length
+                ? `${pending.length} yeni kalem`
+                : "Masa siparişini aç"}
             </span>
             <span className="block text-[0.62rem] text-primary-foreground/55">
               {order?.items?.length ?? 0} gönderilmiş
             </span>
           </span>
-          <span className="text-sm font-semibold tabular-nums">{currency.format(total)}</span>
+          <span className="text-sm font-semibold tabular-nums">
+            {currency.format(total)}
+          </span>
           <ChevronDown className="size-4 -rotate-90" />
         </button>
       </div>
@@ -863,7 +1002,9 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
         <SheetContent side="bottom" className="max-h-[88dvh] rounded-t-3xl p-0">
           <SheetHeader className="border-b text-left">
             <SheetTitle>Masa {table?.name} siparişi</SheetTitle>
-            <SheetDescription>Gönderilen ve yeni eklenen kalemler</SheetDescription>
+            <SheetDescription>
+              Gönderilen ve yeni eklenen kalemler
+            </SheetDescription>
           </SheetHeader>
           {cartContent}
         </SheetContent>
@@ -883,7 +1024,8 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
           <DialogHeader>
             <DialogTitle>{selectedProduct?.name}</DialogTitle>
             <DialogDescription>
-              {selectedProduct?.description ?? "Adet, seçenek ve ürün notunu belirleyin."}
+              {selectedProduct?.description ??
+                "Adet, seçenek ve ürün notunu belirleyin."}
             </DialogDescription>
           </DialogHeader>
           {selectedProduct ? (
@@ -900,10 +1042,15 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                     <div>
                       <h3 className="text-sm font-semibold">{group.name}</h3>
                       <p className="text-[0.62rem] text-muted-foreground">
-                        {group.is_required ? "Zorunlu" : "Opsiyonel"} · En fazla {group.maximum_selection ?? "sınırsız"}
+                        {group.is_required ? "Zorunlu" : "Opsiyonel"} · En fazla{" "}
+                        {group.maximum_selection ?? "sınırsız"}
                       </p>
                     </div>
-                    {group.is_required ? <StatusBadge tone="brand" dot={false}>Gerekli</StatusBadge> : null}
+                    {group.is_required ? (
+                      <StatusBadge tone="brand" dot={false}>
+                        Gerekli
+                      </StatusBadge>
+                    ) : null}
                   </div>
                   <div className="space-y-2">
                     {group.modifiers.map((modifier) => {
@@ -923,7 +1070,9 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                                 const next = new Set(current);
                                 if (nextChecked) {
                                   if (group.maximum_selection === 1) {
-                                    group.modifiers.forEach((item) => next.delete(item.id));
+                                    group.modifiers.forEach((item) =>
+                                      next.delete(item.id),
+                                    );
                                   }
                                   next.add(modifier.id);
                                 } else {
@@ -933,7 +1082,9 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                               })
                             }
                           />
-                          <span className="min-w-0 flex-1 text-sm">{modifier.name}</span>
+                          <span className="min-w-0 flex-1 text-sm">
+                            {modifier.name}
+                          </span>
                           <span className="text-xs font-semibold">
                             {Number(modifier.price_delta)
                               ? `+${currency.format(Number(modifier.price_delta))}`
@@ -961,24 +1112,31 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                 <span>
                   <span className="block text-sm font-semibold">Adet</span>
                   <span className="text-[0.62rem] text-muted-foreground">
-                    Birim {currency.format(Number(selectedProduct.selling_price))}
+                    Birim{" "}
+                    {currency.format(Number(selectedProduct.selling_price))}
                   </span>
                 </span>
                 <div className="flex items-center rounded-xl border bg-card">
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="size-10 rounded-xl"
-                    onClick={() => setProductQuantity((value) => Math.max(1, value - 1))}
+                    className="size-11 rounded-xl"
+                    onClick={() =>
+                      setProductQuantity((value) => Math.max(1, value - 1))
+                    }
                   >
                     <Minus />
                   </Button>
-                  <span className="w-8 text-center text-sm font-bold">{productQuantity}</span>
+                  <span className="w-8 text-center text-sm font-bold">
+                    {productQuantity}
+                  </span>
                   <Button
                     variant="ghost"
                     size="icon"
-                    className="size-10 rounded-xl"
-                    onClick={() => setProductQuantity((value) => Math.min(99, value + 1))}
+                    className="size-11 rounded-xl"
+                    onClick={() =>
+                      setProductQuantity((value) => Math.min(99, value + 1))
+                    }
                   >
                     <Plus />
                   </Button>
@@ -990,8 +1148,15 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
             <Button variant="outline" onClick={() => setSelectedProduct(null)}>
               Vazgeç
             </Button>
-            <Button onClick={addSelectedProduct} disabled={productDetailLoading}>
-              {productDetailLoading ? <Loader2 className="animate-spin" /> : <Plus />}
+            <Button
+              onClick={addSelectedProduct}
+              disabled={productDetailLoading}
+            >
+              {productDetailLoading ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Plus />
+              )}
               {productDetailLoading ? "Seçenekler yükleniyor" : "Siparişe ekle"}
               <span className="ml-auto">
                 {currency.format(
@@ -999,7 +1164,10 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                     (selectedProduct?.modifier_groups ?? [])
                       .flatMap((group) => group.modifiers)
                       .filter((modifier) => selectedModifiers.has(modifier.id))
-                      .reduce((sum, modifier) => sum + Number(modifier.price_delta), 0)) *
+                      .reduce(
+                        (sum, modifier) => sum + Number(modifier.price_delta),
+                        0,
+                      )) *
                     productQuantity,
                 )}
               </span>
@@ -1020,7 +1188,9 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
             <DialogDescription>
               {noteTarget?.kind === "pending"
                 ? noteTarget.item.product.name
-                : noteTarget?.kind === "sent" ? noteTarget.item.product_name_snapshot : ""}
+                : noteTarget?.kind === "sent"
+                  ? noteTarget.item.product_name_snapshot
+                  : ""}
             </DialogDescription>
           </DialogHeader>
           <form
@@ -1034,9 +1204,13 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                 return;
               }
               const lineId = noteTarget.item.lineId;
-              setPending((items) => items.map((item) =>
-                item.lineId === lineId ? { ...item, note: itemNote.trim() } : item,
-              ));
+              setPending((items) =>
+                items.map((item) =>
+                  item.lineId === lineId
+                    ? { ...item, note: itemNote.trim() }
+                    : item,
+                ),
+              );
               submissionKey.current = null;
               setNoteTarget(null);
             }}
@@ -1053,11 +1227,23 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
             />
           </form>
           <DialogFooter>
-            <Button variant="outline" disabled={noteMutation.isPending} onClick={() => setNoteTarget(null)}>
+            <Button
+              variant="outline"
+              disabled={noteMutation.isPending}
+              onClick={() => setNoteTarget(null)}
+            >
               Vazgeç
             </Button>
-            <Button type="submit" form="waiter-item-note-form" disabled={noteMutation.isPending}>
-              {noteMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
+            <Button
+              type="submit"
+              form="waiter-item-note-form"
+              disabled={noteMutation.isPending}
+            >
+              {noteMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Check />
+              )}
               Açıklamayı kaydet
             </Button>
           </DialogFooter>
@@ -1077,8 +1263,8 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
           <DialogHeader>
             <DialogTitle>Kalem iptal talebi oluştur</DialogTitle>
             <DialogDescription>
-              Bu işlem kalemi hemen iptal etmez. Talep kasa/yönetici onayına gönderilir ve
-              yalnızca onaydan sonra siparişe uygulanır.
+              Bu işlem kalemi hemen iptal etmez. Talep kasa/yönetici onayına
+              gönderilir ve yalnızca onaydan sonra siparişe uygulanır.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -1115,12 +1301,14 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
                 id="waiter-cancellation-reason-help"
                 className={cn(
                   "text-xs",
-                  cancellationReason.length > 0 && cancellationReason.trim().length < 3
+                  cancellationReason.length > 0 &&
+                    cancellationReason.trim().length < 3
                     ? "text-destructive"
                     : "text-muted-foreground",
                 )}
               >
-                Denetim kaydı için en az 3 karakter · {cancellationReason.length}/255
+                Denetim kaydı için en az 3 karakter ·{" "}
+                {cancellationReason.length}/255
               </p>
             </div>
             <DialogFooter>
@@ -1137,9 +1325,16 @@ export function OrderBuilder({ tableId }: { tableId: string }) {
               </Button>
               <Button
                 type="submit"
-                disabled={cancellationReason.trim().length < 3 || cancellationMutation.isPending}
+                disabled={
+                  cancellationReason.trim().length < 3 ||
+                  cancellationMutation.isPending
+                }
               >
-                {cancellationMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
+                {cancellationMutation.isPending ? (
+                  <Loader2 className="animate-spin" />
+                ) : (
+                  <Check />
+                )}
                 Onaya gönder
               </Button>
             </DialogFooter>

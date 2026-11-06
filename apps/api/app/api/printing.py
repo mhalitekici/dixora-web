@@ -9,7 +9,7 @@ from typing import Annotated
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Header, Query, status
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 
 from app.config import Settings
 from app.dependencies import (
@@ -897,11 +897,18 @@ async def _build_courier_payload(
     channel_labels = {
         "PHONE": "TELEFON SİPARİŞİ",
         "TAKEAWAY": "GEL-AL",
-        "OWN_DELIVERY": "PAKET SİPARİŞ",
+        "OWN_DELIVERY": "PAKET SERVİS",
         "MARKETPLACE": "PLATFORM SİPARİŞİ",
     }
     address = ", ".join(
-        part for part in [delivery.address_line, delivery.neighbourhood, delivery.district] if part
+        part
+        for part in [
+            delivery.address_line,
+            delivery.neighbourhood,
+            delivery.district,
+            delivery.city,
+        ]
+        if part
     )
     footer: list[str] = []
     if delivery.address_note:
@@ -918,7 +925,7 @@ async def _build_courier_payload(
         "is_reprint": kind == "REPRINT",
         "document": {
             "document_type": "COURIER",
-            "title": "KURYE FİŞİ",
+            "title": "GEL-AL" if delivery.channel.value == "TAKEAWAY" else "PAKET SERVİS",
             "business_name": tenant.name,
             "branch_name": branch.name,
             "station_name": "KASA",
@@ -1401,6 +1408,12 @@ async def revoke_bridge(
     require_record_branch(identity, bridge.branch_id)
     bridge.is_active = False
     bridge.revoked_at = datetime.now(UTC)
+    await db.execute(
+        delete(PrintBridgePrinterMapping).where(
+            PrintBridgePrinterMapping.bridge_id == bridge.id,
+            PrintBridgePrinterMapping.tenant_id == tenant_id,
+        )
+    )
     add_audit_log(
         db,
         identity=identity,
@@ -1506,6 +1519,7 @@ async def enroll_bridge(payload: PrintBridgeEnrollRequest, db: DbSession) -> Pri
                 PrintBridgeClient.tenant_id == record.tenant_id,
                 PrintBridgeClient.branch_id == record.branch_id,
                 PrintBridgeClient.name == payload.name,
+                PrintBridgeClient.is_active.is_(True),
             )
         )
     ).scalar_one_or_none()

@@ -43,6 +43,47 @@ function job(overrides: Partial<PrintJobClaim> = {}): PrintJobClaim {
   };
 }
 
+for (const columns of [32, 42, 48]) {
+  test(`courier receipt wraps Turkish addresses, modifiers and many products at ${columns} columns`, () => {
+    const text = renderReceiptText(
+      job({
+        preparationStationId: null,
+        document: {
+          ...job().document,
+          documentType: "COURIER",
+          title: "Paket Servis",
+          sourceLabel: "PAKET SERVİS",
+          customerName: "Çağrı Şengül",
+          customerPhone: "0555 111 22 33",
+          deliveryAddress:
+            "Moda Caddesi No:42 Daire:9, Caferağa Mahallesi, Kadıköy, İstanbul",
+          paymentLabel: "Kapıda kart",
+          currency: "TRY",
+          totals: { total: "1234.50" },
+          lines: Array.from({ length: 25 }, (_, index) => ({
+            name: `Izgara köfte ve közlenmiş sebzeler ${index + 1}`,
+            quantity: "2",
+            lineTotal: "49.38",
+            modifiers: ["Soğansız", "Çok uzun bir ek seçenek açıklaması"],
+            note: "Sos ayrı, kapıdaki zili kullanın",
+          })),
+          footer: [
+            "Adres tarifi: Şişli sokağından girin, üçüncü kat",
+            "Kurye: Gökçe",
+          ],
+        },
+      }),
+      columns,
+    );
+    assert.match(text, /PAKET SERVİS/);
+    assert.match(text, /Çağrı Şengül/);
+    assert.match(text, /İstanbul/);
+    assert.match(text.replace(/\s+/g, " "), /üçüncü kat/);
+    for (const line of text.split("\n"))
+      assert.ok(line.length <= columns, line);
+  });
+}
+
 test("renders a compact preparation heading, order, table and waiter", () => {
   const text = renderReceiptText(job());
 

@@ -1,5 +1,5 @@
-import { Check, Copy, Laptop, Printer } from "lucide-react"
-import { toast } from "sonner"
+import { Check, Copy, Laptop, Printer, X } from "lucide-react";
+import { toast } from "sonner";
 
 import type {
   PrintBridge,
@@ -12,20 +12,22 @@ export function PrinterSetupGuide({
   bridges,
   devices,
   jobs,
+  physicalConfirmed = false,
   apiUrl,
   connectDisabled = false,
   onConnect,
   onAddPrinter,
   onRefresh,
 }: {
-  bridges: PrintBridge[]
-  devices: PrinterDevice[]
-  jobs: PrintJob[]
-  apiUrl: string
-  connectDisabled?: boolean
-  onConnect: () => void
-  onAddPrinter: () => void
-  onRefresh: () => void
+  bridges: PrintBridge[];
+  devices: PrinterDevice[];
+  physicalConfirmed?: boolean;
+  jobs: PrintJob[];
+  apiUrl: string;
+  connectDisabled?: boolean;
+  onConnect: () => void;
+  onAddPrinter: () => void;
+  onRefresh: () => void;
 }) {
   const installed = bridges.some(
     (bridge) =>
@@ -44,8 +46,9 @@ export function PrinterSetupGuide({
   const activeDevices = devices.filter((device) => device.is_active)
   const mappedCount = activeDevices.filter((device) =>
     mapped.has(device.id),
-  ).length
-  const outputConfirmed = jobs.some((job) => job.status === "PRINTED")
+  ).length;
+  const outputConfirmed = physicalConfirmed;
+  const softwarePrinted = jobs.some((job) => job.status === "PRINTED");
   const steps = [
     {
       title: "Uygulamayı kur",
@@ -65,7 +68,9 @@ export function PrinterSetupGuide({
     {
       title: "Çıktıyı kontrol et",
       done: outputConfirmed,
-      text: "Eşlediğiniz cihazdan test çıktısı alın ve kağıdı kontrol edin. Son işleri aşağıdan izleyin.",
+      text: softwarePrinted
+        ? "Yazılım baskı sonucunu aldı. Kağıdı kontrol edip aşağıdaki test çıktısını doğrulayın."
+        : "Test çıktısı alın, kağıdı ve Türkçe karakterleri kontrol edin.",
     },
   ]
   return (
@@ -85,8 +90,21 @@ export function PrinterSetupGuide({
           Bağlantıyı kontrol et
         </Button>
       </div>
+      <div className="mt-4 space-y-2">
+        <progress
+          className="h-2 w-full accent-primary"
+          max={4}
+          value={steps.filter((step) => step.done).length}
+          aria-label="Kurulum ilerlemesi"
+        />
+        <p className="text-sm font-medium">
+          {steps.filter((step) => step.done).length}/4 tamamlandı · Sıradaki
+          işlem:{" "}
+          {steps.find((step) => !step.done)?.title ?? "Kurulum tamamlandı"}
+        </p>
+      </div>
       <ol className="mt-4 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {steps.map((step, index) => (
+        {steps.map((step) => (
           <li key={step.title} className="flex gap-2">
             <span className="flex size-6 shrink-0 items-center justify-center rounded-full border text-xs font-semibold">
               {step.done ? (
@@ -95,13 +113,13 @@ export function PrinterSetupGuide({
                   aria-hidden="true"
                 />
               ) : (
-                index + 1
+                <X className="size-4 text-destructive" aria-hidden="true" />
               )}
             </span>
             <div>
               <h3 className="text-sm font-medium">{step.title}</h3>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                {step.done ? "Tamamlandı" : "Bekleniyor"}
+                {step.done ? "Tamamlandı" : "Tamamlanmadı"}
               </p>
               <p className="mt-2 text-xs leading-5 text-muted-foreground">
                 {step.text}

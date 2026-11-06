@@ -1,22 +1,22 @@
-"use client"
+"use client";
 
-import Link from "next/link"
-import { UserRound } from "lucide-react"
-import { useCurrentUser } from "@/hooks/use-auth"
-import { ChangePasswordCard } from "@/components/admin/change-password-card"
-import { ErrorState, LoadingState } from "@/components/admin/admin-utils"
-import { PageHeader } from "@/components/shared/page-header"
-import { Button } from "@/components/ui/button"
+import Link from "next/link";
+import { UserRound } from "lucide-react";
+import { useCurrentUser } from "@/hooks/use-auth";
+import { ChangePasswordCard } from "@/components/admin/change-password-card";
+import { ErrorState, LoadingState } from "@/components/admin/admin-utils";
+import { PageHeader } from "@/components/shared/page-header";
+import { Button } from "@/components/ui/button";
 
 export function ProfilePage() {
-  const query = useCurrentUser()
-  if (query.isLoading) return <LoadingState label="Hesabınız yükleniyor…" />
+  const query = useCurrentUser();
+  if (query.isLoading) return <LoadingState label="Hesabınız yükleniyor…" />;
   if (query.isError)
     return (
       <ErrorState error={query.error} onRetry={() => void query.refetch()} />
-    )
-  const context = query.data
-  if (!context) return null
+    );
+  const context = query.data;
+  if (!context) return null;
   const home =
     context.user.roleCode === "SUPER_ADMIN"
       ? "/super-admin"
@@ -24,7 +24,9 @@ export function ProfilePage() {
         ? "/waiter/tables"
         : context.user.roleCode === "CASHIER"
           ? "/cashier"
-          : "/admin"
+          : context.user.staffSession
+            ? "/panels"
+            : "/admin";
   return (
     <main
       id="dixora-main"
@@ -72,5 +74,5 @@ export function ProfilePage() {
         Yardım ve destek
       </Button>
     </main>
-  )
+  );
 }

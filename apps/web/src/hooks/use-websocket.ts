@@ -1,15 +1,7 @@
-"use client"
+"use client";
 
-import {
-  useCallback,
-  useEffect,
-  useRef,
-  useState,
-} from "react"
-import {
-  useQueryClient,
-  type QueryKey,
-} from "@tanstack/react-query"
+import { useCallback, useEffect, useRef, useState } from "react";
+import { useQueryClient, type QueryKey } from "@tanstack/react-query";
 
 export type WebSocketStatus =
   | "idle"
@@ -21,21 +13,19 @@ export type WebSocketStatus =
   | "error"
 
 export interface UseWebSocketOptions<TMessage = unknown> {
-  url: string | null
-  enabled?: boolean
-  protocols?: string | string[]
-  initialRetryDelayMs?: number
-  maxRetryDelayMs?: number
-  maxRetries?: number
-  refetchQueryKeys?: readonly QueryKey[]
-  invalidateQueryKeys?: (
-    message: TMessage,
-  ) => readonly QueryKey[] | undefined
-  parseMessage?: (event: MessageEvent<string>) => TMessage
-  onMessage?: (message: TMessage) => void
-  onOpen?: (event: Event) => void
-  onClose?: (event: CloseEvent) => void
-  onError?: (event: Event) => void
+  url: string | null;
+  enabled?: boolean;
+  protocols?: string | string[];
+  initialRetryDelayMs?: number;
+  maxRetryDelayMs?: number;
+  maxRetries?: number;
+  refetchQueryKeys?: readonly QueryKey[];
+  invalidateQueryKeys?: (message: TMessage) => readonly QueryKey[] | undefined;
+  parseMessage?: (event: MessageEvent<string>) => TMessage;
+  onMessage?: (message: TMessage) => void;
+  onOpen?: (event: Event) => void;
+  onClose?: (event: CloseEvent) => void;
+  onError?: (event: Event) => void;
 }
 
 export interface UseWebSocketResult<TMessage> {
@@ -84,7 +74,7 @@ export function useWebSocket<TMessage = unknown>({
   const [reconnectKey, setReconnectKey] = useState(0)
   const protocolsKey = Array.isArray(protocols)
     ? protocols.join("\u0000")
-    : protocols ?? ""
+    : (protocols ?? "");
 
   useEffect(() => {
     callbacksRef.current = {
@@ -302,10 +292,10 @@ export function useWebSocket<TMessage = unknown>({
       }
     }
     const handleOffline = () => {
-      clearRetryTimer()
-      setStatus("offline")
-      socketRef.current?.close(1001, "browser offline")
-    }
+      clearRetryTimer();
+      setStatus("offline");
+      socketRef.current?.close(1000, "browser offline");
+    };
 
     window.addEventListener("online", handleOnline)
     window.addEventListener("offline", handleOffline)
@@ -355,7 +345,10 @@ function resolveWebSocketUrl(url: string): string {
     return parsed.toString()
   }
 
-  const parsed = new URL(url.startsWith("/") ? url : `/${url}`, window.location.origin)
-  parsed.protocol = window.location.protocol === "https:" ? "wss:" : "ws:"
-  return parsed.toString()
+  const parsed = new URL(
+    url.startsWith("/") ? url : `/${url}`,
+    window.location.origin,
+  );
+  parsed.protocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+  return parsed.toString();
 }

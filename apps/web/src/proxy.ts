@@ -1,14 +1,15 @@
-import { NextRequest, NextResponse } from "next/server"
+import { NextRequest, NextResponse } from "next/server";
 
-const ACCESS_COOKIE = "dixora_access"
-const REFRESH_COOKIE = "dixora_refresh"
+const ACCESS_COOKIE = "dixora_access";
+const REFRESH_COOKIE = "dixora_refresh";
 const protectedRoots = [
+  "/panels",
   "/admin",
   "/waiter",
   "/cashier",
   "/super-admin",
   "/profile",
-]
+];
 // KITCHEN/BAR are retired presets (the kitchen display was replaced by
 // printed tickets) and deliberately have no entry here: any account still
 // carrying one of these roles has no page it's allowed to open, so it must
@@ -23,74 +24,89 @@ const roleHomes: Record<string, string> = {
   ACCOUNTANT: "/admin/reports",
   CASHIER: "/cashier",
   WAITER: "/waiter/tables",
-}
+};
 
 export function proxy(request: NextRequest) {
-  const { pathname } = request.nextUrl
+  const { pathname } = request.nextUrl;
   const protectedPage = protectedRoots.some(
     (root) => pathname === root || pathname.startsWith(`${root}/`),
-  )
-  const loginPage = pathname === "/login" || pathname === "/super-admin/login"
+  );
+  const loginPage = pathname === "/login" || pathname === "/super-admin/login";
 
   const hasSession =
-    request.cookies.has(ACCESS_COOKIE) || request.cookies.has(REFRESH_COOKIE)
+    request.cookies.has(ACCESS_COOKIE) || request.cookies.has(REFRESH_COOKIE);
   const role = hasSession
     ? (readRole(request.cookies.get(ACCESS_COOKIE)?.value ?? "") ??
       readRole(request.cookies.get(REFRESH_COOKIE)?.value ?? ""))
-    : null
+    : null;
+  const staffSession = [ACCESS_COOKIE, REFRESH_COOKIE].some((name) =>
+    readStaffSession(request.cookies.get(name)?.value ?? ""),
+  );
+  const manager =
+    role &&
+    ["BUSINESS_OWNER", "BUSINESS_ADMIN", "BUSINESS_MANAGER"].includes(role);
 
   if (loginPage) {
-    const home = role ? roleHomes[role] : undefined
+    const home =
+      staffSession && manager ? "/panels" : role ? roleHomes[role] : undefined;
     if (home) {
-      return NextResponse.redirect(new URL(home, request.url))
+      return NextResponse.redirect(new URL(home, request.url));
     }
     if (hasSession) {
-      const response = NextResponse.next()
-      clearSessionCookies(response)
-      return response
+      const response = NextResponse.next();
+      clearSessionCookies(response);
+      return response;
     }
-    return NextResponse.next()
+    return NextResponse.next();
   }
 
   if (!protectedPage) {
-    return NextResponse.next()
+    return NextResponse.next();
+  }
+
+  if (
+    staffSession &&
+    manager &&
+    (pathname === "/admin" || pathname.startsWith("/admin/"))
+  ) {
+    return NextResponse.redirect(new URL("/panels", request.url));
   }
 
   if (!hasSession) {
-    return loginRedirect(request)
+    return loginRedirect(request);
   }
 
   if (!role) {
-    const response = loginRedirect(request)
-    clearSessionCookies(response)
-    return response
+    const response = loginRedirect(request);
+    clearSessionCookies(response);
+    return response;
   }
   if (!roleCanOpen(role, pathname)) {
-    const target = roleHomes[role] ?? "/login"
-    return NextResponse.redirect(new URL(target, request.url))
+    const target = roleHomes[role] ?? "/login";
+    return NextResponse.redirect(new URL(target, request.url));
   }
-  return NextResponse.next()
+  return NextResponse.next();
 }
 
 function clearSessionCookies(response: NextResponse) {
-  const domain = readCookieDomain()
+  const domain = readCookieDomain();
   const options = {
     path: "/",
     maxAge: 0,
     expires: new Date(0),
-  }
+  };
   for (const name of [ACCESS_COOKIE, REFRESH_COOKIE]) {
     // Expire both variants. Deployments that added AUTH_COOKIE_DOMAIN after
     // launch can otherwise retain an older host-only session indefinitely.
-    response.cookies.set(name, "", options)
+    response.cookies.set(name, "", options);
     if (domain) {
-      response.cookies.set(name, "", { ...options, domain })
+      response.cookies.set(name, "", { ...options, domain });
     }
   }
 }
 
 function readCookieDomain(): string | undefined {
-  const domain = process.env.AUTH_COOKIE_DOMAIN?.trim()
+  const domain = process.env.AUTH_COOKIE_DOMAIN?.trim();
   if (
     !domain ||
     domain.includes("://") ||
@@ -98,52 +114,83 @@ function readCookieDomain(): string | undefined {
     domain.includes(":") ||
     /\s/.test(domain)
   ) {
-    return undefined
+    return undefined;
   }
-  return domain
+  return domain;
 }
 
 function loginRedirect(request: NextRequest) {
-  const { pathname, search } = request.nextUrl
-  const loginUrl = request.nextUrl.clone()
+  const { pathname, search } = request.nextUrl;
+  const loginUrl = request.nextUrl.clone();
   loginUrl.pathname = pathname.startsWith("/super-admin")
     ? "/super-admin/login"
-    : "/login"
-  loginUrl.search = ""
-  loginUrl.searchParams.set("returnTo", `${pathname}${search}`)
-  return NextResponse.redirect(loginUrl)
+    : "/login";
+  loginUrl.search = "";
+  loginUrl.searchParams.set("returnTo", `${pathname}${search}`);
+  return NextResponse.redirect(loginUrl);
 }
 
 function readRole(token: string): string | null {
   try {
-    const payload = token.split(".")[1]
-    if (!payload) return null
-    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/")
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
     const decoded = JSON.parse(
       Buffer.from(normalized, "base64").toString("utf8"),
-    ) as { role?: unknown; exp?: unknown }
+    ) as { role?: unknown; operational_profile?: unknown; exp?: unknown };
     if (
       typeof decoded.role !== "string" ||
       (typeof decoded.exp === "number" && decoded.exp * 1000 <= Date.now())
     ) {
-      return null
+      return null;
     }
-    return decoded.role
+    if (roleHomes[decoded.role]) return decoded.role;
+    return typeof decoded.operational_profile === "string"
+      ? ((
+          {
+            WAITER: "WAITER",
+            CASHIER: "CASHIER",
+            MANAGEMENT: "BUSINESS_MANAGER",
+            BACKOFFICE: "ACCOUNTANT",
+          } as Record<string, string>
+        )[decoded.operational_profile] ?? decoded.role)
+      : decoded.role;
   } catch {
-    return null
+    return null;
+  }
+}
+
+function readStaffSession(token: string): boolean {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return false;
+    return (
+      JSON.parse(
+        Buffer.from(
+          payload.replace(/-/g, "+").replace(/_/g, "/"),
+          "base64",
+        ).toString("utf8"),
+      ).staff_session === true
+    );
+  } catch {
+    return false;
   }
 }
 
 function roleCanOpen(role: string, pathname: string) {
-  if (pathname.startsWith("/super-admin")) return role === "SUPER_ADMIN"
+  if (pathname === "/panels" || pathname.startsWith("/panels/"))
+    return ["BUSINESS_OWNER", "BUSINESS_ADMIN", "BUSINESS_MANAGER"].includes(
+      role,
+    );
+  if (pathname.startsWith("/super-admin")) return role === "SUPER_ADMIN";
   if (pathname.startsWith("/admin")) {
-    if (role === "BUSINESS_OWNER" || role === "BUSINESS_ADMIN") return true
+    if (role === "BUSINESS_OWNER" || role === "BUSINESS_ADMIN") return true;
     if (role === "BUSINESS_MANAGER") {
       return ![
         "/admin/roles",
         "/admin/settings",
         "/admin/branch-settings",
-      ].some((path) => pathname === path || pathname.startsWith(`${path}/`))
+      ].some((path) => pathname === path || pathname.startsWith(`${path}/`));
     }
     if (role === "ACCOUNTANT") {
       return (
@@ -152,9 +199,9 @@ function roleCanOpen(role: string, pathname: string) {
         pathname.startsWith("/admin/shifts") ||
         pathname.startsWith("/admin/order-activity") ||
         pathname.startsWith("/admin/inventory")
-      )
+      );
     }
-    return false
+    return false;
   }
   if (pathname.startsWith("/waiter")) {
     return [
@@ -162,7 +209,7 @@ function roleCanOpen(role: string, pathname: string) {
       "BUSINESS_OWNER",
       "BUSINESS_ADMIN",
       "BUSINESS_MANAGER",
-    ].includes(role)
+    ].includes(role);
   }
   if (pathname.startsWith("/cashier")) {
     return [
@@ -170,13 +217,14 @@ function roleCanOpen(role: string, pathname: string) {
       "BUSINESS_OWNER",
       "BUSINESS_ADMIN",
       "BUSINESS_MANAGER",
-    ].includes(role)
+    ].includes(role);
   }
-  return true
+  return true;
 }
 
 export const config = {
   matcher: [
+    "/panels/:path*",
     "/login",
     "/admin/:path*",
     "/waiter/:path*",
@@ -184,4 +232,4 @@ export const config = {
     "/super-admin/:path*",
     "/profile/:path*",
   ],
-}
+};

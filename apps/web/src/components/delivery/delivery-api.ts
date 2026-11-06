@@ -36,6 +36,7 @@ export type DeliveryOrder = {
   customer_name: string | null;
   customer_phone: string | null;
   address_line: string | null;
+  city?: string | null;
   district: string | null;
   neighbourhood: string | null;
   address_note: string | null;

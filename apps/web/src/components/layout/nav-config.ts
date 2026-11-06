@@ -96,10 +96,7 @@ export const adminNavigation: NavGroup[] = [
   },
   {
     label: "Servis ve Kasa",
-    items: [
-      { label: "Garson Paneli", href: "/waiter/tables", icon: HandPlatter },
-      { label: "Kasiyer Paneli", href: "/cashier", icon: WalletCards },
-    ],
+    items: [{ label: "Paneller", href: "/admin/panels", icon: WalletCards }],
   },
   {
     label: "Kampanyalar ve Sadakat",

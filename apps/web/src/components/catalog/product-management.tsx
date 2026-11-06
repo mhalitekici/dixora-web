@@ -19,13 +19,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import {
-  type ChangeEvent,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from "react";
+import { type ChangeEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useForm, useWatch } from "react-hook-form";
 import { toast } from "sonner";
 import { z } from "zod";
@@ -40,6 +34,7 @@ import { EmptyState } from "@/components/shared/empty-state";
 import { ProductTransfer } from "@/components/catalog/product-transfer";
 import { PageHeader } from "@/components/shared/page-header";
 import { StatusBadge } from "@/components/shared/status-badge";
+import { MediaImage } from "@/components/shared/media-image";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -139,21 +134,13 @@ type CentreCatalogSyncResult = {
 };
 
 const MAX_PRODUCT_IMAGE_BYTES = 5 * 1024 * 1024;
-const PRODUCT_IMAGE_TYPES = new Set([
-  "image/jpeg",
-  "image/png",
-  "image/webp",
-]);
+const PRODUCT_IMAGE_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 
 class ProductImageUploadError extends Error {
   readonly product: Product;
 
   constructor(product: Product, cause: unknown) {
-    super(
-      cause instanceof Error
-        ? cause.message
-        : "Ürün görseli yüklenemedi.",
-    );
+    super(cause instanceof Error ? cause.message : "Ürün görseli yüklenemedi.");
     this.name = "ProductImageUploadError";
     this.product = product;
   }
@@ -210,11 +197,16 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     | { detail?: string; message?: string; error?: { message?: string } }
     | null;
   if (!response.ok) {
-    const error = payload as
-      | { detail?: string; message?: string; error?: { message?: string } }
-      | null;
+    const error = payload as {
+      detail?: string;
+      message?: string;
+      error?: { message?: string };
+    } | null;
     throw new Error(
-      error?.error?.message ?? error?.detail ?? error?.message ?? "İşlem tamamlanamadı.",
+      error?.error?.message ??
+        error?.detail ??
+        error?.message ??
+        "İşlem tamamlanamadı.",
     );
   }
   return payload as T;
@@ -293,8 +285,13 @@ export function ProductManagement() {
     staleTime: 30_000,
   });
 
-  const categories = (categoriesQuery.data ?? []).filter((category) => category.is_active !== false);
-  const products = useMemo(() => productsQuery.data ?? [], [productsQuery.data]);
+  const categories = (categoriesQuery.data ?? []).filter(
+    (category) => category.is_active !== false,
+  );
+  const products = useMemo(
+    () => productsQuery.data ?? [],
+    [productsQuery.data],
+  );
   const stations = stationsQuery.data ?? [];
 
   const form = useForm<ProductFormValues>({
@@ -380,19 +377,22 @@ export function ProductManagement() {
       productId,
       imageFile: selectedImage,
     }: SaveProductInput) => {
-      const savedProduct = await request<Product>(productId ? `/catalog/products/${productId}` : "/catalog/products", {
-        method: productId ? "PATCH" : "POST",
-        body: JSON.stringify({
-          ...values,
-          preparation_station_id: values.preparation_station_id || null,
-          selling_price: values.selling_price.toFixed(2),
-          allergens: (values.allergens ?? "")
-            .split(",")
-            .map((item) => item.trim())
-            .filter(Boolean),
-          calories: values.calories?.trim() ? Number(values.calories) : null,
-        }),
-      });
+      const savedProduct = await request<Product>(
+        productId ? `/catalog/products/${productId}` : "/catalog/products",
+        {
+          method: productId ? "PATCH" : "POST",
+          body: JSON.stringify({
+            ...values,
+            preparation_station_id: values.preparation_station_id || null,
+            selling_price: values.selling_price.toFixed(2),
+            allergens: (values.allergens ?? "")
+              .split(",")
+              .map((item) => item.trim())
+              .filter(Boolean),
+            calories: values.calories?.trim() ? Number(values.calories) : null,
+          }),
+        },
+      );
 
       if (!selectedImage) return savedProduct;
 
@@ -467,7 +467,13 @@ export function ProductManagement() {
   });
 
   const toggleMutation = useMutation({
-    mutationFn: ({ product, available }: { product: Product; available: boolean }) => {
+    mutationFn: ({
+      product,
+      available,
+    }: {
+      product: Product;
+      available: boolean;
+    }) => {
       return request<Product>(`/catalog/products/${product.id}`, {
         method: "PATCH",
         body: JSON.stringify({ is_available: available }),
@@ -477,7 +483,10 @@ export function ProductManagement() {
       toast.success("Ürün bulunabilirliği güncellendi");
       void invalidateProductReadModels(queryClient);
     },
-    onError: (error) => toast.error(error instanceof Error ? error.message : "Ürün güncellenemedi."),
+    onError: (error) =>
+      toast.error(
+        error instanceof Error ? error.message : "Ürün güncellenemedi.",
+      ),
   });
 
   const centreSyncMutation = useMutation({
@@ -488,7 +497,9 @@ export function ProductManagement() {
       ),
     onSuccess: (result, initialImport) => {
       toast.success(
-        initialImport ? "Merkez ürünleri şubeye getirildi." : "Merkez ürünleri güncellendi.",
+        initialImport
+          ? "Merkez ürünleri şubeye getirildi."
+          : "Merkez ürünleri güncellendi.",
         {
           description: `${result.categories_created} kategori ve ${result.products_created} ürün eklendi; ${result.categories_updated} kategori ve ${result.products_updated} ürün güncellendi.`,
         },
@@ -497,7 +508,11 @@ export function ProductManagement() {
       void invalidateProductReadModels(queryClient);
     },
     onError: (error) =>
-      toast.error(error instanceof Error ? error.message : "Merkez kataloğu güncellenemedi."),
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "Merkez kataloğu güncellenemedi.",
+      ),
   });
 
   const filtered = useMemo(
@@ -507,7 +522,8 @@ export function ProductManagement() {
         const searchMatch = product.name
           .toLocaleLowerCase("tr-TR")
           .includes(query);
-        const categoryMatch = categoryFilter === "all" || product.category_id === categoryFilter;
+        const categoryMatch =
+          categoryFilter === "all" || product.category_id === categoryFilter;
         const availabilityMatch =
           availabilityFilter === "all" ||
           (availabilityFilter === "available" && product.is_available) ||
@@ -597,25 +613,35 @@ export function ProductManagement() {
       icon={PackageOpen}
       actions={
         <>
-          {!centreStatusQuery.data?.is_centre && centreStatusQuery.data?.can_import ? (
+          {!centreStatusQuery.data?.is_centre &&
+          centreStatusQuery.data?.can_import ? (
             <Button
               variant="outline"
               className="h-10 rounded-xl"
               disabled={centreSyncMutation.isPending}
               onClick={() => centreSyncMutation.mutate(true)}
             >
-              {centreSyncMutation.isPending ? <Loader2 className="animate-spin" /> : <Download />}
+              {centreSyncMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Download />
+              )}
               Merkezden ürünleri getir
             </Button>
           ) : null}
-          {!centreStatusQuery.data?.is_centre && centreStatusQuery.data?.imported_at ? (
+          {!centreStatusQuery.data?.is_centre &&
+          centreStatusQuery.data?.imported_at ? (
             <Button
               variant="outline"
               className="h-10 rounded-xl"
               disabled={centreSyncMutation.isPending}
               onClick={() => centreSyncMutation.mutate(false)}
             >
-              <RefreshCw className={centreSyncMutation.isPending ? "animate-spin" : undefined} />
+              <RefreshCw
+                className={
+                  centreSyncMutation.isPending ? "animate-spin" : undefined
+                }
+              />
               Merkezden güncelle
             </Button>
           ) : null}
@@ -639,7 +665,10 @@ export function ProductManagement() {
     return (
       <>
         {pageHeader}
-        <div className="flex min-h-72 items-center justify-center" role="status">
+        <div
+          className="flex min-h-72 items-center justify-center"
+          role="status"
+        >
           <Loader2 className="size-6 animate-spin text-brand" />
           <span className="sr-only">Ürün kataloğu yükleniyor</span>
         </div>
@@ -684,20 +713,52 @@ export function ProductManagement() {
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         {[
-          ["Toplam ürün", products.length, PackageCheck, "text-brand bg-brand-soft"],
-          ["Satışta", products.filter((item) => item.is_available && item.is_active).length, Check, "text-emerald-700 bg-emerald-500/10"],
-          ["Geçici tükendi", products.filter((item) => !item.is_available && item.is_active).length, CircleOff, "text-amber-700 bg-amber-500/10"],
-          ["Stok izlenen", products.filter((item) => item.track_inventory).length, PackageOpen, "text-blue-700 bg-blue-500/10"],
+          [
+            "Toplam ürün",
+            products.length,
+            PackageCheck,
+            "text-brand bg-brand-soft",
+          ],
+          [
+            "Satışta",
+            products.filter((item) => item.is_available && item.is_active)
+              .length,
+            Check,
+            "text-emerald-700 bg-emerald-500/10",
+          ],
+          [
+            "Geçici tükendi",
+            products.filter((item) => !item.is_available && item.is_active)
+              .length,
+            CircleOff,
+            "text-amber-700 bg-amber-500/10",
+          ],
+          [
+            "Stok izlenen",
+            products.filter((item) => item.track_inventory).length,
+            PackageOpen,
+            "text-blue-700 bg-blue-500/10",
+          ],
         ].map(([label, value, Icon, colors]) => {
           const StatIcon = Icon as typeof PackageCheck;
           return (
-            <div key={String(label)} className="flex items-center gap-3 rounded-2xl border bg-card p-4">
-              <span className={cn("flex size-10 items-center justify-center rounded-xl", String(colors))}>
+            <div
+              key={String(label)}
+              className="flex items-center gap-3 rounded-2xl border bg-card p-4"
+            >
+              <span
+                className={cn(
+                  "flex size-10 items-center justify-center rounded-xl",
+                  String(colors),
+                )}
+              >
                 <StatIcon className="size-4" />
               </span>
               <div>
                 <p className="text-lg font-semibold">{String(value)}</p>
-                <p className="text-[0.68rem] text-muted-foreground">{String(label)}</p>
+                <p className="text-[0.68rem] text-muted-foreground">
+                  {String(label)}
+                </p>
               </div>
             </div>
           );
@@ -713,7 +774,10 @@ export function ProductManagement() {
             <Select
               items={[
                 { value: "all", label: "Tüm kategoriler" },
-                ...categories.map((category) => ({ value: category.id, label: category.name })),
+                ...categories.map((category) => ({
+                  value: category.id,
+                  label: category.name,
+                })),
               ]}
               value={categoryFilter}
               onValueChange={(value) => setCategoryFilter(value ?? "all")}
@@ -748,7 +812,11 @@ export function ProductManagement() {
         }
         actions={
           selected.size ? (
-            <StatusBadge tone="brand" className="h-9 rounded-xl px-3" dot={false}>
+            <StatusBadge
+              tone="brand"
+              className="h-9 rounded-xl px-3"
+              dot={false}
+            >
               {selected.size} seçili
             </StatusBadge>
           ) : null
@@ -767,9 +835,16 @@ export function ProductManagement() {
                 <TableHead className="w-12">
                   <Checkbox
                     aria-label="Tüm ürünleri seç"
-                    checked={filtered.length > 0 && filtered.every((item) => selected.has(item.id))}
+                    checked={
+                      filtered.length > 0 &&
+                      filtered.every((item) => selected.has(item.id))
+                    }
                     onCheckedChange={(checked) =>
-                      setSelected(checked ? new Set(filtered.map((item) => item.id)) : new Set())
+                      setSelected(
+                        checked
+                          ? new Set(filtered.map((item) => item.id))
+                          : new Set(),
+                      )
                     }
                   />
                 </TableHead>
@@ -777,14 +852,18 @@ export function ProductManagement() {
                 <TableHead className="hidden md:table-cell">Kategori</TableHead>
                 <TableHead className="hidden lg:table-cell">Hazırlık</TableHead>
                 <TableHead>Fiyat</TableHead>
-                <TableHead className="hidden xl:table-cell">Görünürlük</TableHead>
+                <TableHead className="hidden xl:table-cell">
+                  Görünürlük
+                </TableHead>
                 <TableHead>Durum</TableHead>
                 <TableHead className="w-12" />
               </TableRow>
             </TableHeader>
             <TableBody>
               {filtered.map((product) => {
-                const category = product.category ?? categories.find((item) => item.id === product.category_id);
+                const category =
+                  product.category ??
+                  categories.find((item) => item.id === product.category_id);
                 return (
                   <TableRow key={product.id} className="group">
                     <TableCell>
@@ -814,8 +893,9 @@ export function ProductManagement() {
                           )}
                         >
                           {product.image_url ? (
-                            // eslint-disable-next-line @next/next/no-img-element
-                            <img
+                            <MediaImage
+                              width={44}
+                              height={44}
                               src={product.image_url}
                               alt=""
                               className="size-full rounded-xl object-cover"
@@ -825,16 +905,23 @@ export function ProductManagement() {
                           )}
                         </span>
                         <span className="min-w-0">
-                          <span className="block truncate text-sm font-semibold">{product.name}</span>
+                          <span className="block truncate text-sm font-semibold">
+                            {product.name}
+                          </span>
                           <span className="mt-0.5 block truncate text-[0.66rem] text-muted-foreground">
                             {[
-                              product.track_inventory && product.stock_quantity !== undefined
+                              product.track_inventory &&
+                              product.stock_quantity !== undefined
                                 ? `Stok ${product.stock_quantity}`
                                 : null,
-                              product.calories != null ? `${product.calories} kcal` : null,
+                              product.calories != null
+                                ? `${product.calories} kcal`
+                                : null,
                             ]
                               .filter(Boolean)
-                              .join(" · ") || product.category?.name || "—"}
+                              .join(" · ") ||
+                              product.category?.name ||
+                              "—"}
                           </span>
                         </span>
                       </button>
@@ -843,7 +930,10 @@ export function ProductManagement() {
                       <span className="inline-flex items-center gap-2 text-xs">
                         <span
                           className="size-2 rounded-full"
-                          style={{ backgroundColor: category?.color ?? "var(--muted-foreground)" }}
+                          style={{
+                            backgroundColor:
+                              category?.color ?? "var(--muted-foreground)",
+                          }}
                         />
                         {category?.name ?? "Kategorisiz"}
                       </span>
@@ -853,7 +943,8 @@ export function ProductManagement() {
                         <ChefHat className="size-3.5 text-muted-foreground" />
                         <span>
                           {stations.find(
-                            (station) => station.id === product.preparation_station_id,
+                            (station) =>
+                              station.id === product.preparation_station_id,
                           )?.name ?? "Atanmamış"}
                           <span className="block text-[0.62rem] text-muted-foreground">
                             ~{product.preparation_minutes ?? 0} dk
@@ -871,7 +962,9 @@ export function ProductManagement() {
                         <span
                           className={cn(
                             "rounded-md px-1.5 py-1 text-[0.58rem] font-semibold",
-                            product.waiter_visible ? "bg-blue-500/10 text-blue-700" : "bg-muted text-muted-foreground",
+                            product.waiter_visible
+                              ? "bg-blue-500/10 text-blue-700"
+                              : "bg-muted text-muted-foreground",
                           )}
                         >
                           Garson
@@ -879,7 +972,9 @@ export function ProductManagement() {
                         <span
                           className={cn(
                             "rounded-md px-1.5 py-1 text-[0.58rem] font-semibold",
-                            product.qr_visible ? "bg-violet-500/10 text-violet-700" : "bg-muted text-muted-foreground",
+                            product.qr_visible
+                              ? "bg-violet-500/10 text-violet-700"
+                              : "bg-muted text-muted-foreground",
                           )}
                         >
                           QR
@@ -890,20 +985,39 @@ export function ProductManagement() {
                       <button
                         type="button"
                         onClick={() =>
-                          toggleMutation.mutate({ product, available: !product.is_available })
+                          toggleMutation.mutate({
+                            product,
+                            available: !product.is_available,
+                          })
                         }
                       >
                         <StatusBadge
-                          tone={!product.is_active ? "danger" : product.is_available ? "success" : "warning"}
+                          tone={
+                            !product.is_active
+                              ? "danger"
+                              : product.is_available
+                                ? "success"
+                                : "warning"
+                          }
                         >
-                          {!product.is_active ? "Pasif" : product.is_available ? "Satışta" : "Tükendi"}
+                          {!product.is_active
+                            ? "Pasif"
+                            : product.is_available
+                              ? "Satışta"
+                              : "Tükendi"}
                         </StatusBadge>
                       </button>
                     </TableCell>
                     <TableCell>
                       <DropdownMenu>
                         <DropdownMenuTrigger
-                          render={<Button variant="ghost" size="icon-sm" aria-label="Ürün işlemleri" />}
+                          render={
+                            <Button
+                              variant="ghost"
+                              size="icon-sm"
+                              aria-label="Ürün işlemleri"
+                            />
+                          }
                         >
                           <MoreHorizontal />
                         </DropdownMenuTrigger>
@@ -914,11 +1028,16 @@ export function ProductManagement() {
                           </DropdownMenuItem>
                           <DropdownMenuItem
                             onClick={() =>
-                              toggleMutation.mutate({ product, available: !product.is_available })
+                              toggleMutation.mutate({
+                                product,
+                                available: !product.is_available,
+                              })
                             }
                           >
                             <CircleOff />
-                            {product.is_available ? "Geçici tükendi yap" : "Satışa aç"}
+                            {product.is_available
+                              ? "Geçici tükendi yap"
+                              : "Satışa aç"}
                           </DropdownMenuItem>
                           <DropdownMenuSeparator />
                           <DropdownMenuItem variant="destructive">
@@ -953,9 +1072,14 @@ export function ProductManagement() {
       <Dialog open={dialogOpen} onOpenChange={handleDialogOpenChange}>
         <DialogContent className="max-h-[92dvh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader>
-            <DialogTitle>{editing ? `${editing.name} ürününü düzenle` : "Yeni ürün oluştur"}</DialogTitle>
+            <DialogTitle>
+              {editing
+                ? `${editing.name} ürününü düzenle`
+                : "Yeni ürün oluştur"}
+            </DialogTitle>
             <DialogDescription>
-              Bu kayıt garson, kasa, QR menü, hazırlık bileti ve raporlarda ortak kullanılır.
+              Bu kayıt garson, kasa, QR menü, hazırlık bileti ve raporlarda
+              ortak kullanılır.
             </DialogDescription>
           </DialogHeader>
           <form
@@ -972,9 +1096,9 @@ export function ProductManagement() {
             <div className="grid gap-4 rounded-2xl border bg-muted/20 p-3 sm:grid-cols-[160px_1fr]">
               <div className="relative aspect-square overflow-hidden rounded-xl border bg-card">
                 {displayedImageUrl ? (
-                  // Blob previews cannot be processed by the Next.js image optimizer.
-                  // eslint-disable-next-line @next/next/no-img-element
-                  <img
+                  <MediaImage
+                    fill
+                    sizes="(max-width: 640px) 100vw, 160px"
                     src={displayedImageUrl}
                     alt={`${formValues.name?.trim() || editing?.name || "Ürün"} görsel önizlemesi`}
                     className="size-full object-cover"
@@ -1161,7 +1285,10 @@ export function ProductManagement() {
                     { value: "unassigned", label: "Atanmamış" },
                     ...stations
                       .filter((station) => station.is_active !== false)
-                      .map((station) => ({ value: station.id, label: station.name })),
+                      .map((station) => ({
+                        value: station.id,
+                        label: station.name,
+                      })),
                   ]}
                   value={formValues.preparation_station_id || "unassigned"}
                   onValueChange={(value) =>
@@ -1171,16 +1298,21 @@ export function ProductManagement() {
                     )
                   }
                 >
-                  <SelectTrigger id="station" className="h-11 w-full rounded-xl">
+                  <SelectTrigger
+                    id="station"
+                    className="h-11 w-full rounded-xl"
+                  >
                     <SelectValue placeholder="İstasyon seçin" />
                   </SelectTrigger>
                   <SelectContent>
                     <SelectItem value="unassigned">Atanmamış</SelectItem>
-                    {stations.filter((station) => station.is_active !== false).map((station) => (
-                      <SelectItem key={station.id} value={station.id}>
-                        {station.name}
-                      </SelectItem>
-                    ))}
+                    {stations
+                      .filter((station) => station.is_active !== false)
+                      .map((station) => (
+                        <SelectItem key={station.id} value={station.id}>
+                          {station.name}
+                        </SelectItem>
+                      ))}
                   </SelectContent>
                 </Select>
               </div>
@@ -1207,7 +1339,8 @@ export function ProductManagement() {
                   {...form.register("allergens")}
                 />
                 <p className="text-xs text-muted-foreground">
-                  Virgülle ayırarak girin. QR menüde alerjen bilgisi açıksa müşteriye gösterilir.
+                  Virgülle ayırarak girin. QR menüde alerjen bilgisi açıksa
+                  müşteriye gösterilir.
                 </p>
               </div>
               <div className="space-y-2 sm:col-span-1">
@@ -1227,13 +1360,36 @@ export function ProductManagement() {
 
             <div className="grid gap-2 sm:grid-cols-2">
               {[
-                ["is_active", "Aktif ürün", "Katalog ve yönetim ekranında kullanılsın."],
-                ["is_available", "Satışa açık", "Garson ve kasada siparişe eklenebilsin."],
-                ["waiter_visible", "Garson menüsü", "Garson ürün seçiminde gösterilsin."],
-                ["qr_visible", "QR menü", "Public menüde müşteriye gösterilsin."],
-                ["track_inventory", "Stok takibi", "Reçete üzerinden stok düşümü yapılsın."],
+                [
+                  "is_active",
+                  "Aktif ürün",
+                  "Katalog ve yönetim ekranında kullanılsın.",
+                ],
+                [
+                  "is_available",
+                  "Satışa açık",
+                  "Garson ve kasada siparişe eklenebilsin.",
+                ],
+                [
+                  "waiter_visible",
+                  "Garson menüsü",
+                  "Garson ürün seçiminde gösterilsin.",
+                ],
+                [
+                  "qr_visible",
+                  "QR menü",
+                  "Public menüde müşteriye gösterilsin.",
+                ],
+                [
+                  "track_inventory",
+                  "Stok takibi",
+                  "Reçete üzerinden stok düşümü yapılsın.",
+                ],
               ].map(([field, title, description]) => (
-                <label key={field} className="flex items-center justify-between rounded-xl border p-3">
+                <label
+                  key={field}
+                  className="flex items-center justify-between rounded-xl border p-3"
+                >
                   <span className="pr-3">
                     <span className="block text-xs font-semibold">{title}</span>
                     <span className="mt-0.5 block text-[0.64rem] leading-4 text-muted-foreground">
@@ -1241,9 +1397,14 @@ export function ProductManagement() {
                     </span>
                   </span>
                   <Switch
-                    checked={Boolean(formValues[field as keyof ProductFormValues])}
+                    checked={Boolean(
+                      formValues[field as keyof ProductFormValues],
+                    )}
                     onCheckedChange={(checked) =>
-                      form.setValue(field as keyof ProductFormValues, checked as never)
+                      form.setValue(
+                        field as keyof ProductFormValues,
+                        checked as never,
+                      )
                     }
                   />
                 </label>
@@ -1262,12 +1423,13 @@ export function ProductManagement() {
             <Button
               form="product-form"
               type="submit"
-              disabled={
-                saveMutation.isPending ||
-                removeImageMutation.isPending
-              }
+              disabled={saveMutation.isPending || removeImageMutation.isPending}
             >
-              {saveMutation.isPending ? <Loader2 className="animate-spin" /> : <Check />}
+              {saveMutation.isPending ? (
+                <Loader2 className="animate-spin" />
+              ) : (
+                <Check />
+              )}
               {uploadingImage
                 ? "Görsel yükleniyor"
                 : editing

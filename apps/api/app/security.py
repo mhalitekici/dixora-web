@@ -16,9 +16,11 @@ from sqlalchemy.orm import selectinload
 
 from app.config import Settings
 from app.errors import DomainError
-from app.models import AuthSession, Branch, Role, Tenant, User, UserBranchMembership
+from app.models import AuthSession, Role, Tenant, User
 from app.models.enums import TenantState
+from app.rbac import operational_profile
 from app.schemas import TokenPair
+from app.services.branch_access import default_accessible_branch, resolve_accessible_branches
 
 password_hasher = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=4)
 
@@ -76,6 +78,10 @@ def trusted_device_token_hash(token: str) -> str:
     return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
+def is_staff_session(device_name: str | None) -> bool:
+    return device_name == "panel-pin" or (device_name or "").startswith("trusted-device:")
+
+
 def _encode_token(
     settings: Settings,
     *,
@@ -87,6 +93,7 @@ def _encode_token(
     branch_id: UUID | None,
     family: UUID,
     remember_me: bool,
+    staff_session: bool = False,
 ) -> str:
     now = utcnow()
     payload: dict[str, Any] = {
@@ -100,9 +107,11 @@ def _encode_token(
         "tenant_id": str(user.tenant_id) if user.tenant_id else None,
         "branch_id": str(branch_id) if branch_id else None,
         "role": user.role.code,
+        "operational_profile": operational_profile(user.role),
         "is_super_admin": user.is_super_admin,
         "family": str(family),
         "remember_me": remember_me,
+        "staff_session": staff_session,
         "iss": "dixora-api",
         "aud": "dixora-app",
     }
@@ -179,6 +188,7 @@ async def issue_token_pair(
         branch_id=branch_id,
         family=family,
         remember_me=remember_me,
+        staff_session=is_staff_session(device_name),
     )
     refresh_token = _encode_token(
         settings,
@@ -190,6 +200,7 @@ async def issue_token_pair(
         branch_id=branch_id,
         family=family,
         remember_me=remember_me,
+        staff_session=is_staff_session(device_name),
     )
     return TokenPair(
         access_token=access_token,
@@ -233,29 +244,11 @@ async def switch_refresh_token_branch(
             "A business context is required",
             status_code=400,
         )
-    if user.branch_id is not None:
-        # A branch-pinned user may still move between branches they have been
-        # granted membership in — that is how one regional manager covers
-        # several locations without gaining business-wide access.
-        granted = (
-            (
-                await db.execute(
-                    select(UserBranchMembership.branch_id).where(
-                        UserBranchMembership.user_id == user.id,
-                        UserBranchMembership.tenant_id == user.tenant_id,
-                        UserBranchMembership.is_active.is_(True),
-                    )
-                )
-            )
-            .scalars()
-            .all()
+    branches, _ = await resolve_accessible_branches(db, user)
+    if branch_id not in branches:
+        raise DomainError(
+            "branch_switch_forbidden", "Branch access is not allowed", status_code=403
         )
-        if branch_id not in {user.branch_id, *granted}:
-            raise DomainError(
-                "branch_switch_forbidden",
-                "This account is restricted to its assigned branches",
-                status_code=403,
-            )
 
     selected_branch_id = await _resolve_refresh_branch(
         db,
@@ -295,9 +288,7 @@ async def _load_refresh_session(
         ) from exc
 
     auth_session = (
-        await db.execute(
-            select(AuthSession).where(AuthSession.id == session_id).with_for_update()
-        )
+        await db.execute(select(AuthSession).where(AuthSession.id == session_id).with_for_update())
     ).scalar_one_or_none()
     if (
         auth_session is None
@@ -324,7 +315,7 @@ async def _load_refresh_session(
             .options(selectinload(User.role).selectinload(Role.permissions))
         )
     ).scalar_one_or_none()
-    if user is None or not user.is_active:
+    if user is None or not user.is_active or not user.role.is_active:
         auth_session.revoked_at = utcnow()
         raise DomainError("account_inactive", "Account is inactive", status_code=401)
     if auth_session.tenant_id != user.tenant_id or claimed_tenant_id != user.tenant_id:
@@ -370,40 +361,15 @@ async def _resolve_refresh_branch(
     """
     if user.tenant_id is None:
         if requested_branch_id is not None:
-            raise DomainError(
-                "branch_forbidden", "Branch access is not allowed", status_code=403
-            )
+            raise DomainError("branch_forbidden", "Branch access is not allowed", status_code=403)
         return None
 
-    if prefer_requested and requested_branch_id is not None:
-        selected_branch_id: UUID | None = requested_branch_id
-    else:
-        selected_branch_id = user.branch_id or requested_branch_id
-    if selected_branch_id is not None:
-        selected_branch_id = (
-            await db.execute(
-                select(Branch.id).where(
-                    Branch.id == selected_branch_id,
-                    Branch.tenant_id == user.tenant_id,
-                    Branch.is_active.is_(True),
-                )
-            )
-        ).scalar_one_or_none()
-
-    if selected_branch_id is None and allow_fallback and user.branch_id is None:
-        selected_branch_id = (
-            await db.execute(
-                select(Branch.id)
-                .where(Branch.tenant_id == user.tenant_id, Branch.is_active.is_(True))
-                .order_by(Branch.created_at, Branch.id)
-                .limit(1)
-            )
-        ).scalar_one_or_none()
-
-    if selected_branch_id is None:
-        raise DomainError(
-            "branch_forbidden", "Branch access is not allowed", status_code=403
-        )
+    branches, _ = await resolve_accessible_branches(db, user)
+    selected_branch_id = requested_branch_id or user.branch_id
+    if selected_branch_id is None and allow_fallback:
+        selected_branch_id = await default_accessible_branch(db, branches)
+    if selected_branch_id not in branches:
+        raise DomainError("branch_forbidden", "Branch access is not allowed", status_code=403)
     return selected_branch_id
 
 
@@ -434,6 +400,7 @@ def _rotate_session_tokens(
         branch_id=branch_id,
         family=auth_session.token_family,
         remember_me=remember_me,
+        staff_session=is_staff_session(auth_session.device_name),
     )
     refresh_token = _encode_token(
         settings,
@@ -445,6 +412,7 @@ def _rotate_session_tokens(
         branch_id=branch_id,
         family=auth_session.token_family,
         remember_me=remember_me,
+        staff_session=is_staff_session(auth_session.device_name),
     )
     return TokenPair(
         access_token=access_token,

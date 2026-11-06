@@ -38,8 +38,22 @@ export const adminKeys = {
   root: ["admin-operations"] as const,
   dashboard: () => [...adminKeys.root, "dashboard"] as const,
   tables: () => [...adminKeys.root, "tables"] as const,
-  orders: (status: string, offset: number, limit: number, receiptNumber = "", receiptDate = "") =>
-    [...adminKeys.root, "orders", status, offset, limit, receiptNumber, receiptDate] as const,
+  orders: (
+    status: string,
+    offset: number,
+    limit: number,
+    receiptNumber = "",
+    receiptDate = "",
+  ) =>
+    [
+      ...adminKeys.root,
+      "orders",
+      status,
+      offset,
+      limit,
+      receiptNumber,
+      receiptDate,
+    ] as const,
   order: (id: string) => [...adminKeys.root, "order", id] as const,
   qrRequests: (status: string) =>
     [...adminKeys.root, "qr-requests", status] as const,
@@ -236,7 +250,7 @@ export const adminApi = {
   permissions: (signal?: AbortSignal) =>
     api.get<string[]>("permissions", { signal }),
   salesSummary: (from: string, to: string, signal?: AbortSignal) =>
-    api.get<SalesSummary>("reports/sales-summary", {
+    api.get<SalesSummary>("reports/financial-summary", {
       search: { date_from: from, date_to: to },
       signal,
     }),

@@ -6,17 +6,23 @@ from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.dependencies import Identity, require_branch, require_tenant
+from app.errors import DomainError
 from app.models import CashierShift, Receipt, User
 
 
 async def current_operator_shift(
-    db: AsyncSession, identity: Identity, *, lock: bool = False
+    db: AsyncSession, identity: Identity, *, lock: bool = False, branch_id: UUID | None = None
 ) -> CashierShift | None:
+    selected_branch = require_branch(identity, branch_id)
+    if identity.operation_mode == "operator" and selected_branch != identity.branch_id:
+        raise DomainError(
+            "branch_forbidden", "Seçili panelin şubesinde işlem yapın.", status_code=403
+        )
     query = (
         select(CashierShift)
         .where(
             CashierShift.tenant_id == require_tenant(identity),
-            CashierShift.branch_id == require_branch(identity),
+            CashierShift.branch_id == selected_branch,
             or_(
                 CashierShift.opened_by_user_id == identity.user_id,
                 CashierShift.user_id == identity.user_id,
@@ -29,6 +35,12 @@ async def current_operator_shift(
         )
         .limit(1)
     )
+    if identity.operation_mode == "operator" or (
+        identity.staff_session
+        and identity.operational_profile
+        in {"BUSINESS_OWNER", "BUSINESS_ADMIN", "BUSINESS_MANAGER", "MANAGEMENT"}
+    ):
+        query = query.where(CashierShift.user_id == identity.user_id)
     return (await db.execute(query.with_for_update() if lock else query)).scalar_one_or_none()
 
 
